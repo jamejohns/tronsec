@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang=en class="h-full dark">
+<head>
+<meta charset=UTF-8>
+<meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>TRONSEC — TRON Wallet, Contract & Approval Scanner</title>
+<meta name=description content="Scan TRON wallets for AML risks, phishing, and malicious approvals. Revoke dangerous TRC20 approvals in one click. Free real-time scanner, no registration.">
+<meta name=keywords content="TRON, TRONSEC, blockchain security, AML, anti-money laundering, phishing detection, wallet analyzer, TRON scanner, smart contract audit, crypto security, on-chain risk">
+<meta name=author content="TRONSEC">
+<meta name=robots content="index, follow">
+<meta property=og:title content="TRONSEC — TRON Wallet, Contract & Approval Scanner">
+<meta property=og:description content="Scan TRON wallets for AML risks, phishing, and malicious approvals. Revoke dangerous TRC20 approvals in one click. Free real-time scanner, no registration.">
+<meta property=og:url content=https://tronsec.io/app/ >
+<meta property=og:type content=website>
+<meta property=og:image content=https://tronsec.io/og-image.png>
+<meta property=og:image:width content=1200>
+<meta property=og:image:height content=630>
+<meta property=og:site_name content="TRONSEC">
+<meta property=og:locale content=en_US>
+<meta name=twitter:card content=summary_large_image>
+<meta name=twitter:title content="TRONSEC — TRON Wallet, Contract & Approval Scanner">
+<meta name=twitter:description content="Scan TRON wallets for AML risks, phishing, and malicious approvals. Revoke dangerous TRC20 approvals in one click. Free real-time scanner, no registration.">
+<meta name=twitter:image content=https://tronsec.io/og-image.png>
+<link rel="alternate" hreflang="x-default" href="https://tronsec.io/app/">
+<link rel="alternate" hreflang="en" href="https://tronsec.io/app/">
+<link rel="alternate" hreflang="ru" href="https://tronsec.io/ru/app/">
+<link rel="alternate" hreflang="zh" href="https://tronsec.io/zh/app/">
+<link rel="alternate" hreflang="es" href="https://tronsec.io/es/app/">
+<link rel="alternate" hreflang="pt-BR" href="https://tronsec.io/pt-BR/app/">
+<link rel="alternate" hreflang="vi" href="https://tronsec.io/vi/app/">
+<link rel="alternate" hreflang="tr" href="https://tronsec.io/tr/app/">
+<link rel="alternate" hreflang="id" href="https://tronsec.io/id/app/">
+<link rel="canonical" href="https://tronsec.io/app/">
+<script type=application/ld+json>{"@context":"https://schema.org","@type":"WebApplication","name":"TRONSEC","url":"https://tronsec.io/app/","description":"TRONSEC — TRON onchain security & risk platform — AML screening, phishing detection, wallet/contract/transaction analysis for the TRON ecosystem.","applicationCategory":"SecurityApplication","operatingSystem":"Web","browserRequirements":"Requires JavaScript","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src=https://cdn.tailwindcss.com></script>
+<script src=https://unpkg.com/lucide@latest></script>
+<script src=https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js></script>
+<script src=https://d3js.org/d3.v7.min.js></script>
+
+<link rel=icon type=image/svg+xml href=/assets/brand/favicon.svg>
+<link rel=icon href=/assets/brand/favicon-16x16.png sizes=16x16 type=image/png>
+<link rel=icon href=/assets/brand/favicon-32x32.png sizes=32x32 type=image/png>
+<link rel=icon href=/favicon.ico sizes=any>
+<link rel=apple-touch-icon href=/assets/brand/apple-touch-icon.png>
+<link rel=manifest href=/manifest.json>
+<link rel=stylesheet href=/assets/css/fonts.css>
+<link rel=stylesheet href=styles-tron.css>
+<script>tailwind.config={darkMode:"class",theme:{extend:{colors:{darkBg:"#000000",darkCard:"#111113",panelBorder:"rgba(255,255,255,.06)",hackGreen:"#34d399",hackAmber:"#fbbf24",hackRed:"#fb7185",hackCyan:"#c8ced8"},fontFamily:{sans:["Inter","system-ui","sans-serif"],mono:["JetBrains Mono","ui-monospace","monospace"]}}}}</script>
+</head>
+<body class="bg-darkBg text-slate-300 h-full text-[14px] antialiased overflow-x-hidden flex flex-col">
+<div id="init-loader" class="init-loader" aria-hidden="false" aria-busy="true" aria-label="Loading TRONSEC">
+  <div class="init-loader-mesh" aria-hidden="true"></div>
+  <div class="init-loader-inner">
+    <div class="init-loader-brand">
+      <img src="../assets/brand/logo-mark.svg" alt="" class="init-loader-icon" width="44" height="44">
+      <div class="init-loader-head">
+        <span class="init-loader-name">TRONSEC</span>
+        <span class="init-loader-badge">v1.0</span>
+      </div>
+    </div>
+    <p class="init-loader-tagline">TRX SECURITY SCANNER <span class="init-loader-sep">|</span> <a href="https://tronsec.io/" class="init-loader-site" data-tronsec-site>tronsec.io</a></p>
+    <div class="init-loader-beam" aria-hidden="true"><span class="init-loader-beam-fill" id="init-loader-fill"></span></div>
+  </div>
+</div>
+<div class="app-atmosphere">
+<div class="app-atmosphere-mesh"></div>
+<div class="app-atmosphere-noise"></div>
+</div>
+<header class="app-header">
+<div class="app-header-left">
+<a href="https://tronsec.io/" class="app-brand" title="TRONSEC — tronsec.io" data-tronsec-brand>
+<img src="../assets/brand/logo-mark.svg" alt="">
+<span class="app-brand-name">TRONSEC</span>
+<span class="app-brand-meta">tronsec.io</span>
+<span class="app-brand-badge">v1.0</span>
+</a>
+<div class="app-header-status hidden sm:flex">
+<img src="../assets/brand/tron-trx-icon.svg" alt="" class="app-header-chain-icon" aria-hidden="true">
+<span>TRON Mainnet</span>
+</div>
+</div>
+<div class="app-header-actions">
+<div id=lang-switcher class="app-header-lang">
+<button type="button" class="app-header-btn app-header-lang-btn" title="Switch language" aria-expanded=false id=lang-switcher-btn>
+<i data-lucide=globe class="w-4 h-4 shrink-0"></i>
+<span id=curr-lang>EN</span>
+</button>
+<div id=lang-dd class="app-header-lang-dd hidden">
+<a href=/app/ class="lang-opt" data-lang=en>EN · English</a>
+<a href=/zh/app/ class="lang-opt" data-lang=zh>ZH · 中文</a>
+<a href=/es/app/ class="lang-opt" data-lang=es>ES · Español</a>
+<a href=/pt-BR/app/ class="lang-opt" data-lang=pt>PT · Português</a>
+<a href=/vi/app/ class="lang-opt" data-lang=vi>VI · Tiếng Việt</a>
+<a href=/tr/app/ class="lang-opt" data-lang=tr>TR · Türkçe</a>
+<a href=/id/app/ class="lang-opt" data-lang=id>ID · Bahasa</a>
+<a href=/ru/app/ class="lang-opt" data-lang=ru>RU · Русский</a>
+</div>
+</div>
+<button type="button" onclick=toggleTheme() class="app-header-btn app-header-icon" title="Toggle theme">
+<i data-lucide=sun id=theme-icon class="w-4 h-4"></i>
+</button>
+</div>
+</header>
+<div class="app-layout flex flex-1 min-h-0 overflow-hidden z-10 relative">
+<nav class="app-sidebar hidden md:flex flex-col shrink-0">
+<div class="sidebar-scroll">
+<div class="space-y-4 md:space-y-5">
+<div class=space-y-1>
+<div class="sidebar-label">Quick actions</div>
+<button onclick=openCommandPalette() class="sidebar-nav-btn sidebar-cmd-btn">
+<i data-lucide=terminal class="shrink-0"></i>
+<span class="module-file">command.palette</span>
+<kbd class="sidebar-kbd sidebar-kbd-hotkey">/</kbd>
+</button>
+</div>
+<div class=space-y-1>
+<div class="sidebar-label">Modules</div>
+<div class=space-y-1>
+<button onclick='switchTab("scanner")' data-tab-btn=scanner class="sidebar-nav-btn tab-nav-active">
+<i data-lucide=fingerprint class="w-4 h-4"></i> <span class="module-file">scanner.sh</span>
+</button>
+<button onclick='switchTab("analytics")' data-tab-btn=analytics class="sidebar-nav-btn">
+<i data-lucide=bar-chart-2 class="w-4 h-4"></i> <span class="module-file">analytics.dash</span>
+</button>
+</div>
+</div>
+<div class=space-y-1>
+<div class="sidebar-label">Security</div>
+<button onclick='switchTab("approvals")' data-tab-btn=approvals class="sidebar-nav-btn">
+<i data-lucide=lock class="w-4 h-4"></i> <span class="module-file">approvals.py</span>
+</button>
+<button onclick='switchTab("aml-check")' data-tab-btn=aml-check class="sidebar-nav-btn">
+<i data-lucide=shield-alert class="w-4 h-4"></i> <span class="module-file">aml_check.log</span>
+</button>
+<button onclick='switchTab("scan-url")' data-tab-btn=scan-url class="sidebar-nav-btn">
+<i data-lucide=globe class="w-4 h-4"></i> <span class="module-file">scan_url.sh</span>
+</button>
+<button onclick='switchTab("contract-scan")' data-tab-btn=contract-scan class="sidebar-nav-btn">
+<i data-lucide=file-search class="w-4 h-4"></i> <span class="module-file">contract_scan.sh</span>
+</button>
+</div>
+<div class=space-y-1>
+<div class="sidebar-label">Tools</div>
+<button onclick='switchTab("tx-decoder")' data-tab-btn=tx-decoder class="sidebar-nav-btn">
+<i data-lucide=code-2 class="w-4 h-4"></i> <span class="module-file">tx_decoder.hex</span>
+</button>
+<button onclick='switchTab("report")' data-tab-btn=report class="sidebar-nav-btn">
+<i data-lucide=flag class="w-4 h-4"></i> <span class="module-file">report_scam.md</span>
+</button>
+</div>
+</div>
+</div>
+<div class="sidebar-footer">
+<a href="https://tronsec.io/" class="sidebar-brand-link hidden md:flex" data-tronsec-brand>
+<img src="../assets/brand/logo-mark.svg" alt="" width="12" height="12">
+<span class="sidebar-brand-name">TRONSEC</span>
+<span class="sidebar-brand-domain">tronsec.io</span>
+</a>
+<div class="sidebar-aside hidden md:block">
+<div class="sidebar-aside-fg">
+<div class="sidebar-aside-head">
+<span class="sidebar-aside-label">Fear &amp; Greed</span>
+<span class="sidebar-aside-live"><span class="app-live-dot"></span>Live</span>
+</div>
+<div class="sidebar-aside-fg-row">
+<span id=fg-value class="sidebar-aside-fg-val"><span class="sk sidebar-aside-sk-val"></span></span>
+<span id=fg-sentiment class="sidebar-aside-fg-meta"><span class="sk sidebar-aside-sk-meta"></span></span>
+</div>
+<div class="sidebar-aside-track is-loading"><div id=fg-bar class="sidebar-aside-fill" style=width:0%></div></div>
+</div>
+<div class="sidebar-aside-actions">
+<button type="button" onclick='copyDonate("TRON")' class="sidebar-aside-btn">[ DONATE ]</button>
+<a href=https://t.me/tronsec_chat target=_blank rel=noopener class="sidebar-aside-btn">[ TELEGRAM ]</a>
+</div>
+</div>
+</div>
+</nav>
+<main class="app-main flex-1 overflow-y-auto pb-24 md:pb-16">
+<section id=tab-scanner class="tab-content active space-y-4 md:space-y-6">
+<div class="module-panel">
+<div class="module-panel-head">
+<div class="module-head-top">
+<h2>Wallet scanner</h2>
+<button type="button" onclick='purgeTab("scanner")' class="module-action-btn">
+[ CLEAR CACHE ]
+</button>
+</div>
+<div class="module-desc">
+<p class="module-desc-lead">Inspect any TRON wallet without connecting — portfolio value in USD, TRC-20 token holdings, frozen stake, bandwidth and energy meters, security flags, and a live activity feed.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">Portfolio</span>
+<span class="module-desc-tag">TRC-20 tokens</span>
+<span class="module-desc-tag">Staking</span>
+<span class="module-desc-tag">Resources</span>
+<span class="module-desc-tag">Read-only</span>
+</div>
+</div>
+</div>
+<div class="search-bar">
+<div class="search-wrap">
+<svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"/></svg>
+<input class="field-input" id=wallet-input placeholder="Paste TRON address to scan" spellcheck="false">
+</div>
+<button class="inline-flex items-center justify-center gap-2 shrink-0" id=wallet-scan-btn>
+<span class=scan-btn-text data-idle="[ SCAN ]" data-busy="[ SCANNING ]">[ SCAN ]</span>
+<span class="scan-btn-loader hidden"></span>
+</button>
+</div>
+<div id=wallet-err></div>
+<div id=wallet-result></div>
+<div id=wallet-empty class="appr-empty">
+<i data-lucide=fingerprint class="appr-empty-icon"></i>
+<p class="appr-empty-title">Scan a TRON wallet</p>
+<p class="appr-empty-hint">Paste an address to load portfolio, token list, resource meters, security signals and recent transactions</p>
+</div>
+</div>
+</section>
+<section id=tab-analytics class="tab-content space-y-4 md:space-y-6">
+<div class="module-panel">
+<div class="module-panel-head">
+<div class="module-head-top">
+<h2>TRON Network</h2>
+<button type="button" onclick=refreshAllAnalytics(true) class="module-action-btn">
+[ REFRESH ]
+</button>
+</div>
+<div class="module-desc">
+<p class="module-desc-lead">Live chain economics — current energy and bandwidth unit costs, total on-chain accounts, cumulative TRX burned for fees, and network-wide staked supply.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">Energy price</span>
+<span class="module-desc-tag">Bandwidth</span>
+<span class="module-desc-tag">Accounts</span>
+<span class="module-desc-tag">TRX burn</span>
+</div>
+</div>
+</div>
+<div class="an-body">
+<div class="an-section-label">Resource costs</div>
+<div class="an-stat-grid an-stat-grid--3" id=tron-fee-grid>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
+</div>
+<div class="an-section-label">Network totals</div>
+<div class="an-stat-grid an-stat-grid--3" id=tron-network-grid>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
+</div>
+</div>
+</div>
+<div class="module-panel">
+<div class="module-panel-head">
+<h2>Market overview</h2>
+<div class="module-desc">
+<p class="module-desc-lead">TRX market snapshot — spot price with 24h change, market capitalization, trading volume, and the crypto Fear &amp; Greed Index for broader sentiment context.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">TRX price</span>
+<span class="module-desc-tag">Market cap</span>
+<span class="module-desc-tag">24h volume</span>
+<span class="module-desc-tag">Fear &amp; Greed</span>
+</div>
+</div>
+</div>
+<div class="an-body">
+<div class="an-hero-grid">
+<div class="an-card">
+<div class="an-card-label">Fear &amp; Greed Index</div>
+<div class="an-card-main">
+<span id=market-fg-value class="an-card-value"><span class="sk an-sk-card-value"></span></span>
+<span id=market-fg-sentiment class="an-card-tag"><span class="sk an-sk-card-tag"></span></span>
+</div>
+<div class="an-fg-track"><div id=market-fg-bar class="an-fg-fill" style=width:0%></div></div>
+</div>
+<div class="an-card">
+<div class="an-card-label">TRX Price</div>
+<div class="an-card-main">
+<span id=market-trx-price class="an-card-value"><span class="sk an-sk-card-value"></span></span>
+<span id=market-trx-change class="an-card-change"><span class="sk an-sk-mini"></span></span>
+</div>
+<div class="an-mini-grid">
+<div class="an-mini-stat"><span class="an-mini-label">Market cap</span><span id=market-trx-mcap class="an-mini-val"><span class="sk an-sk-mini"></span></span></div>
+<div class="an-mini-stat"><span class="an-mini-label">24h volume</span><span id=market-trx-volume class="an-mini-val"><span class="sk an-sk-mini"></span></span></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="module-panel">
+<div class="module-panel-head">
+<h2>Token activity</h2>
+<div class="module-desc">
+<p class="module-desc-lead">Stablecoin and transfer pulse on TRON — count of USDT TRC-20 transactions and total network transfer volume over the last 24 hours.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">USDT transfers</span>
+<span class="module-desc-tag">24h volume</span>
+<span class="module-desc-tag">On-chain</span>
+</div>
+</div>
+</div>
+<div class="an-body">
+<div class="an-stat-grid an-stat-grid--2">
+<div class="an-stat">
+<div class="an-stat-label">USDT transactions (24h)</div>
+<div id=usdt-tx-count class="an-stat-value"><span class="sk an-sk-value an-sk-value--inline"></span></div>
+<div class="an-stat-sub">on-chain TRC20 transfers</div>
+</div>
+<div class="an-stat">
+<div class="an-stat-label">Transfer volume (24h)</div>
+<div id=transfer-volume-24h class="an-stat-value"><span class="sk an-sk-value an-sk-value--inline"></span></div>
+<div class="an-stat-sub">network-wide TRX moved</div>
+</div>
+</div>
+</div>
+</div>
+<div class="module-panel">
+<div class="module-panel-head">
+<h2>Security overview</h2>
+<div class="module-desc">
+<p class="module-desc-lead">Infrastructure health metrics — total deployed smart contracts, active full nodes, peak transactions per second in the last day, and all-time transaction count.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">Smart contracts</span>
+<span class="module-desc-tag">Full nodes</span>
+<span class="module-desc-tag">Peak TPS</span>
+<span class="module-desc-tag">Total txns</span>
+</div>
+</div>
+</div>
+<div class="an-body">
+<div class="an-stat-grid an-stat-grid--4" id=security-metrics-grid></div>
+</div>
+</div>
+</section>
+<section id=tab-approvals class="tab-content space-y-4 md:space-y-6">
+<div class="module-panel">
+<div class="module-panel-head">
+<div class="module-head-top">
+<h2>Approvals monitor</h2>
+<button type="button" onclick='purgeTab("approvals")' class="module-action-btn">
+[ CLEAR CACHE ]
+</button>
+</div>
+<div class="module-desc">
+<p class="module-desc-lead">Audit every active TRC-20 allowance on a wallet — surface unlimited approvals, unknown spenders, and high-risk DeFi permissions before they can move your tokens.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">Allowances</span>
+<span class="module-desc-tag">Unlimited</span>
+<span class="module-desc-tag">Spenders</span>
+<span class="module-desc-tag">Risk tiers</span>
+</div>
+</div>
+</div>
+<div class="search-bar">
+<div class="search-wrap">
+<svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"/></svg>
+<input id=approvals-input class="field-input" placeholder="Paste address to check approvals" spellcheck="false">
+</div>
+<button id=approvals-scan-btn class="inline-flex items-center justify-center gap-2 shrink-0">
+<span class=scan-btn-text data-idle="[ SCAN ]" data-busy="[ SCANNING ]">[ SCAN ]</span>
+<span class="scan-btn-loader hidden"></span>
+</button>
+</div>
+<div id=approvals-err></div>
+<div id=approvals-result></div>
+<div id=approvals-empty class="appr-empty">
+<i data-lucide=shield-off class="appr-empty-icon"></i>
+<p class="appr-empty-title">Check token approvals</p>
+<p class="appr-empty-hint">Enter a wallet address — lists every TRC-20 allowance, flags unlimited grants and suspicious spenders</p>
+</div>
+</div>
+</section>
+<section id=tab-contract-scan class="tab-content space-y-4 md:space-y-6">
+<div class="module-panel">
+<div class="module-panel-head">
+<div class="module-head-top">
+<h2>Contract scan</h2>
+<button type="button" onclick='purgeTab("contract-scan")' class="module-action-btn">
+[ CLEAR CACHE ]
+</button>
+</div>
+<div class="module-desc">
+<p class="module-desc-lead">Static ABI audit for any TRON smart contract — detect mint, pause, blacklist, proxy upgrades, ownership handover, and other dangerous functions before you interact.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">ABI analysis</span>
+<span class="module-desc-tag">Verification</span>
+<span class="module-desc-tag">Red flags</span>
+<span class="module-desc-tag">Function table</span>
+</div>
+</div>
+</div>
+<div class="search-bar">
+<div class="search-wrap">
+<svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"/></svg>
+<input id=contract-input class="field-input" placeholder="Paste contract address to audit" spellcheck="false">
+</div>
+<button id=contract-scan-btn class="inline-flex items-center justify-center gap-2 shrink-0">
+<span class=scan-btn-text data-idle="[ SCAN ]" data-busy="[ SCANNING ]">[ SCAN ]</span>
+<span class="scan-btn-loader hidden"></span>
+</button>
+</div>
+<div id=contract-err></div>
+<div id=contract-result></div>
+<div id=contract-empty class="appr-empty">
+<i data-lucide=file-search class="appr-empty-icon"></i>
+<p class="appr-empty-title">Audit a smart contract</p>
+<p class="appr-empty-hint">Paste a contract address — ABI risk score, verification status, dangerous functions and ownership checks</p>
+</div>
+</div>
+</section>
+<section id=tab-aml-check class="tab-content space-y-4 md:space-y-6">
+<div class="module-panel">
+<div class="module-panel-head">
+<div class="module-head-top">
+<h2>AML check</h2>
+<button type="button" onclick='purgeTab("aml-check")' class="module-action-btn">
+[ CLEAR CACHE ]
+</button>
+</div>
+<div class="module-desc">
+<p class="module-desc-lead">Behavioral risk screening on the latest 400 transactions — composite score, concentration analysis, counterparty graph, activity patterns, and watchlist matches for any address.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">Risk score</span>
+<span class="module-desc-tag">400 txs</span>
+<span class="module-desc-tag">Counterparties</span>
+<span class="module-desc-tag">Watchlist</span>
+<span class="module-desc-tag">PDF export</span>
+</div>
+</div>
+</div>
+<div class="search-bar">
+<div class="search-wrap">
+<svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"/></svg>
+<input id=aml-input class="field-input" placeholder="Paste TRON address to screen" spellcheck="false">
+</div>
+<button id=aml-scan-btn class="inline-flex items-center justify-center gap-2 shrink-0">
+<span class=scan-btn-text data-idle="[ SCAN ]" data-busy="[ SCANNING ]">[ SCAN ]</span>
+<span class="scan-btn-loader hidden"></span>
+</button>
+</div>
+<div id=aml-err></div>
+<div id=aml-result></div>
+<div id=aml-empty class="appr-empty">
+<i data-lucide=shield class="appr-empty-icon"></i>
+<p class="appr-empty-title">Run AML screening</p>
+<p class="appr-empty-hint">Screen any address — risk score, transaction concentration, peer graph, security flags and local watchlist hits</p>
+</div>
+</div>
+</section>
+<section id=tab-report class="tab-content space-y-4 md:space-y-6">
+<div class="module-panel">
+<div class="module-panel-head">
+<div class="module-head-top">
+<h2>Report scam</h2>
+<button type="button" onclick="clearReportForm()" class="module-action-btn">
+[ CLEAR CACHE ]
+</button>
+</div>
+<div class="module-desc">
+<p class="module-desc-lead">Help protect the TRON community — report scam addresses, phishing sites, honeypots, rug pulls, or impersonators with evidence links. Verified submissions feed the shared watchlist used across TRONSEC.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">Community reports</span>
+<span class="module-desc-tag">Watchlist</span>
+<span class="module-desc-tag">Evidence links</span>
+<span class="module-desc-tag">Manual review</span>
+</div>
+</div>
+</div>
+<div class="report-panel">
+<div id=report-form-fields class="report-form">
+<div class="aml-alert aml-alert--inline aml-alert--amber report-notice">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+<div class="aml-alert-body">Include evidence links when possible. Reports are reviewed manually — false submissions may be discarded.</div>
+</div>
+<div class="aml-block report-type-block">
+<div class="aml-block-head">
+<span class="aml-block-title">Report type</span>
+<span class="aml-block-meta">Required</span>
+</div>
+<div class="aml-block-body report-type-body">
+<div class="report-type-grid" id=report-type-group>
+<button type="button" onclick='selectReportType(this,"scam")' class="report-type-btn">Scam address</button>
+<button type="button" onclick='selectReportType(this,"phish")' class="report-type-btn">Phishing URL</button>
+<button type="button" onclick='selectReportType(this,"honeypot")' class="report-type-btn">Honeypot</button>
+<button type="button" onclick='selectReportType(this,"fakeairdrop")' class="report-type-btn">Fake airdrop</button>
+<button type="button" onclick='selectReportType(this,"impersonation")' class="report-type-btn">Impersonation</button>
+<button type="button" onclick='selectReportType(this,"rugpull")' class="report-type-btn">Rug pull</button>
+<button type="button" onclick='selectReportType(this,"malicious")' class="report-type-btn">Malicious dApp</button>
+<button type="button" onclick='selectReportType(this,"other")' class="report-type-btn">Other</button>
+</div>
+</div>
+</div>
+<div class="aml-block report-details-block">
+<div class="aml-block-head">
+<span class="aml-block-title">Details</span>
+</div>
+<div class="aml-block-body report-fields">
+<div class="field-block">
+<label class="field-label">Target</label>
+<div class="search-wrap">
+<svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"/></svg>
+<input id=report-target class="field-input" placeholder="TRON address, URL, or contract address" spellcheck="false">
+</div>
+</div>
+<div class="field-block">
+<label class="field-label report-desc-label">
+<span>Description</span>
+<span id=report-desc-counter class="report-desc-counter">0 / 500</span>
+</label>
+<textarea id=report-desc oninput='updateDescCounter()' rows=4 maxlength=500 placeholder="Describe the scam — what happened, how it works, what to look out for..." class="field-input"></textarea>
+</div>
+<div class="field-block">
+<label class="field-label">Evidence links</label>
+<textarea id=report-links rows=2 placeholder="TX hashes, URLs, screenshot links — one per line" class="field-input"></textarea>
+<p class="report-field-hint">Paste links to evidence (TX IDs, external URLs). No file uploads.</p>
+</div>
+<div class="field-block">
+<label class="field-label">Contact <span class="report-field-optional">(optional)</span></label>
+<input id=report-contact class="field-input-plain" placeholder="Telegram @username or email for follow-up">
+</div>
+</div>
+</div>
+<div class="report-actions">
+<button type="button" id=report-submit-btn onclick="submitReport()" class="report-submit-btn">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+<span>[ SUBMIT ]</span>
+</button>
+</div>
+</div>
+<div id=report-success class="report-success hidden">
+<div class="report-success-card">
+<div class="report-success-icon">
+<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+</div>
+<p class="report-success-title">Report submitted</p>
+<p class="report-success-desc">Thank you for helping keep the community safe. We will review your submission.</p>
+<button type="button" onclick="clearReportForm()" class="wallet-action-btn report-success-btn">Submit another</button>
+</div>
+</div>
+</div>
+</div>
+</section>
+<section id=tab-tx-decoder class="tab-content space-y-4 md:space-y-6">
+<div class="module-panel">
+<div class="module-panel-head">
+<div class="module-head-top">
+<h2>TX decoder</h2>
+<button type="button" onclick='purgeTab("tx-decoder")' class="module-action-btn">
+[ CLEAR CACHE ]
+</button>
+</div>
+<div class="module-desc">
+<p class="module-desc-lead">Understand any on-chain transaction from its TXID — human-readable summary, TRC-20 transfers, token approvals, contract call decoding, fee breakdown, and automated risk heuristics.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">TXID decode</span>
+<span class="module-desc-tag">Calldata</span>
+<span class="module-desc-tag">Approvals</span>
+<span class="module-desc-tag">Risk signals</span>
+</div>
+</div>
+</div>
+<div class="search-bar">
+<div class="search-wrap">
+<svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+<input id=tx-input class="field-input" placeholder="Paste transaction ID (TXID) to decode" spellcheck="false">
+</div>
+<button id=tx-decode-btn class="inline-flex items-center justify-center gap-2 shrink-0">
+<span class=scan-btn-text data-idle="[ DECODE ]" data-busy="[ DECODING ]">[ DECODE ]</span>
+<span class="scan-btn-loader hidden"></span>
+</button>
+</div>
+<div id=tx-err></div>
+<div id=tx-result></div>
+<div id=tx-empty class="appr-empty">
+<i data-lucide=code-2 class="appr-empty-icon"></i>
+<p class="appr-empty-title">Decode a transaction</p>
+<p class="appr-empty-hint">Paste a TXID — method signature, token movements, approval details, fees and scam-pattern warnings</p>
+</div>
+</div>
+</section>
+<section id=tab-scan-url class="tab-content space-y-4 md:space-y-6">
+<div class="module-panel">
+<div class="module-panel-head">
+<div class="module-head-top">
+<h2>URL scan</h2>
+<button type="button" onclick='purgeTab("scan-url")' class="module-action-btn">
+[ CLEAR CACHE ]
+</button>
+</div>
+<div class="module-desc">
+<p class="module-desc-lead">Check any link before connecting a wallet — multi-engine reputation scan, community blocklists, domain heuristics, typosquatting patterns, and TRON-specific phishing traps.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">Multi-engine</span>
+<span class="module-desc-tag">Blocklist</span>
+<span class="module-desc-tag">Domain analysis</span>
+<span class="module-desc-tag">Phishing patterns</span>
+</div>
+</div>
+</div>
+<div class="search-bar">
+<div class="search-wrap">
+<svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+<input id=phish-input class="field-input" placeholder="Paste URL to scan (https://...)" spellcheck="false">
+</div>
+<button id=phish-btn class="inline-flex items-center justify-center gap-2 shrink-0">
+<span class=scan-btn-text data-idle="[ SCAN ]" data-busy="[ SCANNING ]">[ SCAN ]</span>
+<span class="scan-btn-loader hidden"></span>
+</button>
+</div>
+<div id=phish-err></div>
+<div id=phish-result></div>
+<div id=phish-empty class="appr-empty">
+<i data-lucide=globe class="appr-empty-icon"></i>
+<p class="appr-empty-title">Scan a URL for phishing</p>
+<p class="appr-empty-hint">Paste any link — engine verdict, blocklist status, domain info and TRON scam pattern flags</p>
+</div>
+</div>
+</section>
+
+</main>
+</div>
+<div id=captcha-modal class="captcha-overlay" onclick="if(event.target===this)closeCaptcha()">
+<div class="captcha-card" onclick="event.stopPropagation()">
+<div class="captcha-head">
+<div class="captcha-head-brand">
+<span class="captcha-head-dot"></span>
+<span class="captcha-head-title">[ ACCESS GATE ]</span>
+</div>
+<button type="button" onclick=closeCaptcha() class="captcha-close" aria-label="Close">&times;</button>
+</div>
+<div class="captcha-body">
+<div id=captcha-intro class="captcha-terminal">
+<div class="captcha-terminal-lines">
+<div class="captcha-line">// tronsec human verification</div>
+<div class="captcha-line captcha-line-dim">module: gatekeeper.sh</div>
+<div class="captcha-line captcha-line-dim">session: <span id=captcha-session-id>--------</span></div>
+</div>
+<button type="button" id=captcha-start-btn onclick=startCaptchaCheck() class="captcha-start-btn">[ RUN CHECK ]</button>
+</div>
+<div id=captcha-loading class="hidden captcha-terminal">
+<div id=captcha-log class="captcha-log"></div>
+<div class="captcha-progress-track">
+<div id=captcha-progress class="captcha-progress-bar"></div>
+</div>
+</div>
+<div id=captcha-puzzle class="hidden captcha-block captcha-block--puzzle">
+<div class="captcha-puzzle-head">
+<p id=puzzle-instruction class="captcha-puzzle-text"></p>
+<span id=captcha-puzzle-meta class="captcha-puzzle-meta">0 selected</span>
+</div>
+<div id=captcha-puzzle-grid class="captcha-puzzle-grid"></div>
+</div>
+<div id=captcha-success class="hidden captcha-success-block">
+<div class="captcha-success-icon">[ OK ]</div>
+<p class="captcha-success-title">ACCESS GRANTED</p>
+<p class="captcha-success-sub">session verified · proceeding</p>
+</div>
+<div class="captcha-footnote">
+<span>TRONSEC v1.0</span>
+<span class="captcha-footnote-tag">protected</span>
+</div>
+<button type="button" id=captcha-verify-btn onclick=verifyCaptcha() disabled class="captcha-btn captcha-btn--disabled">[ VERIFY ]</button>
+</div>
+</div>
+</div>
+<div id=toast class="fixed bottom-4 right-4 z-50 bg-darkCard border border-panelBorder px-4 md:px-5 py-2.5 md:py-3 text-white text-[13px] opacity-0 translate-y-4 pointer-events-none transition-all duration-300 flex items-center gap-2.5" style="border-radius:9px;box-shadow:0 16px 48px rgba(0,0,0,.4);">
+<span class="toast-dot"></span>
+<span id=toast-text>TRONSEC active</span>
+</div>
+<div id=mobile-menu-backdrop class="fixed inset-0 md:hidden" onclick=closeMobileMoreMenu() aria-hidden=true></div>
+<div id=mobile-more-menu class="mobile-sheet fixed bottom-0 left-0 right-0 md:hidden shadow-2xl translate-y-full transition-transform duration-300 ease-in-out">
+<div class="mobile-sheet-head mb-4">
+<button type="button" onclick=closeMobileMoreMenu() class="captcha-close" aria-label="Close">&times;</button>
+</div>
+<div class="mobile-sheet-block">
+<div class="mobile-sheet-block-label">Tools</div>
+<div class="grid grid-cols-2 gap-2">
+<button type="button" onclick='switchTab("tx-decoder"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=code-2 class="w-4 h-4 shrink-0 opacity-70"></i> TX decoder</button>
+<button type="button" onclick='switchTab("contract-scan"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=file-search class="w-4 h-4 shrink-0 opacity-70"></i> Contract scan</button>
+<button type="button" onclick='switchTab("scan-url"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=globe class="w-4 h-4 shrink-0 opacity-70"></i> URL scanner</button>
+<button type="button" onclick='switchTab("report"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=flag class="w-4 h-4 shrink-0 opacity-70"></i> Report scam</button>
+</div>
+</div>
+<div class="mobile-sheet-block mobile-sheet-block--community">
+<div class="mobile-sheet-block-label">Community</div>
+<div class="mobile-sheet-actions">
+<button type="button" onclick='copyDonate("TRON")' class="mobile-sheet-action-btn">[ DONATE ]</button>
+<a href=https://t.me/tronsec_chat target=_blank rel=noopener class="mobile-sheet-action-btn">[ TELEGRAM ]</a>
+</div>
+</div>
+</div>
+<nav class="mobile-bottom-nav md:hidden fixed bottom-0 left-0 right-0 z-30 px-1 py-2 flex justify-around items-center text-[10px]">
+<button onclick='switchTab("scanner")' data-tab-btn=scanner class="flex flex-col items-center gap-0.5 sidebar-nav-btn tab-nav-active"><i data-lucide=fingerprint class="w-4 h-4"></i><span class=text-[9px] data-i18n=Scan>Scan</span></button>
+<button onclick='switchTab("approvals")' data-tab-btn=approvals class="flex flex-col items-center gap-0.5 sidebar-nav-btn"><i data-lucide=lock class="w-4 h-4"></i><span class=text-[9px] data-i18n=Approvals>Approvals</span></button>
+<button onclick='switchTab("aml-check")' data-tab-btn=aml-check class="flex flex-col items-center gap-0.5 sidebar-nav-btn"><i data-lucide=search class="w-4 h-4"></i><span class=text-[9px] data-i18n=AML>AML</span></button>
+<button onclick='switchTab("analytics")' data-tab-btn=analytics class="flex flex-col items-center gap-0.5 sidebar-nav-btn"><i data-lucide=bar-chart-2 class="w-4 h-4"></i><span class=text-[9px] data-i18n=Stats>Stats</span></button>
+<button onclick=toggleMobileMoreMenu() data-tab-btn=more class="flex flex-col items-center gap-0.5 sidebar-nav-btn"><i data-lucide=more-horizontal class="w-4 h-4"></i><span class=text-[9px] data-i18n=More>More</span></button>
+</nav>
+<script src=js/secrets.js></script>
+<script src=js/secrets.local.js></script>
+<script src=js/i18n.js></script>
+<script src=../assets/js/i18n-locales.js></script>
+<script src=../assets/js/contract-i18n.js></script>
+<script src=js/brand.js></script>
+<script src=app-tron.js></script>
+<script src=js/shared.js></script>
+<script src=js/wallet.js></script>
+<script src=js/phish-check.js></script>
+<script src=js/graph.js></script>
+<script src=js/aml.js></script>
+<script src=js/contract.js></script>
+<script src=js/approvals.js></script>
+<script src=js/tx-decoder.js></script>
+<script src=js/tour.js></script>
+<script src=js/hotkeys.js></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+github/
+.env
+.env.*
+app/js/secrets.local.js
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
