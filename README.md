@@ -28,8 +28,6 @@ No wallet connection. No registration. No install.
 
 <br><br>
 
-<img src="https://tronsec.io/og-image.png" alt="TRONSEC — app preview" width="760" style="border-radius:12px;border:1px solid #e5e7eb">
-
 </div>
 
 <br>
