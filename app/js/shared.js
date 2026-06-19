@@ -43,6 +43,13 @@ function tronscanHeaders() {
 // ==================================
 const isValidTron = a => /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test((a||'').trim());
 const short = a => a ? `${a.slice(0,6)}?${a.slice(-4)}` : '—';
+/** Human-readable address for prose (ellipsis, not "?"). */
+const addrLabel = a => {
+  if (!a || a === '—') return '—';
+  const s = String(a).trim();
+  if (isValidTron(s) && s.length > 13) return `${s.slice(0, 6)}…${s.slice(-4)}`;
+  return s;
+};
 
 const fmtNum = n => {
   if (n == null) return '—';
