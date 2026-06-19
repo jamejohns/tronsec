@@ -16,7 +16,6 @@ No wallet connection. No registration. No install.
 <br>
 
 <a href="https://tronsec.io/app/"><img src="https://img.shields.io/badge/Launch_App-tronsec.io-0a0a0a?style=for-the-badge&labelColor=111111" alt="Launch app"></a>
-&nbsp;
 <a href="https://tronsec.io/"><img src="https://img.shields.io/badge/Website-tronsec.io-ffffff?style=for-the-badge&labelColor=e50914" alt="Website"></a>
 &nbsp;
 <a href="https://t.me/tronsec_chat"><img src="https://img.shields.io/badge/Telegram-community-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram"></a>
