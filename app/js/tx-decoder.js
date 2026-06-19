@@ -351,7 +351,7 @@ async function txDecode() {
         const amt = (cVal.amount || 0) / 1_000_000;
         summaryTitleHtml = esc(`Sent ${amt.toFixed(6)} TRX`);
         summaryDesc  = t('Sent {amount} TRX from {from} to {to}. TRX is the native currency of TRON used for fees, staking, and voting.', {
-          amount: amt.toFixed(6), from: short(fromAddr), to: short(toAddr),
+          amount: amt.toFixed(6), from: addrLabel(fromAddr), to: addrLabel(toAddr),
         });
         details.push({ label: 'Amount', value: amt.toFixed(6) + ' TRX', mono: true });
         details.push({ label: 'From',   value: fromAddr, mono: true, link: true });
@@ -364,7 +364,7 @@ async function txDecode() {
         const amt   = cVal.amount || 0;
         summaryTitleHtml = esc(`Sent ${amt} ${asset}`);
         summaryDesc  = t('Transferred {amount} units of the TRC-10 token "{asset}" from {from} to {to}. TRC-10 transfers use bandwidth, not energy.', {
-          amount: String(amt), asset, from: short(fromAddr), to: short(toAddr),
+          amount: String(amt), asset, from: addrLabel(fromAddr), to: addrLabel(toAddr),
         });
         details.push({ label: 'Token',  value: asset });
         details.push({ label: 'Amount', value: String(amt), mono: true });
@@ -395,72 +395,70 @@ async function txDecode() {
 
         if (knownTok) tokenInfo = knownTok;
         const symbol = knownTok ? knownTok.symbol : 'tokens';
+        const tkName = knownTok ? `${knownTok.symbol} (${knownTok.name})` : 'unknown token';
 
-        // Build human-readable summary & detail rows from decoded data
-        const amtStr = decodedCall?.amount != null
-          ? fmtTokenAmt(decodedCall.amount, tokenDecimals) + ' ' + symbol
+        const amtValue = decodedCall?.amount != null
+          ? fmtTokenAmt(decodedCall.amount, tokenDecimals)
           : null;
+        const amtStr = amtValue != null ? `${amtValue} ${symbol}` : null;
 
         if (decodedCall) {
           if (decodedCall.fn === 'transfer') {
-            const toShort = decodedCall.to ? short(decodedCall.to) : '—';
-            const fromShort = short(cVal.owner_address);
-            const tkName = knownTok ? `${knownTok.symbol} (${knownTok.name})` : symbol;
-            summaryTitleHtml = esc(`Sent ${amtStr || '—'} > ${toShort}`);
+            const toLabel = decodedCall.to ? addrLabel(decodedCall.to) : '—';
+            const fromLabel = addrLabel(cVal.owner_address);
+            summaryTitleHtml = esc(`Sent ${amtStr || '—'} > ${toLabel}`);
             summaryDesc  = t('TRC-20 transfer: {amount} of {token} from {from} to {to}.', {
-              amount: amtStr || t('amount unknown'), token: tkName, from: fromShort, to: toShort,
+              amount: amtValue || t('amount unknown'), token: tkName, from: fromLabel, to: toLabel,
             }) + (knownTok ? '' : ' ' + t('Always verify the contract address before interacting.'));
             details.push({ label: 'From',   value: cVal.owner_address, mono: true, link: true });
             if (decodedCall.to)   details.push({ label: 'To',     value: decodedCall.to,   mono: true, link: true });
             if (amtStr) details.push({ label: 'Amount', value: amtStr, mono: true });
           } else if (decodedCall.fn === 'transferFrom') {
-            const fromShort = decodedCall.from ? short(decodedCall.from) : '—';
-            const toShort   = decodedCall.to   ? short(decodedCall.to)   : '—';
-            const tkName = knownTok ? `${knownTok.symbol} (${knownTok.name})` : symbol;
-            summaryTitleHtml = esc(`${fromShort} > ${toShort} — ${amtStr || '—'}`);
-            summaryDesc  = `transferFrom: ${amtStr || 'tokens'} of ${tkName} moved from ${fromShort} to ${toShort}, initiated by ${short(cVal.owner_address)}. Used by DeFi protocols and DEX aggregators — also a common drainer pattern.`;
+            const fromLabel = decodedCall.from ? addrLabel(decodedCall.from) : '—';
+            const toLabel   = decodedCall.to   ? addrLabel(decodedCall.to)   : '—';
+            summaryTitleHtml = esc(`${fromLabel} > ${toLabel} — ${amtStr || '—'}`);
+            summaryDesc  = `transferFrom: ${amtValue || t('amount unknown')} of ${tkName} moved from ${fromLabel} to ${toLabel}, initiated by ${addrLabel(cVal.owner_address)}. Used by DeFi protocols and DEX aggregators — also a common drainer pattern.`;
             if (decodedCall.from) details.push({ label: 'From',   value: decodedCall.from, mono: true, link: true });
             if (decodedCall.to)   details.push({ label: 'To',     value: decodedCall.to,   mono: true, link: true });
             if (amtStr) details.push({ label: 'Amount', value: amtStr, mono: true });
           } else if (decodedCall.fn === 'approve') {
-            const spShort = decodedCall.spender ? short(decodedCall.spender) : '—';
+            const spLabel = decodedCall.spender ? addrLabel(decodedCall.spender) : '—';
             const isUnlim = isUnlimitedApproval(decodedCall.amount, tokenDecimals);
             const allowStr = isUnlim ? '≈ ' + tt('unlimited') : (amtStr || '—');
-            const tkName = knownTok ? `${knownTok.symbol} (${knownTok.name})` : symbol;
             summaryTitleHtml = isUnlim
-              ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:inline;vertical-align:-2px;margin-right:2px;color:var(--red)"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> Approved ${esc(spShort)} for unlimited ${esc(symbol)}`
-              : esc(`Approved ${spShort} to spend ${allowStr}`);
-            summaryDesc  = `Approved ${spShort} for ${allowStr} of ${tkName}. ${isUnlim ? 'UNLIMITED — the spender can drain your entire balance at any time.' : 'The spender can transfer this amount without further confirmation.'}`;
+              ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:inline;vertical-align:-2px;margin-right:2px;color:var(--red)"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> Approved ${esc(spLabel)} for unlimited ${esc(symbol)}`
+              : esc(`Approved ${spLabel} to spend ${allowStr}`);
+            summaryDesc  = `Approved ${spLabel} for ${allowStr} of ${tkName}. ${isUnlim ? 'UNLIMITED — the spender can drain your entire balance at any time.' : 'The spender can transfer this amount without further confirmation.'}`;
             if (isUnlim) summaryRisk = 'high';
             details.push({ label: tt('spender'), value: decodedCall.spender || '—', mono: true, link: true });
             details.push({ label: tt('allowance'), value: allowStr, mono: true });
           } else if (decodedCall.fn === 'setApprovalForAll') {
-            const opShort = decodedCall.operator ? short(decodedCall.operator) : '—';
-            summaryTitleHtml = esc(decodedCall.approved ? `Approved ${opShort} for all NFTs` : `Revoked NFT approval for ${opShort}`);
+            const opLabel = decodedCall.operator ? addrLabel(decodedCall.operator) : '—';
+            summaryTitleHtml = esc(decodedCall.approved ? `Approved ${opLabel} for all NFTs` : `Revoked NFT approval for ${opLabel}`);
             summaryDesc  = decodedCall.approved
-              ? `Granted ${opShort} full control over all NFTs in this collection. They can transfer, burn, or list your NFTs without further approval.`
-              : `Revoked ${opShort}'s permission to manage your NFTs in this collection.`;
+              ? `Granted ${opLabel} full control over all NFTs in this collection. They can transfer, burn, or list your NFTs without further approval.`
+              : `Revoked ${opLabel}'s permission to manage your NFTs in this collection.`;
             details.push({ label: 'Operator', value: decodedCall.operator || '—', mono: true, link: true });
             details.push({ label: 'Approved', value: decodedCall.approved ? t('YES — full collection access granted') : t('NO — approval revoked'), mono: false });
           } else if (selMeta) {
             summaryTitleHtml = esc(selMeta.name + '()');
             summaryDesc  = t('Called {fn}() on {addr}. {desc}.', {
-              fn: selMeta.name, addr: short(cVal.contract_address), desc: t(selMeta.desc),
+              fn: selMeta.name, addr: addrLabel(cVal.contract_address), desc: t(selMeta.desc),
             });
           } else {
             summaryTitleHtml = esc(t('Contract call'));
             summaryDesc  = t('Unknown function (0x{selector}) called on {addr}. Raw call data shown below.', {
-              selector, addr: short(cVal.contract_address),
+              selector, addr: addrLabel(cVal.contract_address),
             });
           }
         } else if (selMeta) {
           summaryTitleHtml = esc(selMeta.name + '()');
           summaryDesc  = t('Called {fn}() on {addr}. {desc}.', {
-            fn: selMeta.name, addr: short(cVal.contract_address), desc: t(selMeta.desc),
+            fn: selMeta.name, addr: addrLabel(cVal.contract_address), desc: t(selMeta.desc),
           });
         } else {
           summaryTitleHtml = esc(t('Contract call'));
-          summaryDesc  = t('Unrecognized method (0x{selector}) on {addr}.', { selector, addr: short(cVal.contract_address) });
+          summaryDesc  = t('Unrecognized method (0x{selector}) on {addr}.', { selector, addr: addrLabel(cVal.contract_address) });
         }
 
         details.push({ label: 'Contract', value: cVal.contract_address || '—', mono: true, link: true });
@@ -478,7 +476,7 @@ async function txDecode() {
         const resource = cVal.resource === 'ENERGY' ? t('Energy') : t('Bandwidth');
         const isV2     = cType === 'FreezeBalanceV2Contract';
         summaryTitleHtml = esc(isV2 ? `Freeze ${amt.toFixed(2)} TRX for ${resource} (v2)` : `Freeze ${amt.toFixed(2)} TRX for ${resource}`);
-        summaryDesc    = `Froze ${amt.toFixed(2)} TRX for ${resource}${cVal.receiver_address ? ', delegated to ' + short(cVal.receiver_address) : ''}. ${isV2 ? 'v2 staking — instant unfreeze, earn TP for voting.' : 'v1 staking — 3-day unfreeze period.'}`;
+        summaryDesc    = `Froze ${amt.toFixed(2)} TRX for ${resource}${cVal.receiver_address ? ', delegated to ' + addrLabel(cVal.receiver_address) : ''}. ${isV2 ? 'v2 staking — instant unfreeze, earn TP for voting.' : 'v1 staking — 3-day unfreeze period.'}`;
         details.push({ label: 'Frozen',   value: amt.toFixed(6) + ' TRX', mono: true });
         details.push({ label: 'Resource', value: resource });
         if (cVal.receiver_address) details.push({ label: 'Delegated to', value: cVal.receiver_address, mono: true, link: true });
@@ -501,7 +499,7 @@ async function txDecode() {
         const resource = cVal.resource === 'ENERGY' ? t('Energy') : t('Bandwidth');
         summaryTitleHtml = esc(`Delegate ${amt.toFixed(2)} TRX of ${resource}`);
         summaryDesc    = t('Delegated {amount} TRX worth of {resource} to {receiver}. You retain ownership and can undelegate anytime.', {
-          amount: amt.toFixed(2), resource, receiver: short(cVal.receiver_address || t('another address')),
+          amount: amt.toFixed(2), resource, receiver: addrLabel(cVal.receiver_address || t('another address')),
         });
         details.push({ label: 'Amount',   value: amt.toFixed(6) + ' TRX', mono: true });
         details.push({ label: 'Resource', value: resource });
