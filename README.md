@@ -4,7 +4,6 @@
 
 <img src="assets/brand/logo-mark-dark.svg" alt="TRONSEC" width="88" height="88">
 
-<br>
 
 # TRONSEC
 
