@@ -977,35 +977,6 @@ async function amlScan() {
       ? amlBlock(`${tt('counterparty')} graph`, '<div class="aml-graph-root"><div class="aml-graph-wrap" id="aml-graph-container"></div></div>', `${addrLabel(addr)} · last ${txCount} txs`)
       : '';
 
-    const recent = txs.slice(0, 10);
-    let txHtml = '';
-    if (recent.length) {
-      const rows = await Promise.all(recent.map(async tx => {
-        const c = tx.raw_data?.contract?.[0];
-        const val = c?.parameter?.value;
-        const tType = c?.type || 'Unknown';
-        const fromHex = val?.owner_address || val?.from || null;
-        const toHex = val?.to || val?.to_address || null;
-        const fromAddr = fromHex ? resolve(fromHex) : null;
-        const toAddr = toHex ? resolve(toHex) : null;
-        const isIn = toAddr === addr;
-        const peerAddr = isIn ? fromAddr : (toAddr || fromAddr);
-        const amount = val?.amount || val?.call_value || 0;
-        const time = tx.block_timestamp ? ago(tx.block_timestamp) : '—';
-        const typeBadge = badge(
-          tType === 'TransferContract' ? (isIn ? 'b-green' : 'b-red') : 'b-cyan',
-          tType === 'TransferContract' ? (isIn ? 'IN' : 'OUT') : 'Contract'
-        );
-        return `<div class="aml-row aml-row--compact">
-          <div class="aml-row-body">
-            <div class="aml-row-title">${typeBadge} ${peerAddr ? amlAddrLink(peerAddr) : '<span class="kv-muted">Unknown</span>'}</div>
-            <div class="aml-row-meta">${amount ? toTRX(amount) + ' TRX' : '—'} · ${time}</div>
-          </div>
-        </div>`;
-      }));
-      txHtml = amlRowsBlock(`Recent activity <span>· ${recent.length}</span>`, rows.join(''));
-    }
-
     const detailsGrid = [signalsHtml, onchainHtml].filter(Boolean).join('');
     const exposureGrid = [sourcesHtml, tokensHtml].join('');
 
@@ -1047,7 +1018,6 @@ async function amlScan() {
         ${graphHtml}
         ${peersHtml}
         ${contractsHtml}
-        ${txHtml}
         <p class="aml-disclaimer">${t('This report is a risk analysis based on the latest 400 on-chain transactions and public security tags. It is not a legal or compliance determination.')}</p>
       </div>`;
 
