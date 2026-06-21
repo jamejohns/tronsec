@@ -58,8 +58,8 @@ window.riskShieldIcon = function riskShieldIcon(score, size, opts = {}) {
   let mark = '';
   if (tier === 'med') {
     mark = `<g fill="${p.color}" stroke="${p.color}">
-      <rect x="11.25" y="9" width="1.5" height="5.2" rx="0.75" opacity="0.92"/>
-      <circle cx="12" cy="16.4" r="1.05" opacity="0.95"/>
+      <rect x="11.25" y="7.85" width="1.5" height="5.2" rx="0.75" opacity="0.92"/>
+      <circle cx="12" cy="15.15" r="1.05" opacity="0.95"/>
     </g>`;
   } else if (tier === 'high') {
     mark = `<g stroke="${p.color}" stroke-linecap="round" fill="none">
@@ -753,13 +753,34 @@ function syncTrxPriceGlobals(quote) {
   TRX_CHANGE = quote.change ?? null;
 }
 
+async function fetchWithTimeout(url, opts = {}, ms = 7000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function scanFetchDirect(path, params = {}, timeoutMs = 7000) {
+  const res = await fetchWithTimeout(
+    scanRequestUrl(path, params),
+    { headers: upstreamHeaders('scan'), cache: 'no-store' },
+    timeoutMs,
+  );
+  if (!res.ok) return null;
+  return res.json();
+}
+
 async function fetchTrxQuoteFromCmc() {
   if (!useApiProxy()) return null;
   try {
-    const res = await fetch(window.tronsecProxyUrl('/cmc/v1/cryptocurrency/quotes/latest', {
-      symbol: 'TRX',
-      convert: 'USD',
-    }), { cache: 'no-store' });
+    const res = await fetchWithTimeout(
+      window.tronsecProxyUrl('/cmc/v1/cryptocurrency/quotes/latest', { symbol: 'TRX', convert: 'USD' }),
+      { cache: 'no-store' },
+      7000,
+    );
     if (!res.ok) return null;
     const body = await res.json();
     const q = body?.data?.TRX?.quote?.USD;
@@ -777,22 +798,68 @@ async function fetchTrxQuoteFromCmc() {
   }
 }
 
+async function fetchTrxQuoteFromCoingecko() {
+  if (!useApiProxy()) return null;
+  try {
+    const res = await fetchWithTimeout(
+      window.tronsecProxyUrl('/cg/simple/price', {
+        ids: 'tron',
+        vs_currencies: 'usd',
+        include_24hr_change: 'true',
+      }),
+      { cache: 'no-store' },
+      6000,
+    );
+    if (!res.ok) return null;
+    const body = await res.json();
+    const row = body?.tron;
+    const usd = parseFloat(row?.usd || 0) || null;
+    if (!usd) return null;
+    const change = row?.usd_24h_change;
+    return {
+      usd,
+      change: change != null && Number.isFinite(Number(change)) ? Number(change) : null,
+      marketCap: null,
+      volume24h: null,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 async function fetchTrxQuoteFromScan() {
   try {
-    const p = await scanGet('/token/price', { token: 'trx' });
-    const usd = parseFloat(p?.priceInUsd ?? p?.price ?? 0) || null;
-    if (usd) {
-      const changeRaw = p?.priceChange24h ?? p?.percentChangeIn24h ?? p?.change24h;
-      const change = changeRaw != null ? parseFloat(changeRaw) : null;
-      return { usd, change: Number.isFinite(change) ? change : null };
-    }
+    const p = await scanFetchDirect('/token/price', { token: 'trx' });
+    if (!p) return null;
+    const usd = parseFloat(p.price_in_usd ?? p.priceInUsd ?? p.price ?? 0) || null;
+    if (!usd) return null;
+    const changeRaw = p.percent_change_24h ?? p.priceChange24h ?? p.percentChangeIn24h ?? p.change24h;
+    const change = changeRaw != null ? parseFloat(changeRaw) : null;
+    const marketCap = parseFloat(p.market_cap ?? p.marketCap ?? 0) || null;
+    const volume24h = parseFloat(p.volume_24h ?? p.volume24h ?? 0) || null;
+    return {
+      usd,
+      change: Number.isFinite(change) ? change : null,
+      marketCap,
+      volume24h,
+    };
   } catch (_) {}
   try {
-    const list = await scanGet('/getAssetWithPriceList', { limit: 20 });
+    const list = await scanFetchDirect('/getAssetWithPriceList', { limit: 20 });
     const trx = (list?.data || []).find(t => String(t.abbr || '').toLowerCase() === 'trx' || t.id === '_');
-    const usd = parseFloat(trx?.priceInUsd || 0) || null;
-    if (usd) return { usd, change: null };
+    const usd = parseFloat(trx?.priceInUsd ?? trx?.price_in_usd ?? 0) || null;
+    if (usd) return { usd, change: null, marketCap: null, volume24h: null };
   } catch (_) {}
+  return null;
+}
+
+function pickTrxMarketQuote(results) {
+  const cmc = results[0]?.status === 'fulfilled' ? results[0].value : null;
+  const scan = results[1]?.status === 'fulfilled' ? results[1].value : null;
+  const cg = results[2]?.status === 'fulfilled' ? results[2].value : null;
+  if (cmc?.usd) return cmc;
+  if (scan?.usd) return scan;
+  if (cg?.usd) return cg;
   return null;
 }
 
@@ -806,16 +873,17 @@ async function fetchTrxMarketQuote(opts = {}) {
   }
   if (cacheOnly) return cached || null;
 
-  let quote = await fetchTrxQuoteFromCmc();
-  if (!quote?.usd) {
-    const scan = await fetchTrxQuoteFromScan();
-    if (scan?.usd) quote = { ...scan, marketCap: null, volume24h: null };
-  }
+  const results = await Promise.allSettled([
+    fetchTrxQuoteFromCmc(),
+    fetchTrxQuoteFromScan(),
+    fetchTrxQuoteFromCoingecko(),
+  ]);
+  const quote = pickTrxMarketQuote(results);
   if (quote?.usd) {
     writeTrxMarketCache(quote);
     syncTrxPriceGlobals(quote);
   }
-  return quote;
+  return quote || cached || null;
 }
 
 let _trxPriceInflight = null;
