@@ -30,9 +30,11 @@ function amlRiskClass(status, isFlagged) {
 
 function amlActionBtn({ id, label, icon, href, variant }) {
   const cls = `wallet-action-btn${variant ? ` wallet-action-btn--${variant}` : ''}`;
-  const inner = `${icSVG(icon, 14)}<span>${esc(t(label))}</span>`;
-  if (href) return `<a class="${cls}" id="${id}" href="${esc(href)}" target="_blank" rel="noopener">${inner}</a>`;
-  return `<button type="button" class="${cls}" id="${id}">${inner}</button>`;
+  const lbl = esc(t(label));
+  const inner = `${icSVG(icon, 14)}<span>${lbl}</span>`;
+  const aria = ` aria-label="${lbl}"`;
+  if (href) return `<a class="${cls}" id="${id}" href="${esc(href)}" target="_blank" rel="noopener"${aria}>${inner}</a>`;
+  return `<button type="button" class="${cls}" id="${id}"${aria}>${inner}</button>`;
 }
 
 function amlExtractTags(tagAcc) {
