@@ -4,19 +4,19 @@ const amlErr   = document.getElementById('aml-err');
 const amlRes   = document.getElementById('aml-result');
 const amlEmpty = document.getElementById('aml-empty');
 
-const AML_DISCLAIMER = 'This report is a risk analysis based on the latest 400 on-chain transactions, public security tags, and watchlist signals. It is not a legal or compliance determination.';
+const AML_DISCLAIMER = 'This report is a risk analysis based on the latest 400 on-chain transactions and public security tags. It is not a legal or compliance determination.';
 
 if (amlInput) amlInput.addEventListener('keydown', e => { if (e.key==='Enter') amlScan(); });
 if (amlBtn) amlBtn.addEventListener('click', amlScan);
 
 function amlAddrLink(addr, label) {
-  const text = esc(label || short(addr));
+  const text = esc(label || addrLabel(addr));
   return `<a class="a-link aml-addr-link" href="https://tronscan.org/#/address/${esc(addr)}" target="_blank" rel="noopener"><span>${text}</span>${icSVG(IC.link, 9)}</a>`;
 }
 
 function amlKvRow(label, valueHtml, last) {
   return `<div class="kv-row${last ? ' kv-row--last' : ''}">
-    <span class="kv-label">${t(label)}</span>
+    <span class="kv-label">${kvLabel(label)}</span>
     <span class="kv-val">${valueHtml}</span>
   </div>`;
 }
@@ -392,11 +392,6 @@ function amlExportPdf(report) {
       pdf.section('Security flags');
       report.hardFlags.forEach(flag => pdf.bullet(flag, AML_PDF.red));
     }
-    if (report.localMatch) {
-      pdf.section('Local watchlist');
-      const lm = report.localMatch;
-      pdf.bullet(`${lm.label || lm.cat || 'Match'}${lm.desc ? ': ' + lm.desc : ''}`, AML_PDF.red);
-    }
     if (report.peerFlags?.length) {
       pdf.section('Flagged counterparties');
       report.peerFlags.slice(0, 8).forEach(p => pdf.bullet(p, AML_PDF.amber));
@@ -436,12 +431,12 @@ function amlExportPdf(report) {
     }
     if (report.topPeers?.length) {
       pdf.section('Top counterparties');
-      report.topPeers.slice(0, 8).forEach(([a, c]) => pdf.row(short(a), `${c} direct transfers`));
+      report.topPeers.slice(0, 8).forEach(([a, c]) => pdf.row(addrLabel(a), `${c} direct transfers`));
     }
 
-    pdf.disclaimerBox(t('This report is a risk analysis based on the latest 400 on-chain transactions, public security tags, and watchlist signals. It is not a legal or compliance determination.'));
+    pdf.disclaimerBox(t('This report is a risk analysis based on the latest 400 on-chain transactions and public security tags. It is not a legal or compliance determination.'));
 
-    const fname = `TRONSEC-AML-${short(report.addr)}-${new Date(report.scannedAt).toISOString().slice(0, 10)}.pdf`;
+    const fname = `TRONSEC-AML-${report.addr.slice(0, 6)}${report.addr.slice(-4)}-${new Date(report.scannedAt).toISOString().slice(0, 10)}.pdf`;
     pdf.download(fname);
     showToast('PDF report downloaded');
   } catch (e) {
@@ -453,26 +448,7 @@ function amlExportPdf(report) {
 }
 
 function amlShieldIcon(riskScore, size, isFlagged) {
-  const risk = isFlagged ? Math.max(riskScore, 70) : riskScore;
-  const color = risk >= 50 ? 'var(--red)'
-    : risk >= 25 ? 'var(--amber)'
-    : 'var(--green)';
-  const fillOpacity = 0.14 + (risk / 100) * 0.28;
-  const glow = 3 + (risk / 100) * 6;
-  let cracks = '';
-  if (risk >= 25) {
-    cracks += `<path d="M14 8l-1 2v4l-2 1" stroke="${color}" stroke-width="1" fill="none" opacity="0.55"/>`;
-  }
-  if (risk >= 50) {
-    cracks += `<path d="M9 10l2 3-2 2M16 13l-2 1" stroke="${color}" stroke-width="1" fill="none" opacity="0.6"/>`;
-  }
-  if (risk >= 75) {
-    cracks += `<path d="M7 7l4 2-3 5M18 9l-4 2" stroke="${color}" stroke-width="1" fill="none" opacity="0.65"/>`;
-  }
-  return `<svg class="aml-risk-icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;filter:drop-shadow(0 0 ${glow}px ${color})">
-    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="${color}" fill-opacity="${fillOpacity}" stroke="${color}" stroke-width="1.2"/>
-    ${cracks}
-  </svg>`;
+  return riskShieldIcon(riskScore, size, { flagged: isFlagged, className: 'risk-shield-icon aml-risk-icon' });
 }
 
 function amlHardFlagPoints(label) {
@@ -483,21 +459,12 @@ function amlHardFlagPoints(label) {
   return 30;
 }
 
-function amlAddHardSignals(hardFlags, localMatch, scoreFactors) {
+function amlAddHardSignals(hardFlags, scoreFactors) {
   let add = 0;
   for (const label of hardFlags) {
     const pts = amlHardFlagPoints(label);
     add += pts;
     scoreFactors.unshift({ label, pts, tier: 'hard' });
-  }
-  if (localMatch) {
-    const pts = 45;
-    add += pts;
-    scoreFactors.unshift({
-      label: `Local watchlist: ${localMatch.label || localMatch.cat || 'match'}`,
-      pts,
-      tier: 'hard',
-    });
   }
   return add;
 }
@@ -505,7 +472,7 @@ function amlAddHardSignals(hardFlags, localMatch, scoreFactors) {
 function amlRiskStat(status, statusLabel, finalScore, isFlagged, hasHardSignals) {
   const cls = amlRiskClass(status, isFlagged);
   const icon = status === 'insufficient' && !hasHardSignals
-    ? `<svg class="aml-risk-icon aml-risk-icon--muted" width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="var(--text-3)" fill-opacity="0.12" stroke="var(--text-3)" stroke-width="1.2"/></svg>`
+    ? riskShieldIcon(0, 40, { muted: true, className: 'risk-shield-icon aml-risk-icon aml-risk-icon--muted' })
     : amlShieldIcon(finalScore, 40, isFlagged);
   const scoreText = status === 'insufficient' && !hasHardSignals ? '—' : `${finalScore}<span class="aml-score-unit">/100</span>`;
   const meter = (status !== 'insufficient' || hasHardSignals)
@@ -526,7 +493,7 @@ function amlRiskStat(status, statusLabel, finalScore, isFlagged, hasHardSignals)
 }
 
 function amlPeerRow(addr, count, flagCls, flagLabel, isFlaggedPeer) {
-  const initials = short(addr).replace(/^T/i, '').slice(0, 3).toUpperCase() || 'ADR';
+  const initials = addr.slice(1, 4).toUpperCase() || 'ADR';
   return `<div class="aml-row${isFlaggedPeer ? ' is-risk' : ''}">
     <div class="aml-row-icon">${esc(initials)}</div>
     <div class="aml-row-body">
@@ -585,7 +552,7 @@ function amlTokensPanel(parsedTokens) {
     return `<div class="aml-row aml-row--compact">
       <div class="aml-row-icon aml-row-icon--token">${esc(t.symbol.slice(0, 3).toUpperCase())}</div>
       <div class="aml-row-body">
-        <div class="aml-row-title"><span class="aml-token-name">${esc(t.symbol)}</span>${t.addr ? amlAddrLink(t.addr, short(t.addr)) : ''}</div>
+        <div class="aml-row-title"><span class="aml-token-name">${esc(t.symbol)}</span>${t.addr ? amlAddrLink(t.addr) : ''}</div>
         <div class="aml-row-meta">${balFmt} tokens${usdStr ? ` · ${usdStr}` : ''}</div>
       </div>
     </div>`;
@@ -642,31 +609,26 @@ async function amlScan() {
     amlEmpty.style.display = 'none';
 
     try {
-    const [accRes, tokenRes, secAcc, tagAcc, secToken] = await Promise.all([
+    const [accRes, tokenRes, secAcc, tagAcc, secToken, scanAcc] = await Promise.all([
       gridGet(`/v1/accounts/${addr}`).catch(() => null),
       scanGet('/account/tokens', {address: addr, start: 0, limit: 200}).catch(()=>null),
       scanGet('/security/account/data', {address: addr}).catch(() => null),
       scanGet('/account/tag', {address: addr}).catch(() => null),
       scanGet('/security/token/data', {address: addr}).catch(() => null),
+      scanGet('/account', { address: addr }).catch(() => null),
     ]);
 
-    // Fetch up to 400 transactions (2 pages of 200)
-    const [page1, page2] = await Promise.all([
-      gridGet(`/v1/accounts/${addr}/transactions`, {limit:200, order_by:'block_timestamp,desc'}).catch(() => ({data:[]})),
-      gridGet(`/v1/accounts/${addr}/transactions`, {limit:200, order_by:'block_timestamp,desc', start:200}).catch(() => ({data:[]})),
-    ]);
-    const txs = (page1.data || []).concat(page2.data || []);
+    const txs = await fetchAmlTxHistory(addr);
     const txCount = txs.length;
 
-    const acc = accRes?.data?.length ? accRes.data[0] : {balance:0, _inactive:true, create_time:null};
+    const scanProfile = scanAcc?.data?.[0] || scanAcc || {};
+    const acc = accRes?.data?.length ? accRes.data[0] : buildInactiveAccount(scanProfile);
     const tokens = (tokenRes?.data || []).filter(t=>t.tokenType==='trc20' && parseFloat(t.balance || 0) > 0);
     const ageDays = acc.create_time ? Math.round((Date.now() - acc.create_time)/86400000) : null;
     const balanceTrx = acc.balance != null ? (acc.balance / 1_000_000) : null;
     const accCreated = acc.create_time
       ? new Date(acc.create_time).toLocaleDateString('en-GB', {day:'2-digit', month:'short', year:'numeric'})
       : null;
-    const localMatch = (typeof allEntries === 'function' ? allEntries() : []).find(r => r.addr.toLowerCase() === addr.toLowerCase()) || null;
-
     // -- Hard signals --
     const hardFlags = [];
     if (secAcc) {
@@ -691,7 +653,7 @@ async function amlScan() {
       }
     }
 
-    const isFlagged = hardFlags.length > 0 || !!localMatch;
+    const isFlagged = hardFlags.length > 0;
 
     // -- Performance: collect unique hex addresses, resolve each once --
     const hexSet = new Set();
@@ -710,13 +672,12 @@ async function amlScan() {
       if (tType === 'TransferContract') {
         if (fromHex) hexSet.add(fromHex.toLowerCase());
         if (toHex) hexSet.add(toHex.toLowerCase());
-        txMeta.push({ type:'direct', peerHex: toHex, contractHex:null, isDex:false, amount, time });
+        txMeta.push({ type:'direct', fromHex, toHex, contractHex:null, isDex:false, amount, time });
       } else if (tType === 'TriggerSmartContract') {
         if (contractAddrHex) hexSet.add(contractAddrHex.toLowerCase());
         if (fromHex) hexSet.add(fromHex.toLowerCase());
-        // Decode TRC20 transfer recipient
-        const recipientHex = getTRC20Recipient(tx);
-        if (recipientHex) hexSet.add(recipientHex.toLowerCase());
+        const recipientHex = getTRC20Recipient(tx) || tx._scanTrc20Peer || null;
+        if (recipientHex) hexSet.add(String(recipientHex).toLowerCase());
         txMeta.push({ type:'trigger', peerHex:recipientHex, contractHex:contractAddrHex, isDex:null, amount, time });
       }
     }
@@ -736,7 +697,9 @@ async function amlScan() {
 
     for (const m of txMeta) {
       if (m.type === 'direct') {
-        const peer = resolve(m.peerHex);
+        const from = resolve(m.fromHex);
+        const to = resolve(m.toHex);
+        const peer = from === addr ? to : (to === addr ? from : (to || from));
         if (peer && peer !== addr) {
           directTransfers.push({ peer, amount:m.amount, time:m.time });
         }
@@ -880,11 +843,11 @@ async function amlScan() {
       score = Math.max(0, score);
     }
 
-    score += amlAddHardSignals(hardFlags, localMatch, scoreFactors);
+    score += amlAddHardSignals(hardFlags, scoreFactors);
     score = Math.max(0, score);
 
     const finalScore = Math.min(100, Math.round(score));
-    const hasHardSignals = hardFlags.length > 0 || !!localMatch;
+    const hasHardSignals = hardFlags.length > 0;
 
     // -- Status determination --
     let status, statusLabel;
@@ -906,16 +869,15 @@ async function amlScan() {
     const headTags = [
       amlStatusBadge(status, isFlagged),
       ...tronTags.slice(0, 4).map(t => badge('b-cyan', t)),
-      localMatch ? badge('b-red', 'Local DB') : '',
     ].filter(Boolean).join('');
     const headHtml = amlHeadCard(addr, headTags);
 
     let alertsHtml = '';
-    if (localMatch) {
-      alertsHtml += amlAlertInline('red', `<strong>Local watchlist match</strong> — ${esc(localMatch.label || localMatch.cat || 'Known risky address')}${localMatch.desc ? `: ${esc(localMatch.desc)}` : ''}`);
-    }
     if (isFlagged && hardFlags.length) {
       alertsHtml += amlAlertList('red', 'Security flags', hardFlags.map(f => esc(f)));
+    }
+    if (isFlagged && txCount === 0 && (tokens.length > 0 || scanProfile.totalTransactionCount || scanProfile.transactions)) {
+      alertsHtml += amlAlertInline('amber', t('Security flags detected, but recent transaction history could not be loaded — activity metrics below may be incomplete.'));
     }
     if (peerFlags.length > 0) {
       alertsHtml += amlAlertList('amber', 'Flagged counterparties', peerFlags.map(a => amlAddrLink(a)));
@@ -971,11 +933,8 @@ async function amlScan() {
                                                : badge('b-green','No flags');
 
     const sourcesHtml = amlPanel('Sources checked', `
-        ${amlKvRow('Tron Shield local DB', localMatch
-          ? `<span class="badge b-red">${tt('flagged')}</span> <span class="kv-muted">${esc(localMatch.label || localMatch.cat || '')}</span>`
-          : badge('b-green','Clean'))}
-        ${amlKvRow('Security screening', secAccBadge)}
-        ${amlKvRow('Token risk check', secTokenBadge, true)}
+        ${amlKvRow(tt('aml'), secAccBadge)}
+        ${amlKvRow(tt('shield'), secTokenBadge, true)}
       `);
 
     const onchainHtml = balanceTrx !== null || txCount > 0 || accCreated || activityWindow
@@ -1015,7 +974,7 @@ async function amlScan() {
       : '';
 
     const graphHtml = topPeers.length > 0
-      ? amlBlock(`${tt('counterparty')} graph`, '<div class="aml-graph-root"><div class="aml-graph-wrap" id="aml-graph-container"></div></div>', `${short(addr)} · last ${txCount} txs`)
+      ? amlBlock(`${tt('counterparty')} graph`, '<div class="aml-graph-root"><div class="aml-graph-wrap" id="aml-graph-container"></div></div>', `${addrLabel(addr)} · last ${txCount} txs`)
       : '';
 
     const recent = txs.slice(0, 10);
@@ -1059,7 +1018,6 @@ async function amlScan() {
       isFlagged,
       hasHardSignals,
       hardFlags: [...hardFlags],
-      localMatch: localMatch ? { label: localMatch.label, cat: localMatch.cat, desc: localMatch.desc } : null,
       peerFlags: [...peerFlags],
       scoreFactors: scoreFactors.map(f => ({ label: f.label, pts: f.pts, tier: f.tier })),
       txCount,
@@ -1090,7 +1048,7 @@ async function amlScan() {
         ${peersHtml}
         ${contractsHtml}
         ${txHtml}
-        <p class="aml-disclaimer">${t('This report is a risk analysis based on the latest 400 on-chain transactions, public security tags, and watchlist signals. It is not a legal or compliance determination.')}</p>
+        <p class="aml-disclaimer">${t('This report is a risk analysis based on the latest 400 on-chain transactions and public security tags. It is not a legal or compliance determination.')}</p>
       </div>`;
 
     bindAmlActions(addr);

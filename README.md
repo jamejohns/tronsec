@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jamejons/tronsec/issues">Report issue</a>
+  <a href="https://github.com/jamejohns/tronsec/issues">Report issue</a>
 </p>
 
 <br>
@@ -55,28 +55,58 @@ This repository contains the **open-source application** (UI shell, modules, ass
 ## Quick start
 
 ```bash
-git clone https://github.com/jamejons/tronsec.git
+git clone https://github.com/jamejohns/tronsec.git
 cd tronsec
 cp app/js/secrets.local.example.js app/js/secrets.local.js
-# edit secrets.local.js — see below
 python -m http.server 8080
 ```
 
 Open **http://localhost:8080/app/** (serve repo root, not `app/` alone).
 
+By default the app talks to upstream APIs through a **Cloudflare Worker proxy** (`app/js/proxy-config.js`). No browser-side API keys are required for a basic local run.
+
 <br>
 
-## API keys
+## API access (Worker proxy)
 
-Shipped **without credentials**. Add your own in `app/js/secrets.local.js` (gitignored):
+Production **[tronsec.io](https://tronsec.io)** never ships TronGrid / TronScan / VirusTotal / Telegram credentials to the browser. The client calls a thin proxy; keys live as **Wrangler secrets** on the worker.
+
+Default proxy URL (public, not a secret):
 
 ```js
+// app/js/proxy-config.js
+window.TRONSEC_PROXY = { base: 'https://api-proxy.tronsec-io.workers.dev' };
+```
+
+| Route | Upstream |
+|:--|:--|
+| `/grid/*` | TronGrid |
+| `/scan/*` | TronScan |
+| `/vt/*` | VirusTotal |
+| `/cmc/*` | CoinMarketCap (TRX quotes) |
+| `/telegram/sendMessage` | Telegram Bot API |
+
+**Self-hosting:** deploy your own Cloudflare Worker with the same route layout, store API keys as worker secrets, then override in `app/js/secrets.local.js`:
+
+```js
+window.TRONSEC_PROXY = { base: 'https://your-worker.workers.dev' };
+```
+
+Restrict CORS on the worker to your domain — otherwise anyone can relay requests through your keys.
+
+<br>
+
+## Local dev fallback (direct keys)
+
+Optional — only if you **do not** use a proxy. Edit `app/js/secrets.local.js` (gitignored):
+
+```js
+// Disable proxy for this session
+window.TRONSEC_PROXY = { base: '' };
+
 Object.assign(window.TRONSEC_KEYS, {
   trongrid: 'YOUR_TRONGRID_API_KEY',
   tronscan: 'YOUR_TRONSCAN_API_KEY',
-  virustotal: 'YOUR_VIRUSTOTAL_API_KEY',
-  telegramBotToken: 'YOUR_BOT_TOKEN',
-  telegramChatId: 'YOUR_CHAT_ID',
 });
 ```
 
@@ -84,10 +114,10 @@ Object.assign(window.TRONSEC_KEYS, {
 |:--|:--|:--|
 | `trongrid` | Wallet · AML · TX · contracts | [trongrid.io](https://www.trongrid.io/) |
 | `tronscan` | Balances · labels · history | [TronScan docs](https://docs.tronscan.org/) |
-| `virustotal` | URL scanner | [virustotal.com](https://www.virustotal.com/) |
-| `telegramBotToken` + `telegramChatId` | Report form | [@BotFather](https://t.me/BotFather) |
 
-Without keys the UI loads, but live scans fail. For production, proxy APIs server-side — never ship secrets to end users.
+**VirusTotal** and **Telegram report delivery** require the worker proxy (or your own worker with `/vt/*` and `/telegram/*`). Direct browser keys for VT are not supported in this build.
+
+Without a working proxy or direct TronGrid/TronScan keys, the UI loads but live scans fail.
 
 <br>
 
@@ -106,7 +136,8 @@ Stack: vanilla JavaScript · Tailwind CDN · Lucide · D3.js · TronGrid / TronS
 ## Security & brand
 
 - Read-only — no wallet connection, no transaction signing.
-- Client-side keys are visible in DevTools; rotate if ever committed.
+- **Do not commit API keys** — use a worker proxy in production; `secrets.local.js` is gitignored.
+- Direct browser keys (dev fallback) are visible in DevTools — rotate if ever exposed.
 - Official product: **[tronsec.io](https://tronsec.io)** — keep `app/js/brand.js` attribution when forking.
 
 <br>
