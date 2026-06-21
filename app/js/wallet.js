@@ -13,8 +13,44 @@ let walletHasMore = false;
 let walletOldestTs = 0;
 let txShowCount = 10;
 let loadMoreBusy = false;
+let walletScanBusy = false;
+let walletScanGen = 0;
 
-walletInput.addEventListener('keydown', e => { if (e.key === 'Enter') walletScan(); });
+function setWalletScanLocked(locked) {
+  walletScanBusy = locked;
+  if (walletBtn) walletBtn.disabled = locked;
+  if (walletInput) walletInput.disabled = locked;
+  spinBtn(walletBtn, locked);
+}
+
+function buildInactiveAccount(scanProfile) {
+  const sp = scanProfile || {};
+  const bw = sp.bandwidth || {};
+  const balRaw = sp.balance ?? sp.trxBalance;
+  let balance = 0;
+  if (balRaw != null && balRaw !== '') {
+    const n = Number(balRaw);
+    if (Number.isFinite(n)) balance = n;
+  }
+  return {
+    balance,
+    free_net_usage: sp.freeNetUsed ?? bw.freeNetUsed ?? bw.netUsed ?? 0,
+    free_net_limit: sp.freeNetLimit ?? bw.freeNetLimit ?? bw.netLimit ?? 1500,
+    EnergyUsed: sp.energyUsed ?? bw.energyUsed ?? 0,
+    EnergyLimit: sp.energyLimit ?? bw.energyLimit ?? 0,
+    frozenV2: sp.frozenV2 || sp.frozen || [],
+    create_time: sp.date_created || sp.createTime || sp.create_time,
+    latest_opration_time: sp.latest_operation_time || sp.latestOperationTime || sp.latest_operation_time,
+    _inactive: true,
+  };
+}
+
+walletInput.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  if (walletScanBusy) return;
+  walletScan();
+});
 walletBtn.addEventListener('click', walletScan);
 
 function addrCell(a, addr) {
@@ -46,8 +82,8 @@ function parseAccountTags(tagAcc) {
   return raw.map(t => t.tagName || t.tag || t.label || '').filter(Boolean);
 }
 
-function buildWalletSecurity(secAcc, tags, localFlags) {
-  const flags = [...localFlags];
+function buildWalletSecurity(secAcc, tags, heuristics) {
+  const flags = [...heuristics];
   if (secAcc) {
   if (secAcc.is_black_list) flags.push(t('Blacklisted by stablecoin issuer'));
   if (secAcc.has_fraud_transaction) flags.push(t('Flagged fraud transactions'));
@@ -65,10 +101,23 @@ function buildWalletSecurity(secAcc, tags, localFlags) {
   return { level, flags };
 }
 
+function walletContractScanBtn(addr) {
+  if (!addr || !isValidTron(addr)) {
+    return `<span class="wallet-token-meta-text">${esc(addrLabel(addr) || '—')}</span>`;
+  }
+  return `<button type="button" class="wallet-inline-link wallet-contract-scan-btn" data-addr="${esc(addr)}" title="${esc(addr)}">${esc(addrLabel(addr))}</button>`;
+}
+
+function walletTxHashBtn(hash) {
+  if (!hash || !/^[0-9a-fA-F]{64}$/.test(hash)) return '';
+  return `<button type="button" class="wallet-inline-link wallet-tx-decode-btn" data-hash="${esc(hash)}" title="${esc(hash)}">${esc(addrLabel(hash))}</button>`;
+}
+
 function buildActivityItem(tx, addr) {
   const c = tx.raw_data?.contract?.[0];
   const rawVal = c?.parameter?.value || {};
   const time = tx.block_timestamp ? ago(tx.block_timestamp) : '—';
+  const txHash = tx.txID || tx.transaction_id || tx.hash || tx.tx_id || '';
   const isTrc20 = tx._isTrc20 || tx.token_info || tx.token_amount != null || (tx.type && String(tx.type).toLowerCase().includes('trc20')) || !!tx.tokenInfo;
   let iconCls, iconPath, title, meta, amountHtml;
 
@@ -83,8 +132,8 @@ function buildActivityItem(tx, addr) {
     const isIn = to === addr;
     iconCls = isIn ? 'is-in' : 'is-out';
     iconPath = isIn ? IC.arrowDown : IC.arrowUp;
-    title = isIn ? `Received ${symbol}` : `Sent ${symbol}`;
-    meta = isIn ? `from ${short(from || '?')}` : `to ${short(to || '?')}`;
+    title = isIn ? t('Received {symbol}', { symbol }) : t('Sent {symbol}', { symbol });
+    meta = isIn ? t('from {addr}', { addr: addrLabel(from || '?') }) : t('to {addr}', { addr: addrLabel(to || '?') });
     amountHtml = `<div class="wallet-activity-amt ${isIn ? 'tx-amt-in' : 'tx-amt-out'}">${isIn ? '+' : '-'}${Number(amount).toLocaleString(undefined, { maximumFractionDigits: 4 })}</div>`;
   } else {
     const type = c?.type || 'Unknown';
@@ -94,24 +143,29 @@ function buildActivityItem(tx, addr) {
     const amount = val?.amount || val?.call_value || 0;
     const isIn = type === 'TransferContract' && to === addr;
     const isOut = type === 'TransferContract' && from === addr;
-    if (isIn) { iconCls = 'is-in'; iconPath = IC.arrowDown; title = t('Received TRX'); meta = t('from {addr}', { addr: short(from || '?') }); }
-    else if (isOut) { iconCls = 'is-out'; iconPath = IC.arrowUp; title = t('Sent TRX'); meta = t('to {addr}', { addr: short(to || '?') }); }
+    if (isIn) { iconCls = 'is-in'; iconPath = IC.arrowDown; title = t('Received TRX'); meta = t('from {addr}', { addr: addrLabel(from || '?') }); }
+    else if (isOut) { iconCls = 'is-out'; iconPath = IC.arrowUp; title = t('Sent TRX'); meta = t('to {addr}', { addr: addrLabel(to || '?') }); }
     else {
       iconCls = 'is-neutral';
       iconPath = IC.activity;
       title = type.replace('Contract', '').replace(/([A-Z])/g, ' $1').trim() || 'Contract call';
-      meta = short(to || from || '?');
+      meta = addrLabel(to || from || '?');
     }
     amountHtml = amount
       ? `<div class="wallet-activity-amt ${isIn ? 'tx-amt-in' : isOut ? 'tx-amt-out' : 'tx-amt-neutral'}">${isIn ? '+' : isOut ? '-' : ''}${toTRX(amount)} TRX</div>`
       : `<div class="wallet-activity-amt tx-amt-neutral">—</div>`;
   }
 
+  const hashBtn = walletTxHashBtn(txHash);
+  const metaHtml = hashBtn
+    ? `<span>${esc(meta)}</span><span class="wallet-activity-hash">${hashBtn}</span>`
+    : esc(meta);
+
   return `<div class="wallet-activity-item">
     <div class="wallet-activity-icon ${iconCls}">${icSVG(iconPath, 14)}</div>
     <div class="wallet-activity-body">
       <div class="wallet-activity-title">${esc(title)}</div>
-      <div class="wallet-activity-meta">${esc(meta)}</div>
+      <div class="wallet-activity-meta">${metaHtml}</div>
     </div>
     <div>
       ${amountHtml}
@@ -292,13 +346,13 @@ function openWalletQr(addr) {
         <span>TRONSEC</span>
       </div>
       <div class="qr-modal-kicker">[ WALLET QR ]</div>
-      <div class="qr-modal-title">Scan to send TRX or tokens</div>
+      <div class="qr-modal-title">${t('Scan to send TRX or tokens')}</div>
       <div class="qr-modal-addr">${esc(addr)}</div>
       <div class="qr-modal-frame">
         <div class="qr-modal-frame-glow"></div>
         <div id="qr-canvas-wrap" class="qr-canvas-wrap"></div>
       </div>
-      <button type="button" class="wallet-action-btn qr-modal-copy" id="qr-copy-btn">${icSVG(IC.copy, 14)}<span>Copy address</span></button>
+      <button type="button" class="wallet-action-btn qr-modal-copy" id="qr-copy-btn">${icSVG(IC.copy, 14)}<span>${t('Copy address')}</span></button>
     </div>`;
   document.body.appendChild(overlay);
   document.body.style.overflow = 'hidden';
@@ -318,7 +372,7 @@ function openWalletQr(addr) {
   document.getElementById('qr-close').addEventListener('click', close);
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
   document.getElementById('qr-copy-btn').addEventListener('click', () => {
-    navigator.clipboard.writeText(addr).then(() => showToast('Address copied'));
+    navigator.clipboard.writeText(addr).then(() => showToast(t('Address copied')));
   });
   const onEsc = (e) => {
     if (e.key === 'Escape') {
@@ -331,17 +385,20 @@ function openWalletQr(addr) {
 
 function kvRow(label, valueHtml, last) {
   return `<div class="kv-row${last ? ' kv-row--last' : ''}">
-    <span class="kv-label">${t(label)}</span>
+    <span class="kv-label">${kvLabel(label)}</span>
     <span class="kv-val">${valueHtml}</span>
   </div>`;
 }
 
 async function walletScan() {
+  if (walletScanBusy) return;
   const addr = walletInput.value.trim();
   setError(walletErr, '');
-  if (!addr) { flashInput(walletInput); showToast('Enter a TRON address'); return; }
-  if (!isValidTron(addr)) { flashInput(walletInput); showToast('Invalid TRON address — must start with T, 34 chars.'); return; }
-  spinBtn(walletBtn, true);
+  if (!addr) { flashInput(walletInput); showToast(t('Enter a TRON address')); return; }
+  if (!isValidTron(addr)) { flashInput(walletInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
+
+  const gen = ++walletScanGen;
+  setWalletScanLocked(true);
   if (walletEmpty) walletEmpty.style.display = 'none';
   walletRes.innerHTML = SK.wallet();
   walletTxs = [];
@@ -353,13 +410,15 @@ async function walletScan() {
     const [accRes, txRes, trc20TxRes, tokenRes, scanAcc, secAcc, tagAcc] = await Promise.all([
       gridGet(`/v1/accounts/${addr}`),
       gridGet(`/v1/accounts/${addr}/transactions`, { limit: 50, order_by: 'block_timestamp,desc' }),
-      gridGet(`/v1/accounts/${addr}/transactions/trc20`, { limit: 200, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
+      gridGet(`/v1/accounts/${addr}/transactions/trc20`, { limit: 100, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
       scanGet('/account/tokens', { address: addr, start: 0, limit: 50 }).catch(() => null),
       scanGet('/account', { address: addr }).catch(() => null),
       scanGet('/security/account/data', { address: addr }).catch(() => null),
       scanGet('/account/tag', { address: addr }).catch(() => null),
     ]);
+    if (gen !== walletScanGen) return;
 
+    const scanProfile = scanAcc?.data?.[0] || scanAcc || {};
     let acc;
     if (accRes.data?.length) {
       acc = accRes.data[0];
@@ -370,10 +429,9 @@ async function walletScan() {
         walletRes.innerHTML = '';
         if (walletEmpty) walletEmpty.style.display = '';
         setError(walletErr, t('Address not found or no on-chain activity.'));
-        spinBtn(walletBtn, false);
         return;
       }
-      acc = { balance: 0, free_net_usage: 0, free_net_limit: 1500, EnergyUsed: 0, EnergyLimit: 0, frozenV2: [], _inactive: true };
+      acc = buildInactiveAccount(scanProfile);
     }
 
     const nativeTxs = txRes.data || [];
@@ -388,7 +446,7 @@ async function walletScan() {
       } catch (_) {}
     }
 
-    const approvalCount = trc20List.filter(t => t.type === 'Approval').length;
+    const approvalCount = countDistinctApprovals(trc20List, nativeTxs);
     const MAX_U256 = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
     const normTrc20 = trc20List.filter(t => {
       if (t.type === 'Approval') return false;
@@ -407,6 +465,7 @@ async function walletScan() {
       } else { amount = Number(amount || 0); }
       return {
         _isTrc20: true, type: t.type || t.event || 'TRC20', token_info: tokenInfo,
+        txID: t.transaction_id || t.transaction_hash || t.hash || t.txID || t.tx_id || '',
         raw_data: { contract: [{ type: 'TriggerSmartContract', parameter: { value: { owner_address: owner, to_address: toAddr, amount } } }] },
         block_timestamp: blockTs, ret: [{ contractRet: t.contractRet || t.result || t.status || 'SUCCESS' }],
         from: owner, to: toAddr, value: amount, token_amount: amount, token_decimals: decimals, token_symbol: symbol,
@@ -435,17 +494,19 @@ async function walletScan() {
         .filter(t => t.balance > 0);
     }
 
-    await _priceReady;
-    const scanProfile = scanAcc?.data?.[0] || scanAcc || {};
+    await ensureTrxPrice();
+    if (gen !== walletScanGen) return;
     const tags = parseAccountTags(tagAcc);
     walletData = { acc, trc20, addr, scanProfile, secAcc, tags, approvalCount };
     renderWallet();
   } catch (e) {
+    if (gen !== walletScanGen) return;
     walletRes.innerHTML = '';
     if (walletEmpty) walletEmpty.style.display = '';
     setError(walletErr, userFriendlyFetchError(e));
+  } finally {
+    if (gen === walletScanGen) setWalletScanLocked(false);
   }
-  spinBtn(walletBtn, false);
 }
 
 async function loadMoreTxs() {
@@ -532,20 +593,22 @@ function renderWallet() {
   const sortedTokens = [...trc20].sort((a, b) => (tokenUsd(b) || 0) - (tokenUsd(a) || 0));
 
   const headTags = [
-    acc._inactive ? walletTag('inactive account', 'warn') : walletTag('active account', 'live'),
+    acc._inactive ? walletTag(t('inactive account'), 'warn') : walletTag(t('active account'), 'live'),
     addressName ? walletTag(addressName, 'name') : '',
-    isMultisig ? walletTag('multisig', 'warn') : '',
+    isMultisig ? walletTag(t('multisig'), 'warn') : '',
     votePower > 0 ? walletTag(`${fmtNum(votePower)} votes · ${votes.length} SR${votes.length !== 1 ? 's' : ''}`) : '',
-    approvalCount > 0 ? walletTag(`${approvalCount} approval events`, 'warn') : '',
+    approvalCount > 0 ? walletTag(t('{count} distinct approvals', { count: approvalCount }), 'warn') : '',
     ...tags.slice(0, 4).map(t => walletTag(t, /scam|fraud|phish|black/i.test(t) ? 'bad' : '')),
   ].filter(Boolean).join('');
 
   const securityRows = [
     kvRow('TronScan security', secAcc ? (security.level === 'clean' ? badge('b-green', 'Clean') : security.level === 'warn' ? badge('b-amber', 'Review') : badge('b-red', 'Flagged')) : badge('b-ghost', 'Unavailable')),
-    kvRow('Blacklist status', secAcc?.is_black_list ? badge('b-red', 'Listed') : badge('b-green', 'Not listed')),
+    kvRow(tt('blacklist'), secAcc?.is_black_list ? badge('b-red', 'Listed') : badge('b-green', 'Not listed')),
     kvRow('Fraud transactions', secAcc?.has_fraud_transaction ? badge('b-red', 'Detected') : badge('b-green', 'None')),
-    kvRow('Token approvals', approvalCount > 0 ? `<span class="mono">${approvalCount} recent</span>` : '<span class="mono">0 recent</span>'),
-    kvRow('Heuristics', heuristics.length ? esc(heuristics[0]) : `<span class="kv-muted">${t('No patterns')}</span>`),
+    kvRow(tt('approvals'), approvalCount > 0
+      ? `<span class="mono">${approvalCount}</span> · <button type="button" class="a-link wallet-approvals-link">${t('Check approvals')}</button>`
+      : `<span class="mono">0</span>`),
+    kvRow(tt('heuristics'), heuristics.length ? esc(heuristics[0]) : `<span class="kv-muted">${t('No patterns')}</span>`),
     kvRow('Public tags', tags.length ? esc(tags.slice(0, 3).join(' · ')) : `<span class="kv-muted">${t('None')}</span>`, true),
   ].join('');
 
@@ -554,7 +617,7 @@ function renderWallet() {
     kvRow('Last active', esc(lastActive)),
     kvRow('Total transactions', fmtNum(txCount)),
     kvRow('TRX balance', `${trxBal.toFixed(2)} TRX${trxUsdVal != null ? ` · $${trxUsdVal.toFixed(2)}` : ''}`),
-    kvRow('Staked TRX', `${toTRX(staked)} TRX · ${frozen.length} lock${frozen.length !== 1 ? 's' : ''}`),
+    kvRow(`${tt('staking')} TRX`, `${toTRX(staked)} TRX · ${frozen.length} lock${frozen.length !== 1 ? 's' : ''}`),
     stakedBw || stakedEnergy
       ? kvRow('Stake split', `${toTRX(stakedBw)} BW · ${toTRX(stakedEnergy)} EN`, true)
       : kvRow('Votes', votePower > 0 ? `${fmtNum(votePower)} to ${votes.length} SR${votes.length !== 1 ? 's' : ''}` : '—', true),
@@ -573,7 +636,7 @@ function renderWallet() {
           <div class="wallet-token-icon">${esc(t.symbol.slice(0, 3))}</div>
           <div class="wallet-token-body">
             <div class="wallet-token-name">${esc(t.symbol)}${t.name ? ` <span style="color:var(--text-4);font-weight:400">${esc(t.name)}</span>` : ''}</div>
-            <div class="wallet-token-meta">${esc(short(t.contract))}</div>
+            <div class="wallet-token-meta">${walletContractScanBtn(t.contract)}</div>
           </div>
           <div class="wallet-token-val">
             <div class="wallet-token-usd">${uv && uv > 0 ? '$' + uv.toFixed(2) : '—'}</div>
@@ -585,7 +648,7 @@ function renderWallet() {
         : '');
 
   const activityHtml = txs.length === 0
-    ? '<div class="wallet-empty-block">No recent transactions</div>'
+    ? `<div class="wallet-empty-block">${t('No recent transactions')}</div>`
     : showTxs.map(tx => buildActivityItem(tx, addr)).join('');
 
   walletRes.innerHTML = `
@@ -667,13 +730,35 @@ function renderWallet() {
   });
 
   document.getElementById('qr-addr-btn')?.addEventListener('click', () => openWalletQr(addr));
+
+  document.querySelector('.wallet-approvals-link')?.addEventListener('click', () => {
+    const inp = document.getElementById('approvals-input');
+    if (inp) inp.value = addr;
+    switchTab('approvals');
+  });
+
+  walletRes.querySelectorAll('.wallet-contract-scan-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      openAddressScan(btn.getAttribute('data-addr'));
+    });
+  });
+
+  walletRes.querySelectorAll('.wallet-tx-decode-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      openTxDecoder(btn.getAttribute('data-hash'));
+    });
+  });
 }
 
 function resetWalletScanCache() {
+  walletScanGen++;
   walletData = null;
   walletTxs = [];
   walletHasMore = false;
   walletOldestTs = 0;
   txShowCount = 10;
   loadMoreBusy = false;
+  setWalletScanLocked(false);
 }

@@ -12,14 +12,14 @@ function loadAppState() {
 
 let _switchingTab = false;
 let _firstAnalytics = true;
+let _analyticsPollId = null;
 
 // analytics cache
 const analyticsCache = {};
 const CACHE_TTL = {
   network: 60000,
-  market: 120000,
+  market: 30 * 60 * 1000,
   fgMarket: 300000,
-  fgIndex: 300000,
   token: 120000,
   security: 300000
 };
@@ -79,6 +79,8 @@ function purgeTabNow(tabId, section) {
     if (result) result.innerHTML = '';
     if (tabId === 'contract-scan' && typeof resetContractScanCache === 'function') resetContractScanCache();
     if (tabId === 'scanner' && typeof resetWalletScanCache === 'function') resetWalletScanCache();
+    if (tabId === 'approvals' && typeof resetApprovalsScanCache === 'function') resetApprovalsScanCache();
+    if (typeof syncModuleNavState === 'function') syncModuleNavState(tabId);
 }
 
 function purgeTab(tabId) {
@@ -111,6 +113,9 @@ function switchTab(tabId) {
   if (tabId === 'analytics') {
     if (_firstAnalytics) { _firstAnalytics = false; refreshAllAnalytics(true); }
     else { refreshAllAnalytics(false); }
+    startAnalyticsPoll();
+  } else {
+    clearAnalyticsPoll();
   }
 
   if (window.lucide) lucide.createIcons();
@@ -124,7 +129,7 @@ function switchTab(tabId) {
   _switchingTab = false;
 }
 
-// ============ FEAR & GREED ============
+// ============ FEAR & GREED (analytics market card) ============
 function fgSentimentClass(value) {
     const n = parseInt(value, 10);
     if (Number.isNaN(n)) return 'is-neutral';
@@ -132,64 +137,6 @@ function fgSentimentClass(value) {
     if (n >= 45) return 'is-info';
     if (n >= 25) return 'is-amber';
     return 'is-red';
-}
-function fgAsideClass(value) {
-    const n = parseInt(value, 10);
-    if (Number.isNaN(n)) return 'sidebar-aside-fg-meta';
-    if (n >= 55) return 'sidebar-aside-fg-meta is-green';
-    if (n >= 45) return 'sidebar-aside-fg-meta is-info';
-    if (n >= 25) return 'sidebar-aside-fg-meta is-amber';
-    return 'sidebar-aside-fg-meta is-red';
-}
-function fgAsideSkVal() { return '<span class="sk sidebar-aside-sk-val"></span>'; }
-function fgAsideSkMeta() { return '<span class="sk sidebar-aside-sk-meta"></span>'; }
-function fgAsideTrack() { return document.querySelector('.sidebar-aside-track'); }
-function setFgAsideLoading() {
-    const valueEl = document.getElementById('fg-value');
-    const sentimentEl = document.getElementById('fg-sentiment');
-    const bar = document.getElementById('fg-bar');
-    const track = fgAsideTrack();
-    if (valueEl) { valueEl.className = 'sidebar-aside-fg-val'; valueEl.innerHTML = fgAsideSkVal(); }
-    if (sentimentEl) { sentimentEl.className = 'sidebar-aside-fg-meta'; sentimentEl.innerHTML = fgAsideSkMeta(); }
-    if (bar) bar.style.width = '0%';
-    if (track) track.classList.add('is-loading');
-}
-function setFgAsideUnavailable() {
-    const valueEl = document.getElementById('fg-value');
-    const sentimentEl = document.getElementById('fg-sentiment');
-    const bar = document.getElementById('fg-bar');
-    const track = fgAsideTrack();
-    if (valueEl) { valueEl.textContent = '--'; valueEl.className = 'sidebar-aside-fg-val'; }
-    if (sentimentEl) { sentimentEl.textContent = '--'; sentimentEl.className = 'sidebar-aside-fg-meta'; }
-    if (bar) bar.style.width = '0%';
-    if (track) track.classList.remove('is-loading');
-}
-function setFgAsideData(value, classification) {
-    const valueEl = document.getElementById('fg-value');
-    const sentimentEl = document.getElementById('fg-sentiment');
-    const bar = document.getElementById('fg-bar');
-    const track = fgAsideTrack();
-    if (valueEl) { valueEl.textContent = value; valueEl.className = 'sidebar-aside-fg-val'; }
-    if (sentimentEl) { sentimentEl.textContent = classification; sentimentEl.className = fgAsideClass(value); }
-    if (bar) bar.style.width = `${value}%`;
-    if (track) track.classList.remove('is-loading');
-}
-async function fetchFearGreedIndex() {
-    if (!document.getElementById('fg-value')) return;
-    setFgAsideLoading();
-    try {
-        const r = await fetch('https://api.alternative.me/fng/?limit=1');
-        const d = await r.json();
-        if (d?.data?.[0]) {
-            setFgAsideData(d.data[0].value, d.data[0].value_classification);
-        } else {
-            setFgAsideUnavailable();
-        }
-        cacheBust('fgIndex');
-    } catch (_) {
-        setFgAsideUnavailable();
-        cacheBust('fgIndex');
-    }
 }
 function setAnStat(id, text, tone) {
     const el = document.getElementById(id);
@@ -236,10 +183,33 @@ function showAnalyticsSkeletons() {
 
 
 // ============ ANALYTICS ============
+function isAnalyticsTabActive() {
+  return document.getElementById('tab-analytics')?.classList.contains('active');
+}
+
+function clearAnalyticsPoll() {
+  if (_analyticsPollId != null) {
+    clearInterval(_analyticsPollId);
+    _analyticsPollId = null;
+  }
+}
+
+function startAnalyticsPoll() {
+  clearAnalyticsPoll();
+  _analyticsPollId = setInterval(() => {
+    if (!isAnalyticsTabActive()) {
+      clearAnalyticsPoll();
+      return;
+    }
+    refreshAllAnalytics(false);
+  }, 60000);
+}
+
 function refreshAllAnalytics(force) {
     if (force) showAnalyticsSkeletons();
     if (force || !cacheIsFresh('network')) fetchTronNetworkStatus();
-    if (force || !cacheIsFresh('market')) fetchMarketData();
+    if (force) fetchMarketData({ cacheOnly: true });
+    else if (!cacheIsFresh('market')) fetchMarketData();
     if (force || !cacheIsFresh('fgMarket')) fetchFearGreedForMarket();
     if (force || !cacheIsFresh('token')) fetchTokenActivity();
     if (force || !cacheIsFresh('security')) fetchSecurityMetrics();
@@ -247,9 +217,9 @@ function refreshAllAnalytics(force) {
 async function fetchTronNetworkStatus() {
     const feeGrid = document.getElementById('tron-fee-grid');
     const netGrid = document.getElementById('tron-network-grid');
-    if (!feeGrid || !netGrid) return;
-    if (!feeGrid.querySelector('.an-stat--sk')) feeGrid.innerHTML = SK.analyticsGrid(3);
-    if (!netGrid.querySelector('.an-stat--sk')) netGrid.innerHTML = SK.analyticsGrid(3);
+    if (!feeGrid && !netGrid) return;
+    if (feeGrid && !feeGrid.querySelector('.an-stat--sk')) feeGrid.innerHTML = SK.analyticsGrid(3);
+    if (netGrid && !netGrid.querySelector('.an-stat--sk')) netGrid.innerHTML = SK.analyticsGrid(3);
     try {
         let energyFee = 420, bwFee = 1000;
         try {
@@ -272,40 +242,99 @@ async function fetchTronNetworkStatus() {
             scanGet('/funds', {}).catch(() => null)
         ]);
         const info = homepage?.tron_info;
-        feeGrid.innerHTML = `
+        if (feeGrid) {
+            feeGrid.innerHTML = `
             ${SK.analyticsStat('Energy', 'tron-stat-energy', 'Sun per unit', 'info')}
             ${SK.analyticsStat('Bandwidth', 'tron-stat-bw', 'Sun per transaction', 'green')}
             ${SK.analyticsStat('Energy price', 'tron-stat-energy-price', 'TRX per 1K energy', 'amber')}`;
-        setAnStat('tron-stat-energy', fmtNum(energyFee), 'info');
-        setAnStat('tron-stat-bw', fmtNum(bwFee), 'green');
-        setAnStat('tron-stat-energy-price', (energyFee / 1000).toFixed(2), 'amber');
-        netGrid.innerHTML = `
+            setAnStat('tron-stat-energy', fmtNum(energyFee), 'info');
+            setAnStat('tron-stat-bw', fmtNum(bwFee), 'green');
+            setAnStat('tron-stat-energy-price', (energyFee / 1000).toFixed(2), 'amber');
+        }
+        if (netGrid) {
+            netGrid.innerHTML = `
             ${SK.analyticsStat('Total accounts', 'tron-stat-accounts', 'on-chain addresses', 'green')}
             ${SK.analyticsStat('TRX burned', 'tron-stat-burned', 'fees & resources', 'red')}
             ${SK.analyticsStat('Total staked', 'tron-stat-staked', 'frozen / voted TRX', 'info')}`;
-        setAnStat('tron-stat-accounts', fmtNum(info?.account_number || 0), 'green');
-        setAnStat('tron-stat-burned', fmtNum(funds?.totalBurnedForResourcesAndFees || 0), 'red');
-        setAnStat('tron-stat-staked', fmtNum(info?.freeze_balance || 0), 'info');
+            setAnStat('tron-stat-accounts', fmtNum(info?.account_number || 0), 'green');
+            setAnStat('tron-stat-burned', fmtNum(funds?.totalBurnedForResourcesAndFees || 0), 'red');
+            setAnStat('tron-stat-staked', fmtNum(info?.freeze_balance || 0), 'info');
+        }
         cacheBust('network');
     } catch (_) {
         cacheBust('network');
-        feeGrid.innerHTML = `
+        if (feeGrid) {
+            feeGrid.innerHTML = `
             ${SK.analyticsStat('Energy', 'tron-stat-energy', 'Sun per unit', 'info')}
             ${SK.analyticsStat('Bandwidth', 'tron-stat-bw', 'Sun per transaction', 'green')}
             ${SK.analyticsStat('Energy price', 'tron-stat-energy-price', 'TRX per 1K energy', 'amber')}`;
-        setAnStat('tron-stat-energy', '420', 'info');
-        setAnStat('tron-stat-bw', '1,000', 'green');
-        setAnStat('tron-stat-energy-price', '0.42', 'amber');
-        netGrid.innerHTML = `
+            setAnStat('tron-stat-energy', '420', 'info');
+            setAnStat('tron-stat-bw', '1,000', 'green');
+            setAnStat('tron-stat-energy-price', '0.42', 'amber');
+        }
+        if (netGrid) {
+            netGrid.innerHTML = `
             ${SK.analyticsStat('Total accounts', 'tron-stat-accounts', 'on-chain addresses', 'green')}
             ${SK.analyticsStat('TRX burned', 'tron-stat-burned', 'fees & resources', 'red')}
             ${SK.analyticsStat('Total staked', 'tron-stat-staked', 'frozen / voted TRX', 'info')}`;
-        setAnStat('tron-stat-accounts', '--', 'neutral');
-        setAnStat('tron-stat-burned', '--', 'neutral');
-        setAnStat('tron-stat-staked', '--', 'neutral');
+            setAnStat('tron-stat-accounts', '--', 'neutral');
+            setAnStat('tron-stat-burned', '--', 'neutral');
+            setAnStat('tron-stat-staked', '--', 'neutral');
+        }
     }
 }
-async function fetchMarketData() {
+function applyMarketQuoteToUI(quote) {
+    if (!quote?.usd) return;
+    const price = document.getElementById('market-trx-price');
+    const change = document.getElementById('market-trx-change');
+    const mcap = document.getElementById('market-trx-mcap');
+    const vol = document.getElementById('market-trx-volume');
+    if (price) {
+        price.innerText = `$${quote.usd.toLocaleString()}`;
+        price.className = 'an-card-value is-green';
+    }
+    if (change) {
+        if (quote.change != null) {
+            const ch = quote.change.toFixed(2);
+            change.innerText = `${ch > 0 ? '+' : ''}${ch}%`;
+            change.className = `an-card-change ${quote.change >= 0 ? 'is-green' : 'is-red'}`;
+        } else {
+            change.innerText = '—';
+            change.className = 'an-card-change';
+        }
+    }
+    if (mcap) {
+        if (quote.marketCap != null) {
+            mcap.innerText = `$${(quote.marketCap / 1e9).toFixed(2)}B`;
+        } else {
+            mcap.innerText = '—';
+        }
+    }
+    if (vol) {
+        if (quote.volume24h != null) {
+            vol.innerText = `$${(quote.volume24h / 1e9).toFixed(2)}B`;
+        } else {
+            vol.innerText = '—';
+        }
+    }
+}
+
+async function fetchMarketData(opts = {}) {
+    const cacheOnly = !!opts.cacheOnly;
+    const cached = typeof readTrxMarketCache === 'function' ? readTrxMarketCache() : null;
+
+    if (cacheOnly) {
+        if (cached?.usd) applyMarketQuoteToUI(cached);
+        cacheBust('market');
+        return;
+    }
+
+    if (cached?.usd && typeof isTrxMarketCacheFresh === 'function' && isTrxMarketCacheFresh(cached)) {
+        applyMarketQuoteToUI(cached);
+        cacheBust('market');
+        return;
+    }
+
     const price = document.getElementById('market-trx-price');
     const change = document.getElementById('market-trx-change');
     const mcap = document.getElementById('market-trx-mcap');
@@ -315,27 +344,16 @@ async function fetchMarketData() {
     if (mcap) mcap.innerHTML = '<span class="sk an-sk-mini"></span>';
     if (vol) vol.innerHTML = '<span class="sk an-sk-mini"></span>';
     try {
-        const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=tron&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true');
-        const d = await r.json();
-        if (d.tron) {
-            document.getElementById('market-trx-price').innerText = `$${d.tron.usd.toLocaleString()}`;
-            document.getElementById('market-trx-price').className = 'an-card-value is-green';
-            const ch = d.tron.usd_24h_change?.toFixed(2) || 0;
-            const el = document.getElementById('market-trx-change');
-            el.innerText = `${ch > 0 ? '+' : ''}${ch}%`;
-            el.className = `an-card-change ${ch >= 0 ? 'is-green' : 'is-red'}`;
-            document.getElementById('market-trx-mcap').innerText = `$${(d.tron.usd_market_cap / 1e9).toFixed(2)}B`;
-            document.getElementById('market-trx-volume').innerText = `$${(d.tron.usd_24h_vol / 1e9).toFixed(2)}B`;
+        const quote = typeof fetchTrxMarketQuote === 'function' ? await fetchTrxMarketQuote() : null;
+        if (quote?.usd) {
+            applyMarketQuoteToUI(quote);
+        } else if (cached?.usd) {
+            applyMarketQuoteToUI(cached);
         }
-        cacheBust('market');
     } catch (_) {
-        cacheBust('market');
-        try {
-            const f = await scanGet('/funds', {});
-            const p = parseFloat(f?.priceInUsd || f?.price || 0);
-            if (p) document.getElementById('market-trx-price').innerText = `$${p.toLocaleString()}`;
-        } catch (_) {}
+        if (cached?.usd) applyMarketQuoteToUI(cached);
     }
+    cacheBust('market');
 }
 async function fetchFearGreedForMarket() {
     const fgVal = document.getElementById('market-fg-value');
@@ -415,12 +433,39 @@ async function fetchSecurityMetrics() {
 
 // ============ MOBILE / TOAST ============
 let _mobileMoreMenuGuard = false;
-function copyDonate(network) {
-    const addr = 'TT1BWYjy3FDxQeGE5dNRAyRVdEkpU7G777';
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(addr).then(() => showToast('{network} address copied', { network }));
-    }
+function markDonateCopied(btn) {
+    if (!btn || btn.dataset.donateBusy) return;
+    if (!btn.dataset.donateLabel) btn.dataset.donateLabel = btn.textContent.trim();
+    btn.classList.add('is-copied');
+    btn.textContent = typeof t === 'function' ? t('Copied').toLowerCase() : 'copied';
+    btn.dataset.donateBusy = '1';
+    clearTimeout(btn._donateReset);
+    btn._donateReset = setTimeout(() => {
+        btn.classList.remove('is-copied');
+        btn.textContent = btn.dataset.donateLabel || 'donate';
+        delete btn.dataset.donateBusy;
+    }, 2000);
 }
+function copyDonate(network, btn) {
+    const addr = 'TT1BWYjy3FDxQeGE5dNRAyRVdEkpU7G777';
+    const net = network || 'TRON';
+    const done = () => {
+        markDonateCopied(btn);
+        showToast('{network} address copied', { network: net });
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(addr).then(done).catch(done);
+        return;
+    }
+    done();
+}
+document.addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-footer-donate]');
+    if (btn) {
+        e.preventDefault();
+        copyDonate('TRON', btn);
+    }
+});
 function toggleMobileMoreMenu(ev) {
     if (ev) ev.stopPropagation();
     const menu = document.getElementById('mobile-more-menu');
@@ -541,6 +586,108 @@ function syncAppBrandLink() {
     if (typeof syncTronsecBrandLinks === 'function') syncTronsecBrandLinks();
 }
 
+function applyDomI18n() {
+    if (typeof t !== 'function') return;
+
+    const setText = (el, key) => {
+        if (!el || !key) return;
+        el.textContent = t(key);
+    };
+
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+        setText(el, el.getAttribute('data-i18n'));
+    });
+
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+        const k = el.getAttribute('data-i18n-placeholder');
+        if (k) el.placeholder = t(k);
+    });
+
+    document.querySelectorAll('[placeholder]').forEach((el) => {
+        const p = el.getAttribute('placeholder');
+        if (p && !el.hasAttribute('data-i18n-placeholder')) el.placeholder = t(p);
+    });
+
+    document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+        const k = el.getAttribute('data-i18n-title');
+        if (k) el.title = t(k);
+    });
+
+    document.querySelectorAll('[title]').forEach((el) => {
+        const k = el.getAttribute('title');
+        if (k && !el.hasAttribute('data-i18n-title')) el.title = t(k);
+    });
+
+    document.querySelectorAll('[data-i18n-aria-label]').forEach((el) => {
+        const k = el.getAttribute('data-i18n-aria-label');
+        if (k) el.setAttribute('aria-label', t(k));
+    });
+
+    document.querySelectorAll('[aria-label]').forEach((el) => {
+        const k = el.getAttribute('aria-label');
+        if (k && !el.hasAttribute('data-i18n-aria-label')) el.setAttribute('aria-label', t(k));
+    });
+
+    const textSelectors = [
+        '.sidebar-label',
+        '.app-header-status span',
+        '.module-panel-head h2',
+        '.module-desc-lead',
+        '.module-desc-tag',
+        '.module-action-btn',
+        '.appr-empty-title',
+        '.appr-empty-hint',
+        '.an-section-label',
+        '.an-card-label',
+        '.an-mini-label',
+        '.an-stat-label',
+        '.an-stat-sub',
+        '.field-label',
+        '.aml-block-title',
+        '.aml-block-meta',
+        '.aml-alert-body',
+        '.report-field-hint',
+        '.report-type-btn',
+        '.report-success-title',
+        '.report-success-desc',
+        '.report-field-optional',
+    ];
+    textSelectors.forEach((sel) => {
+        document.querySelectorAll(sel).forEach((el) => {
+            if (sel === '.field-label' && el.querySelector('.report-field-optional')) {
+                const opt = el.querySelector('.report-field-optional');
+                if (opt) setText(opt, opt.textContent.trim());
+                for (const node of el.childNodes) {
+                    if (node.nodeType === 3 && node.textContent.trim()) {
+                        node.textContent = t(node.textContent.trim()) + ' ';
+                        break;
+                    }
+                }
+                return;
+            }
+            if (sel === '.field-label' && el.querySelector('span, a')) return;
+            const key = (el.getAttribute('data-i18n') || el.textContent || '').trim();
+            if (!key || key.length < 2) return;
+            if (!el.hasAttribute('data-i18n')) el.setAttribute('data-i18n', key);
+            setText(el, key);
+        });
+    });
+
+    document.querySelectorAll('.scan-btn-text').forEach((el) => {
+        const idle = el.getAttribute('data-idle');
+        const busy = el.getAttribute('data-busy');
+        if (idle) {
+            const ti = t(idle);
+            el.setAttribute('data-idle', ti);
+            if (!el.closest('button')?.querySelector('.scan-btn-loader:not(.hidden)')) el.textContent = ti;
+        }
+        if (busy) el.setAttribute('data-busy', t(busy));
+    });
+
+    const loader = document.getElementById('init-loader');
+    if (loader) loader.setAttribute('aria-label', t('Loading TRONSEC'));
+}
+
 function initLangSwitcher() {
     const wrap = document.getElementById('lang-switcher');
     const dd = document.getElementById('lang-dd');
@@ -548,10 +695,7 @@ function initLangSwitcher() {
     if (!wrap || !dd || !btn) return;
 
     markActiveLangOption();
-    document.querySelectorAll('[data-i18n]').forEach((el) => {
-        const k = el.getAttribute('data-i18n');
-        if (k && typeof t === 'function') el.textContent = t(k);
-    });
+    applyDomI18n();
 
     let hoverTimer = null;
     const isDesktop = () => window.matchMedia('(min-width: 769px)').matches;
@@ -862,6 +1006,22 @@ function updateDescCounter() {
     document.getElementById('report-desc-counter').textContent = `${el.value.length} / 500`;
 }
 
+function setReportSubmitBusy(busy) {
+    const btn = document.getElementById('report-submit-btn');
+    const form = document.getElementById('report-form-fields');
+    const status = document.getElementById('report-submit-status');
+    if (btn) {
+        spinBtn(btn, busy);
+        btn.classList.toggle('is-busy', busy);
+    }
+    if (form) form.classList.toggle('is-submitting', busy);
+    if (status) {
+        status.textContent = busy ? t('Sending report…') : '';
+        status.classList.toggle('hidden', !busy);
+        status.classList.toggle('is-active', busy);
+    }
+}
+
 function submitReport() {
     const target = document.getElementById('report-target').value.trim();
     if (!target) { flashInput(document.getElementById('report-target')); showToast(' Enter a target address or URL'); return; }
@@ -873,18 +1033,6 @@ function submitReport() {
     const formFields = document.getElementById('report-form-fields');
     const successBlock = document.getElementById('report-success');
 
-    function clearForm() {
-        document.getElementById('report-target').value = '';
-        document.getElementById('report-desc').value = '';
-        document.getElementById('report-links').value = '';
-        document.getElementById('report-contact').value = '';
-        document.getElementById('report-desc-counter').textContent = '0 / 500';
-        selectedReportType = null;
-        resetReportTypeButtons();
-        successBlock.classList.add('hidden');
-        formFields.classList.remove('hidden');
-    }
-
     requireCaptcha(async () => {
         const lines = [];
         lines.push('<b>[ SCAM REPORT ]</b>');
@@ -894,35 +1042,50 @@ function submitReport() {
         if (links) lines.push(`<b>Evidence:</b>\n${esc(links)}`);
         if (contact) lines.push(`<b>Contact:</b> ${esc(contact)}`);
 
-        const tgToken = (window.TRONSEC_KEYS && window.TRONSEC_KEYS.telegramBotToken) || '';
-        const tgChat = (window.TRONSEC_KEYS && window.TRONSEC_KEYS.telegramChatId) || '';
-        if (!tgToken || !tgChat) {
+        if (!(typeof window.tronsecTelegramConfigured === 'function' && window.tronsecTelegramConfigured())) {
             showToast('Report backend not configured (API keys required)');
             return;
         }
 
+        setReportSubmitBusy(true);
         try {
-            const res = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: tgChat,
-                    text: lines.join('\n'),
-                    parse_mode: 'HTML',
-                }),
-            });
+            let res;
+            if (typeof window.tronsecUseApiProxy === 'function' && window.tronsecUseApiProxy()) {
+                res = await fetch(window.tronsecProxyUrl('/telegram/sendMessage'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: lines.join('\n'),
+                        parse_mode: 'HTML',
+                    }),
+                });
+            } else {
+                const tgToken = (window.TRONSEC_KEYS && window.TRONSEC_KEYS.telegramBotToken) || '';
+                const tgChat = (window.TRONSEC_KEYS && window.TRONSEC_KEYS.telegramChatId) || '';
+                res = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: tgChat,
+                        text: lines.join('\n'),
+                        parse_mode: 'HTML',
+                    }),
+                });
+            }
             if (!res.ok) throw new Error('TG error ' + res.status);
+            setReportSubmitBusy(false);
             formFields.classList.add('hidden');
             successBlock.classList.remove('hidden');
             showToast('Report sent ✓');
         } catch (e) {
+            setReportSubmitBusy(false);
             showToast('Failed to send report — {message}', { message: e.message });
-            clearForm();
         }
     });
 }
 
 function clearReportForm() {
+    setReportSubmitBusy(false);
     const section = document.getElementById('tab-report');
     animateModuleClear(section, () => {
         document.getElementById('report-target').value = '';
@@ -938,8 +1101,6 @@ function clearReportForm() {
 }
 
 // ============ INIT ============
-function allEntries() { return []; }
-
 function getInitialTab() {
     const fromHash = window.location.hash.replace(/^#/, '');
     if (fromHash && document.getElementById(`tab-${fromHash}`)) return fromHash;
@@ -1028,13 +1189,7 @@ window.addEventListener('DOMContentLoaded', () => {
           applyScanPrefill();
         } catch (_) {}
 
-        fetchFearGreedIndex();
-        fetchMarketData();
-        setInterval(fetchFearGreedIndex, 300000);
-        setInterval(fetchTronNetworkStatus, 60000);
-        setInterval(fetchMarketData, 60000);
-        setInterval(fetchTokenActivity, 120000);
-        setInterval(fetchSecurityMetrics, 300000);
+        if (typeof hydrateTrxPriceFromCache === 'function') hydrateTrxPriceFromCache();
     } finally {
         runInitLoader();
     }

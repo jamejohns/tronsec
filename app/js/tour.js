@@ -31,7 +31,7 @@
     },
     {
       title: 'AML check',
-      text: 'Behavioral risk screening on the latest 400 transactions — composite score, concentration, counterparty graph, and watchlist matches.',
+      text: 'Behavioral risk screening on the latest 400 transactions — composite score, concentration, counterparty graph, and security flags.',
       tab: 'aml-check',
       nav: 'aml-check',
     },

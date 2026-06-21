@@ -7,95 +7,113 @@ const approvalsErr   = document.getElementById('approvals-err');
 const approvalsRes   = document.getElementById('approvals-result');
 const approvalsEmpty = document.getElementById('approvals-empty');
 
-approvalsInput.addEventListener('keydown', e => { if (e.key === 'Enter') approvalsScan(); });
+let approvalsList = [];
+let approvalsScanBusy = false;
+let approvalsScanGen = 0;
+
+function setApprovalsScanLocked(locked) {
+  approvalsScanBusy = locked;
+  if (approvalsBtn) approvalsBtn.disabled = locked;
+  if (approvalsInput) approvalsInput.disabled = locked;
+  spinBtn(approvalsBtn, locked);
+}
+
+approvalsInput.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  if (approvalsScanBusy) return;
+  approvalsScan();
+});
 approvalsBtn.addEventListener('click', approvalsScan);
 
-approvalsRes.addEventListener('click', e => {
-  const oneBtn = e.target.closest('.revoke-one-btn');
-  if (!oneBtn) return;
-  revokedSet.add(Number(oneBtn.dataset.idx));
-  renderApprovals();
-});
+function apprRevokeFootnote() {
+  return `<p class="aml-disclaimer appr-revoke-footnote">${t('Revoke from this interface is under development — you can audit allowances here; on-chain revoke will be available in a future update.')}</p>`;
+}
 
-let approvalsList = [];
-let revokedSet = new Set();
+(function initApprovalsRevokeFootnotes() {
+  const desc = document.querySelector('#tab-approvals .module-desc');
+  if (desc && !desc.querySelector('.appr-revoke-footnote')) {
+    desc.insertAdjacentHTML('beforeend', apprRevokeFootnote());
+  }
+  const empty = document.getElementById('approvals-empty');
+  if (empty && !empty.querySelector('.appr-revoke-footnote')) {
+    empty.insertAdjacentHTML('beforeend', apprRevokeFootnote());
+  }
+})();
 
 function apprRowIcon(symbol) {
   const label = (symbol || '?').replace(/^0x/i, '').slice(0, 3).toUpperCase() || 'TKN';
   return `<div class="appr-row-icon">${esc(label)}</div>`;
 }
 
-function apprRevokeBtn(idx) {
+function apprAmountBadge(amount, decimals) {
+  const risk = getApprovalRisk(amount, decimals);
+  const cls = risk === 'critical' || risk === 'high' ? 'b-red' : (risk === 'warn' ? 'b-amber' : 'b-green');
+  return badge(cls, fmtTokenAmt(amount, decimals));
+}
+
+function apprRowRiskClass(amount, decimals) {
+  const risk = getApprovalRisk(amount, decimals);
+  if (risk === 'critical' || risk === 'high') return ' is-risk';
+  if (risk === 'warn') return ' is-warn';
+  return '';
+}
+
+function apprRevokeBtn() {
   const label = esc(GLOSSARY.revoke?.lbl || 'Revoke');
-  return `<button type="button" class="wallet-action-btn wallet-action-btn--danger revoke-one-btn" data-idx="${idx}">${icSVG(IC.trash, 14)}<span>${label}</span></button>`;
+  const hint = esc(t('Revoke from this interface is under development.'));
+  return `<button type="button" class="wallet-action-btn wallet-action-btn--danger revoke-one-btn is-dev" disabled title="${hint}">${icSVG(IC.trash, 14)}<span>${label}</span><span class="appr-revoke-soon">${esc(t('In development'))}</span></button>`;
+}
+
+async function mergeApprovalCandidates(scanItems, txItems) {
+  const map = new Map();
+  for (const item of [...scanItems, ...txItems]) {
+    const { tokenAddr, spender } = await resolveApprovalAddresses(item);
+    if (!tokenAddr || !spender || !isValidTron(tokenAddr) || !isValidTron(spender)) continue;
+    const key = `${tokenAddr}_${spender}`;
+    if (!map.has(key)) {
+      map.set(key, { ...item, tokenAddr, spender });
+    }
+  }
+  return Array.from(map.values());
 }
 
 async function approvalsScan() {
+  if (approvalsScanBusy) return;
   const addr = approvalsInput.value.trim();
   setError(approvalsErr, '');
-  if (!addr) { flashInput(approvalsInput); showToast('Enter a TRON address'); return; }
-  if (!isValidTron(addr)) { flashInput(approvalsInput); showToast('Invalid TRON address — must start with T, 34 chars.'); return; }
-  spinBtn(approvalsBtn, true);
+  if (!addr) { flashInput(approvalsInput); showToast(t('Enter a TRON address')); return; }
+  if (!isValidTron(addr)) { flashInput(approvalsInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
+
+  const gen = ++approvalsScanGen;
+  setApprovalsScanLocked(true);
   approvalsRes.innerHTML = SK.approvals();
-  approvalsEmpty.style.display = 'none';
+  if (approvalsEmpty) approvalsEmpty.style.display = 'none';
   approvalsList = [];
-  revokedSet = new Set();
 
   try {
-    const data = await gridGet(`/v1/accounts/${addr}/transactions/trc20`, { limit: 200, order_by: 'block_timestamp,desc' });
-    const txList = data.data || [];
-    const approveMap = new Map();
+    const [trc20Res, nativeRes, scanRaw] = await Promise.all([
+      gridGet(`/v1/accounts/${addr}/transactions/trc20`, { limit: 200, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
+      gridGet(`/v1/accounts/${addr}/transactions`, { limit: 200, only_confirmed: true, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
+      fetchTronScanApprovalList(addr).catch(() => []),
+    ]);
+    if (gen !== approvalsScanGen) return;
 
-    txList.forEach(tx => {
-      if (tx.type === 'Approval') {
-        const key = `${tx.token_info?.address}_${tx.to}`;
-        if (!approveMap.has(key)) {
-          approveMap.set(key, {
-            token: tx.token_info?.symbol || '—',
-            tokenAddr: tx.token_info?.address || '',
-            spender: tx.to,
-            amount: tx.value,
-            decimals: tx.token_info?.decimals || 6,
-            date: tx.block_timestamp,
-          });
-        }
-      }
-    });
+    const scanCandidates = (scanRaw || []).map(normalizeTronScanApprovalItem).filter(i => i.tokenAddr && i.spender);
+    const txCandidates = collectApprovalCandidates(trc20Res?.data || [], nativeRes?.data || []);
+    const merged = await mergeApprovalCandidates(scanCandidates, txCandidates);
 
-    if (approveMap.size === 0) {
-      const rawData = await gridGet(`/v1/accounts/${addr}/transactions`, { limit: 200, only_confirmed: true });
-      const SIG = '095ea7b3';
-      (rawData.data || []).forEach(tx => {
-        const c = tx.raw_data?.contract?.[0];
-        if (c?.type === 'TriggerSmartContract') {
-          const dh = c.parameter?.value?.data || '';
-          if (dh.startsWith(SIG)) {
-            const spenderHex = dh.slice(34, 74);
-            const amountHex = dh.slice(74, 138);
-            const contractAddr = c.parameter?.value?.contract_address;
-            const key = `${contractAddr}_${spenderHex}`;
-            if (!approveMap.has(key)) {
-              approveMap.set(key, {
-                token: short(contractAddr || ''),
-                tokenAddr: contractAddr || '',
-                spender: '0x' + spenderHex,
-                amount: parseInt(amountHex, 16),
-                decimals: 6,
-                date: tx.block_timestamp,
-              });
-            }
-          }
-        }
-      });
-    }
-
-    approvalsList = Array.from(approveMap.values());
+    approvalsList = await enrichApprovalsOnChain(addr, merged);
+    if (gen !== approvalsScanGen) return;
     renderApprovals();
   } catch (e) {
+    if (gen !== approvalsScanGen) return;
     approvalsRes.innerHTML = '';
+    if (approvalsEmpty) approvalsEmpty.style.display = '';
     setError(approvalsErr, userFriendlyFetchError(e));
+  } finally {
+    if (gen === approvalsScanGen) setApprovalsScanLocked(false);
   }
-  spinBtn(approvalsBtn, false);
 }
 
 function renderApprovals() {
@@ -112,33 +130,39 @@ function renderApprovals() {
     return;
   }
 
-  const active = list.filter((_, i) => !revokedSet.has(i));
-  const unlimCount = active.filter(a => isUnlimitedApproval(a.amount, a.decimals)).length;
-  const alertsHtml = unlimCount > 0
-    ? alertBox('red', `<strong>${unlimCount} ${tt('unlimited')} ${tt('allowance')}${unlimCount > 1 ? 's' : ''}</strong> — revoke these first to reduce drainer risk.`)
-    : '';
+  const active = list;
+  const unlimCount = active.filter(a => getApprovalRisk(a.amount, a.decimals) === 'critical').length;
+  const excessiveCount = active.filter(a => getApprovalRisk(a.amount, a.decimals) === 'high').length;
+  const highRiskCount = unlimCount + excessiveCount;
+  const warnCount = active.filter(a => getApprovalRisk(a.amount, a.decimals) === 'warn').length;
 
-  const rowsHtml = list.map((a, i) => {
-    const unlim = isUnlimitedApproval(a.amount, a.decimals);
-    const isRev = revokedSet.has(i);
-    const spenderShort = short(a.spender?.toString() || '?');
+  let alertsHtml = '';
+  if (highRiskCount > 0) {
+    const parts = [];
+    if (unlimCount) parts.push(`${unlimCount} ${tt('unlimited')}`);
+    if (excessiveCount) parts.push(`${excessiveCount} ${t('excessive')}`);
+    const detail = parts.length ? ` (${parts.join(' · ')})` : '';
+    alertsHtml = alertBox('red', `<strong>${highRiskCount} ${t('high-risk allowance')}${highRiskCount > 1 ? 's' : ''}</strong>${detail} — ${t('revoke these first to reduce drainer risk.')}`);
+  } else if (warnCount > 0) {
+    alertsHtml = alertBox('amber', `<strong>${warnCount} ${t('elevated allowance')}${warnCount > 1 ? 's' : ''}</strong> — ${t('review large grants and revoke unused spenders.')}`);
+  }
+
+  const rowsHtml = list.map(a => {
     const tokenLink = a.tokenAddr
       ? `<a class="a-link appr-token-link" href="https://tronscan.org/#/token20/${esc(a.tokenAddr)}" target="_blank" rel="noopener"><span>${esc(a.token)}</span>${icSVG(IC.link, 9)}</a>`
       : `<span class="appr-token-name">${esc(a.token)}</span>`;
-    return `<div class="appr-row${isRev ? ' is-revoked' : ''}${unlim && !isRev ? ' is-risk' : ''}">
+    return `<div class="appr-row${apprRowRiskClass(a.amount, a.decimals)}">
       ${apprRowIcon(a.token)}
       <div class="appr-row-body">
         <div class="appr-row-title">
           ${tokenLink}
-          ${badge(unlim ? 'b-red' : 'b-amber', fmtTokenAmt(a.amount, a.decimals))}
+          ${apprAmountBadge(a.amount, a.decimals)}
         </div>
-        <div class="appr-row-meta">${tt('spender')}: ${esc(spenderShort)} · ${a.date ? ago(a.date) : '—'}</div>
-        ${a.tokenAddr ? `<div class="appr-row-addr">${esc(short(a.tokenAddr))}</div>` : ''}
+        <div class="appr-row-meta">${tt('spender')}: ${walletContractScanBtn(a.spender)} · ${a.date ? ago(a.date) : '—'}</div>
+        ${a.tokenAddr ? `<div class="appr-row-addr">${walletContractScanBtn(a.tokenAddr)}</div>` : ''}
       </div>
       <div class="appr-row-action">
-        ${isRev
-          ? badge('b-green', 'Revoked')
-          : apprRevokeBtn(i)}
+        ${apprRevokeBtn()}
       </div>
     </div>`;
   }).join('');
@@ -148,22 +172,41 @@ function renderApprovals() {
       ${alertsHtml}
       <div class="an-stat-grid an-stat-grid--2 appr-hero-grid">
         <div class="an-stat">
-          <div class="an-stat-label">Active ${tt('allowance')}s</div>
+          <div class="an-stat-label">${tt('allowance')}</div>
           <div class="an-stat-value is-info">${active.length} <span class="appr-stat-unit">/ ${list.length}</span></div>
-          <div class="an-stat-sub">open token permissions</div>
+          <div class="an-stat-sub">${t('on-chain token permissions')}</div>
         </div>
         <div class="an-stat">
-          <div class="an-stat-label">${tt('unlimited')}</div>
-          <div class="an-stat-value ${unlimCount > 0 ? 'is-red' : 'is-green'}">${unlimCount}</div>
-          <div class="an-stat-sub">${unlimCount > 0 ? 'high-risk allowances' : 'no unlimited grants'}</div>
+          <div class="an-stat-label">${tt('risk')}</div>
+          <div class="an-stat-value ${highRiskCount > 0 ? 'is-red' : (warnCount > 0 ? 'is-amber' : 'is-green')}">${highRiskCount}${warnCount > 0 && highRiskCount === 0 ? ` + ${warnCount}` : ''}</div>
+          <div class="an-stat-sub">${highRiskCount > 0
+            ? (unlimCount && excessiveCount
+              ? `${unlimCount} ${tt('unlimited')} · ${excessiveCount} ${t('excessive')}`
+              : unlimCount
+                ? `${unlimCount} ${tt('unlimited')}`
+                : `${excessiveCount} ${t('excessive')}`)
+            : (warnCount > 0 ? t('elevated grants only') : t('no high-risk grants'))}</div>
         </div>
       </div>
       <div class="appr-section">
         <div class="appr-section-head">
-          <span class="appr-section-title">Allowances <span>· ${list.length}</span></span>
+          <span class="appr-section-title">${tt('allowance')} <span>· ${list.length}</span></span>
         </div>
         <div class="appr-list">${rowsHtml}</div>
+        ${apprRevokeFootnote()}
       </div>
     </div>`;
 
+  approvalsRes.querySelectorAll('.wallet-contract-scan-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      openAddressScan(btn.getAttribute('data-addr'));
+    });
+  });
+}
+
+function resetApprovalsScanCache() {
+  approvalsScanGen++;
+  approvalsList = [];
+  setApprovalsScanLocked(false);
 }

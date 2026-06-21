@@ -53,12 +53,9 @@
   <div class="init-loader-inner">
     <div class="init-loader-brand">
       <img src="../assets/brand/logo-mark.svg" alt="" class="init-loader-icon" width="44" height="44">
-      <div class="init-loader-head">
-        <span class="init-loader-name">TRONSEC</span>
-        <span class="init-loader-badge">v1.0</span>
-      </div>
+      <span class="init-loader-name">TRONSEC</span>
     </div>
-    <p class="init-loader-tagline">TRX SECURITY SCANNER <span class="init-loader-sep">|</span> <a href="https://tronsec.io/" class="init-loader-site" data-tronsec-site>tronsec.io</a></p>
+    <p class="init-loader-tagline">TRX SECURITY SCANNER <span class="init-loader-sep">|</span> POWERED BY <span class="init-loader-tron">TRON</span></p>
     <div class="init-loader-beam" aria-hidden="true"><span class="init-loader-beam-fill" id="init-loader-fill"></span></div>
   </div>
 </div>
@@ -68,11 +65,9 @@
 </div>
 <header class="app-header">
 <div class="app-header-left">
-<a href="https://tronsec.io/" class="app-brand" title="TRONSEC — tronsec.io" data-tronsec-brand>
-<img src="../assets/brand/logo-mark.svg" alt="">
+<a href="/" class="app-brand" title="Back to TRONSEC site" data-tronsec-brand>
+<img src="../assets/brand/logo-mark.svg" alt="TRONSEC">
 <span class="app-brand-name">TRONSEC</span>
-<span class="app-brand-meta">tronsec.io</span>
-<span class="app-brand-badge">v1.0</span>
 </a>
 <div class="app-header-status hidden sm:flex">
 <img src="../assets/brand/tron-trx-icon.svg" alt="" class="app-header-chain-icon" aria-hidden="true">
@@ -151,27 +146,12 @@
 </div>
 </div>
 <div class="sidebar-footer">
-<a href="https://tronsec.io/" class="sidebar-brand-link hidden md:flex" data-tronsec-brand>
-<img src="../assets/brand/logo-mark.svg" alt="" width="12" height="12">
-<span class="sidebar-brand-name">TRONSEC</span>
-<span class="sidebar-brand-domain">tronsec.io</span>
-</a>
-<div class="sidebar-aside hidden md:block">
-<div class="sidebar-aside-fg">
-<div class="sidebar-aside-head">
-<span class="sidebar-aside-label">Fear &amp; Greed</span>
-<span class="sidebar-aside-live"><span class="app-live-dot"></span>Live</span>
-</div>
-<div class="sidebar-aside-fg-row">
-<span id=fg-value class="sidebar-aside-fg-val"><span class="sk sidebar-aside-sk-val"></span></span>
-<span id=fg-sentiment class="sidebar-aside-fg-meta"><span class="sk sidebar-aside-sk-meta"></span></span>
-</div>
-<div class="sidebar-aside-track is-loading"><div id=fg-bar class="sidebar-aside-fill" style=width:0%></div></div>
-</div>
-<div class="sidebar-aside-actions">
-<button type="button" onclick='copyDonate("TRON")' class="sidebar-aside-btn">[ DONATE ]</button>
-<a href=https://t.me/tronsec_chat target=_blank rel=noopener class="sidebar-aside-btn">[ TELEGRAM ]</a>
-</div>
+<div class="sidebar-aside-ghostline">
+<button type="button" class="sidebar-aside-ghost" data-footer-donate>donate</button>
+<span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
+<a href="https://t.me/tronsec_chat" target="_blank" rel="noopener" class="sidebar-aside-ghost" data-footer-telegram>telegram</a>
+<span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
+<a href="/changelog/" target="_blank" rel="noopener" class="sidebar-aside-ghost sidebar-aside-ghost--with-badge" data-footer-changelog>changelog <span class="sidebar-aside-ver">v1.0.1</span></a>
 </div>
 </div>
 </nav>
@@ -211,7 +191,7 @@
 <div id=wallet-empty class="appr-empty">
 <i data-lucide=fingerprint class="appr-empty-icon"></i>
 <p class="appr-empty-title">Scan a TRON wallet</p>
-<p class="appr-empty-hint">Paste an address to load portfolio, token list, resource meters, security signals and recent transactions</p>
+<p class="appr-empty-hint">Paste an address to load portfolio, token list, resource meters, security tags and recent transactions</p>
 </div>
 </div>
 </section>
@@ -417,12 +397,11 @@
 </button>
 </div>
 <div class="module-desc">
-<p class="module-desc-lead">Behavioral risk screening on the latest 400 transactions — composite score, concentration analysis, counterparty graph, activity patterns, and watchlist matches for any address.</p>
+<p class="module-desc-lead">Behavioral risk screening on the latest 400 transactions — composite score, concentration analysis, counterparty graph, activity patterns, and public security flags for any address.</p>
 <div class="module-desc-tags">
 <span class="module-desc-tag">Risk score</span>
 <span class="module-desc-tag">400 txs</span>
 <span class="module-desc-tag">Counterparties</span>
-<span class="module-desc-tag">Watchlist</span>
 <span class="module-desc-tag">PDF export</span>
 </div>
 </div>
@@ -442,7 +421,7 @@
 <div id=aml-empty class="appr-empty">
 <i data-lucide=shield class="appr-empty-icon"></i>
 <p class="appr-empty-title">Run AML screening</p>
-<p class="appr-empty-hint">Screen any address — risk score, transaction concentration, peer graph, security flags and local watchlist hits</p>
+<p class="appr-empty-hint">Screen any address — risk score, transaction concentration, peer graph, and on-chain security flags</p>
 </div>
 </div>
 </section>
@@ -456,10 +435,9 @@
 </button>
 </div>
 <div class="module-desc">
-<p class="module-desc-lead">Help protect the TRON community — report scam addresses, phishing sites, honeypots, rug pulls, or impersonators with evidence links. Verified submissions feed the shared watchlist used across TRONSEC.</p>
+<p class="module-desc-lead">Help protect the TRON community — report scam addresses, phishing sites, honeypots, rug pulls, or impersonators with evidence links. Verified submissions are reviewed manually.</p>
 <div class="module-desc-tags">
 <span class="module-desc-tag">Community reports</span>
-<span class="module-desc-tag">Watchlist</span>
 <span class="module-desc-tag">Evidence links</span>
 <span class="module-desc-tag">Manual review</span>
 </div>
@@ -522,8 +500,10 @@
 <div class="report-actions">
 <button type="button" id=report-submit-btn onclick="submitReport()" class="report-submit-btn">
 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-<span>[ SUBMIT ]</span>
+<span class="scan-btn-text" data-idle="[ SUBMIT ]" data-busy="[ SUBMITTING ]">[ SUBMIT ]</span>
+<span class="scan-btn-loader hidden"></span>
 </button>
+<p id=report-submit-status class="report-submit-status hidden" aria-live="polite"></p>
 </div>
 </div>
 <div id=report-success class="report-success hidden">
@@ -655,7 +635,7 @@
 <p class="captcha-success-sub">session verified · proceeding</p>
 </div>
 <div class="captcha-footnote">
-<span>TRONSEC v1.0</span>
+<span>TRONSEC</span>
 <span class="captcha-footnote-tag">protected</span>
 </div>
 <button type="button" id=captcha-verify-btn onclick=verifyCaptcha() disabled class="captcha-btn captcha-btn--disabled">[ VERIFY ]</button>
@@ -680,11 +660,17 @@
 <button type="button" onclick='switchTab("report"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=flag class="w-4 h-4 shrink-0 opacity-70"></i> Report scam</button>
 </div>
 </div>
-<div class="mobile-sheet-block mobile-sheet-block--community">
-<div class="mobile-sheet-block-label">Community</div>
-<div class="mobile-sheet-actions">
-<button type="button" onclick='copyDonate("TRON")' class="mobile-sheet-action-btn">[ DONATE ]</button>
-<a href=https://t.me/tronsec_chat target=_blank rel=noopener class="mobile-sheet-action-btn">[ TELEGRAM ]</a>
+<div class="sidebar-aside-ghostline mobile-sheet-ghostline">
+<button type="button" class="sidebar-aside-ghost" data-footer-donate>donate</button>
+<span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
+<a href="https://t.me/tronsec_chat" target="_blank" rel="noopener" class="sidebar-aside-ghost" data-footer-telegram>telegram</a>
+<span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
+<a href="/changelog/" target="_blank" rel="noopener" class="sidebar-aside-ghost sidebar-aside-ghost--with-badge" data-footer-changelog>changelog <span class="sidebar-aside-ver">v1.0.1</span></a>
+</div>
+
+
+
+
 </div>
 </div>
 </div>
@@ -697,6 +683,8 @@
 </nav>
 <script src=js/secrets.js></script>
 <script src=js/secrets.local.js></script>
+<script src=js/proxy-config.js></script>
+<script src=js/api-proxy.js></script>
 <script src=js/i18n.js></script>
 <script src=../assets/js/i18n-locales.js></script>
 <script src=../assets/js/contract-i18n.js></script>

@@ -26,16 +26,86 @@ window.tronsecShieldMarkSvg = function tronsecShieldMarkSvg(size, className) {
   return `<svg${cls} width="${size}" height="${size}" viewBox="0 0 64 64" fill="none" aria-hidden="true"><path d="M32 8L12 18v12c0 10.8 8.2 20.8 20 24 11.8-3.2 20-13.2 20-24V18L32 8z" fill="#f5f5f7"/></svg>`;
 };
 
+const RISK_SHIELD_PATH = 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z';
+
+function riskShieldTier(score, flagged) {
+  const risk = flagged ? Math.max(score, 70) : score;
+  if (risk >= 50) return 'high';
+  if (risk >= 25) return 'med';
+  return 'low';
+}
+
+window.riskShieldIcon = function riskShieldIcon(score, size, opts = {}) {
+  const { flagged = false, className = '', muted = false } = opts;
+  const extraCls = className ? ' ' + esc(className) : '';
+
+  if (muted) {
+    return `<svg class="risk-shield-icon risk-shield-icon--muted${extraCls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="${RISK_SHIELD_PATH}" fill="var(--text-3)" fill-opacity="0.12" stroke="var(--text-3)" stroke-width="1.2"/>
+    </svg>`;
+  }
+
+  const tier = riskShieldTier(score, flagged);
+  const risk = flagged ? Math.max(score, 70) : score;
+  const palette = {
+    low:  { color: 'var(--green)', fill: 0.14, glow: 3 },
+    med:  { color: 'var(--amber)', fill: 0.17, glow: 4 },
+    high: { color: 'var(--red)',   fill: 0.19, glow: 5.5 },
+  };
+  const p = palette[tier];
+  const fillOpacity = Math.min(0.42, p.fill + (Math.min(risk, 100) / 100) * 0.1);
+
+  let mark = '';
+  if (tier === 'med') {
+    mark = `<g fill="${p.color}" stroke="${p.color}">
+      <rect x="11.25" y="9" width="1.5" height="5.2" rx="0.75" opacity="0.92"/>
+      <circle cx="12" cy="16.4" r="1.05" opacity="0.95"/>
+    </g>`;
+  } else if (tier === 'high') {
+    mark = `<g stroke="${p.color}" stroke-linecap="round" fill="none">
+      <path d="M10.2 10.2 L13.8 13.8" stroke-width="1.35" opacity="0.88"/>
+      <path d="M13.8 10.2 L10.2 13.8" stroke-width="1.35" opacity="0.88"/>
+    </g>`;
+  }
+
+  return `<svg class="risk-shield-icon risk-shield-icon--${tier}${extraCls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" aria-hidden="true" style="flex-shrink:0;filter:drop-shadow(0 0 ${p.glow}px ${p.color})">
+    <path d="${RISK_SHIELD_PATH}" fill="${p.color}" fill-opacity="${fillOpacity}" stroke="${p.color}" stroke-width="1.2"/>
+    ${mark}
+  </svg>`;
+};
+
 const TRONGRID_API_KEY = (window.TRONSEC_KEYS && window.TRONSEC_KEYS.trongrid) || '';
 const TRONSCAN_API_KEY = (window.TRONSEC_KEYS && window.TRONSEC_KEYS.tronscan) || '';
 const BASE_GRID = 'https://api.trongrid.io';
 const BASE_SCAN = 'https://apilist.tronscanapi.com/api';
 
 function trongridHeaders() {
-  return TRONGRID_API_KEY ? { 'TRON-PRO-API-KEY': TRONGRID_API_KEY } : {};
+  const key = (window.TRONSEC_KEYS && window.TRONSEC_KEYS.trongrid) || TRONGRID_API_KEY || '';
+  return key ? { 'TRON-PRO-API-KEY': key } : {};
 }
 function tronscanHeaders() {
-  return TRONSCAN_API_KEY ? { 'TRON-PRO-API-KEY': TRONSCAN_API_KEY } : {};
+  const key = (window.TRONSEC_KEYS && window.TRONSEC_KEYS.tronscan) || TRONSCAN_API_KEY || '';
+  return key ? { 'TRON-PRO-API-KEY': key } : {};
+}
+
+function useApiProxy() {
+  return typeof window.tronsecUseApiProxy === 'function' && window.tronsecUseApiProxy();
+}
+function gridRequestUrl(path, params) {
+  if (useApiProxy()) return window.tronsecProxyUrl('/grid' + path, params);
+  const url = new URL(BASE_GRID + path);
+  Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, v));
+  return url.toString();
+}
+function scanRequestUrl(path, params) {
+  if (useApiProxy()) return window.tronsecProxyUrl('/scan' + path, params);
+  const url = new URL(BASE_SCAN + path);
+  Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, v));
+  return url.toString();
+}
+function upstreamHeaders(kind) {
+  if (useApiProxy()) return {};
+  return kind === 'scan' ? tronscanHeaders() : trongridHeaders();
 }
 
 // ==================================
@@ -43,13 +113,76 @@ function tronscanHeaders() {
 // ==================================
 const isValidTron = a => /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test((a||'').trim());
 const short = a => a ? `${a.slice(0,6)}?${a.slice(-4)}` : '—';
-/** Human-readable address for prose (ellipsis, not "?"). */
+/** Human-readable address or tx hash for prose (ellipsis, not "?"). */
 const addrLabel = a => {
   if (!a || a === '—') return '—';
   const s = String(a).trim();
   if (isValidTron(s) && s.length > 13) return `${s.slice(0, 6)}…${s.slice(-4)}`;
+  if (/^[0-9a-fA-F]{64}$/.test(s)) return `${s.slice(0, 6)}…${s.slice(-4)}`;
   return s;
 };
+
+function openContractScan(addr) {
+  if (!addr) return;
+  switchTab('contract-scan');
+  setTimeout(() => {
+    const input = document.getElementById('contract-input');
+    if (input) input.value = addr;
+    if (typeof contractScan === 'function') contractScan();
+  }, 0);
+}
+
+function openWalletScan(addr) {
+  if (!addr) return;
+  switchTab('scanner');
+  setTimeout(() => {
+    const input = document.getElementById('wallet-input');
+    if (input) input.value = addr;
+    if (typeof walletScan === 'function') walletScan();
+  }, 0);
+}
+
+const _contractProbeCache = new Map();
+
+async function probeTronContract(addr) {
+  if (!addr || !isValidTron(addr)) return false;
+  if (_contractProbeCache.has(addr)) return _contractProbeCache.get(addr);
+  try {
+    const contractData = await gridPost('/wallet/getcontract', { value: addr, visible: true });
+    const ok = !!(contractData && !contractData.Error && (contractData.bytecode || contractData.abi));
+    _contractProbeCache.set(addr, ok);
+    return ok;
+  } catch (_) {
+    _contractProbeCache.set(addr, false);
+    return false;
+  }
+}
+
+async function openAddressScan(addr) {
+  if (!addr) return;
+  const isContract = await probeTronContract(addr);
+  if (isContract) openContractScan(addr);
+  else openWalletScan(addr);
+}
+
+function bindAddressScanButtons(root) {
+  (root || document).querySelectorAll('.wallet-contract-scan-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      openAddressScan(btn.getAttribute('data-addr'));
+    });
+  });
+}
+
+function openTxDecoder(hash) {
+  if (!hash) return;
+  switchTab('tx-decoder');
+  setTimeout(() => {
+    const input = document.getElementById('tx-input');
+    if (input) input.value = hash;
+    if (typeof txDecode === 'function') txDecode();
+  }, 0);
+}
 
 const fmtNum = n => {
   if (n == null) return '—';
@@ -109,6 +242,253 @@ function isUnlimitedApproval(amount, decimals=6) {
   return big >= UNLIMITED_THRESHOLD;
 }
 
+const APPROVAL_RISK_HIGH_TOKENS = BigInt(1_000_000);
+const APPROVAL_RISK_WARN_TOKENS = BigInt(100_000);
+
+function approvalTokenWhole(amount, decimals = 6) {
+  if (amount == null || amount === '') return null;
+  let big;
+  try { big = typeof amount === 'bigint' ? amount : BigInt(String(amount)); }
+  catch (_) { return null; }
+  if (big >= UNLIMITED_THRESHOLD) return null;
+  const dec = Math.min(Math.max(parseInt(decimals, 10) || 6, 0), 18);
+  return big / BigInt(10 ** dec);
+}
+
+function getApprovalRisk(amount, decimals = 6) {
+  if (isUnlimitedApproval(amount, decimals)) return 'critical';
+  const whole = approvalTokenWhole(amount, decimals);
+  if (whole == null) return 'normal';
+  if (whole >= APPROVAL_RISK_HIGH_TOKENS) return 'high';
+  if (whole >= APPROVAL_RISK_WARN_TOKENS) return 'warn';
+  return 'normal';
+}
+
+function isHighRiskApproval(amount, decimals = 6) {
+  const risk = getApprovalRisk(amount, decimals);
+  return risk === 'critical' || risk === 'high';
+}
+
+function approvalRiskRank(amount, decimals = 6) {
+  return { critical: 3, high: 2, warn: 1, normal: 0 }[getApprovalRisk(amount, decimals)] || 0;
+}
+
+const APPROVE_SIG = '095ea7b3';
+
+function countDistinctApprovals(trc20TxList, nativeTxList) {
+  const approveMap = new Map();
+  (trc20TxList || []).forEach(tx => {
+    if (tx.type !== 'Approval') return;
+    const tokenAddr = tx.token_info?.address || tx.token_info?.contract_address || '';
+    const key = `${tokenAddr}_${tx.to}`;
+    if (!approveMap.has(key)) approveMap.set(key, 1);
+  });
+  if (approveMap.size === 0 && nativeTxList?.length) {
+    nativeTxList.forEach(tx => {
+      const c = tx.raw_data?.contract?.[0];
+      if (c?.type !== 'TriggerSmartContract') return;
+      const dh = c.parameter?.value?.data || '';
+      if (!dh.startsWith(APPROVE_SIG)) return;
+      const spenderHex = dh.slice(34, 74);
+      const contractAddr = c.parameter?.value?.contract_address;
+      const key = `${contractAddr}_${spenderHex}`;
+      if (!approveMap.has(key)) approveMap.set(key, 1);
+    });
+  }
+  return approveMap.size;
+}
+
+function _base58Decode(str) {
+  if (!str) return null;
+  const bytes = [0];
+  for (let i = 0; i < str.length; i++) {
+    const val = BASE58_ALPHABET.indexOf(str[i]);
+    if (val < 0) return null;
+    let carry = val;
+    for (let j = 0; j < bytes.length; j++) {
+      carry += bytes[j] * 58;
+      bytes[j] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  for (let i = 0; i < str.length && str[i] === BASE58_ALPHABET[0]; i++) bytes.push(0);
+  return new Uint8Array(bytes.reverse());
+}
+
+function tronAddressToAbiParam(addr) {
+  if (!addr) return null;
+  if (isValidTron(addr)) {
+    const decoded = _base58Decode(addr);
+    if (!decoded || decoded.length < 21) return null;
+    const hex = Array.from(decoded.slice(0, 21)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return hex.padStart(64, '0');
+  }
+  const clean = String(addr).replace(/^0x/i, '');
+  const hex41 = clean.length === 40 ? '41' + clean : (clean.startsWith('41') ? clean : null);
+  return hex41 ? hex41.padStart(64, '0') : null;
+}
+
+async function fetchOnChainAllowance(owner, tokenContract, spender) {
+  const ownerParam = tronAddressToAbiParam(owner);
+  const spenderParam = tronAddressToAbiParam(spender);
+  if (!ownerParam || !spenderParam) return null;
+  try {
+    const res = await gridPost('/wallet/triggerconstantcontract', {
+      owner_address: owner,
+      contract_address: tokenContract,
+      function_selector: 'allowance(address,address)',
+      parameter: ownerParam + spenderParam,
+      visible: true,
+    });
+    const hex = res?.constant_result?.[0];
+    if (!hex) return null;
+    return BigInt('0x' + hex);
+  } catch (_) {
+    return null;
+  }
+}
+
+function collectApprovalCandidates(trc20TxList, nativeTxList) {
+  const map = new Map();
+  const put = (key, entry) => {
+    if (!map.has(key)) map.set(key, entry);
+  };
+
+  (trc20TxList || []).forEach(tx => {
+    if (tx.type !== 'Approval') return;
+    const tokenAddr = tx.token_info?.address || tx.token_info?.contract_address || '';
+    const spender = tx.to;
+    if (!tokenAddr || !spender) return;
+    const key = `${tokenAddr}_${spender}`;
+    let amount = tx.value;
+    try {
+      const big = typeof amount === 'bigint' ? amount : BigInt(String(amount || 0));
+      if (big === BigInt(0)) return;
+    } catch (_) { return; }
+    put(key, {
+      token: tx.token_info?.symbol || tx.token_info?.name || '—',
+      tokenAddr,
+      spender,
+      amount,
+      decimals: parseInt(tx.token_info?.decimals || 6, 10) || 6,
+      date: tx.block_timestamp || 0,
+    });
+  });
+
+  (nativeTxList || []).forEach(tx => {
+    const c = tx.raw_data?.contract?.[0];
+    if (c?.type !== 'TriggerSmartContract') return;
+    const dh = c.parameter?.value?.data || '';
+    if (!dh.startsWith(APPROVE_SIG)) return;
+    const spenderHex = dh.slice(34, 74);
+    const amountHex = dh.slice(74, 138);
+    const contractAddr = c.parameter?.value?.contract_address;
+    if (!contractAddr || !spenderHex) return;
+    const key = `${contractAddr}_${spenderHex}`;
+    let amount = BigInt(0);
+    try { amount = amountHex ? BigInt('0x' + amountHex) : BigInt(0); } catch (_) { return; }
+    if (amount === BigInt(0)) return;
+    put(key, {
+      token: short(contractAddr),
+      tokenAddr: contractAddr,
+      spender: spenderHex.length === 40 ? '41' + spenderHex : spenderHex,
+      amount,
+      decimals: 6,
+      date: tx.block_timestamp || 0,
+    });
+  });
+
+  return Array.from(map.values());
+}
+
+function normalizeTronScanApprovalItem(item) {
+  const tokenInfo = item.tokenInfo || item.token_info || item.token || {};
+  const tokenAddr = tokenInfo.tokenId || tokenInfo.token_id || item.contract_address || item.tokenId || item.token_id || '';
+  const spender = item.to_address || item.spender || item.toAddress || item.to || '';
+  const rawAmt = item.amount ?? item.remainAmount ?? item.remain ?? item.approveAmount ?? item.value;
+  const unlimited = !!(item.unlimited || item.isUnlimited || item.is_unlimited);
+  return {
+    token: tokenInfo.tokenAbbr || tokenInfo.token_abbr || item.tokenAbbr || item.tokenName || item.token_name || '—',
+    tokenAddr,
+    spender,
+    amount: unlimited ? UNLIMITED_THRESHOLD : rawAmt,
+    decimals: parseInt(tokenInfo.tokenDecimal || tokenInfo.token_decimal || item.decimals || 6, 10) || 6,
+    date: item.operate_time || item.timestamp || item.block_timestamp || item.time || 0,
+    unlimited,
+  };
+}
+
+async function fetchTronScanApprovalList(addr) {
+  const all = [];
+  let start = 0;
+  const limit = 50;
+  for (let page = 0; page < 12; page++) {
+    const res = await scanGet('/account/approve/list', { address: addr, start, limit, type: 'token' }).catch(() => null);
+    const batch = res?.data || res?.approveList || res?.list || [];
+    if (!Array.isArray(batch) || !batch.length) break;
+    all.push(...batch);
+    if (batch.length < limit) break;
+    start += limit;
+  }
+  return all;
+}
+
+async function resolveApprovalAddresses(entry) {
+  let tokenAddr = entry.tokenAddr;
+  let spender = entry.spender;
+  if (tokenAddr && !isValidTron(tokenAddr)) tokenAddr = await hexToTronAddress(tokenAddr);
+  if (spender && !isValidTron(spender)) {
+    const hex = String(spender).replace(/^0x/i, '');
+    const normalized = hex.length === 40 ? '41' + hex : hex;
+    spender = await hexToTronAddress(normalized);
+  }
+  return { tokenAddr, spender };
+}
+
+async function enrichApprovalsOnChain(owner, entries, concurrency = 6) {
+  const merged = new Map();
+  for (const entry of entries) {
+    const { tokenAddr, spender } = await resolveApprovalAddresses(entry);
+    if (!tokenAddr || !spender || !isValidTron(tokenAddr) || !isValidTron(spender)) continue;
+    const key = `${tokenAddr}_${spender}`;
+    if (!merged.has(key)) {
+      merged.set(key, {
+        ...entry,
+        tokenAddr,
+        spender,
+        decimals: entry.decimals || 6,
+      });
+    }
+  }
+
+  const keys = Array.from(merged.keys());
+  const active = [];
+  for (let i = 0; i < keys.length; i += concurrency) {
+    const chunk = keys.slice(i, i + concurrency);
+    const rows = await Promise.all(chunk.map(async key => {
+      const entry = merged.get(key);
+      const onChain = await fetchOnChainAllowance(owner, entry.tokenAddr, entry.spender);
+      if (onChain == null || onChain === BigInt(0)) return null;
+      return {
+        ...entry,
+        amount: onChain,
+      };
+    }));
+    active.push(...rows.filter(Boolean));
+  }
+
+  active.sort((a, b) => {
+    const dr = approvalRiskRank(b.amount, b.decimals) - approvalRiskRank(a.amount, a.decimals);
+    if (dr) return dr;
+    return (b.date || 0) - (a.date || 0);
+  });
+  return active;
+}
+
 function fmtTokenAmt(raw, decimals = 6) {
   if (raw == null) return '—';
   let bigRaw;
@@ -142,10 +522,8 @@ function esc(s) {
 }
 
 async function gridGet(path, params={}) {
-  const url = new URL(BASE_GRID+path);
-  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k,v));
-  const headers = trongridHeaders();
-  const res = await fetch(url.toString(), {headers});
+  const headers = upstreamHeaders('grid');
+  const res = await fetch(gridRequestUrl(path, params), {headers});
   if (!res.ok) {
     let bodyText = '';
     try { bodyText = await res.text(); } catch(_) { bodyText = ''; }
@@ -161,8 +539,8 @@ async function gridGet(path, params={}) {
 }
 
 async function gridPost(path, body) {
-  const headers = {'Content-Type':'application/json', ...trongridHeaders()};
-  const res = await fetch(BASE_GRID+path, {method:'POST', headers, body:JSON.stringify(body)});
+  const headers = {'Content-Type':'application/json', ...upstreamHeaders('grid')};
+  const res = await fetch(gridRequestUrl(path), {method:'POST', headers, body:JSON.stringify(body)});
   if (!res.ok) {
     let bodyText = '';
     try { bodyText = await res.text(); } catch(_) { bodyText = ''; }
@@ -213,9 +591,8 @@ function _enqueueScan(url, headers) {
 }
 
 async function scanGet(path, params={}) {
-  const url = new URL(BASE_SCAN+path);
-  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k,v));
-  const headers = tronscanHeaders();
+  const url = new URL(scanRequestUrl(path, params));
+  const headers = upstreamHeaders('scan');
   return _enqueueScan(url, headers);
 }
 
@@ -248,63 +625,229 @@ async function fetchTrc20FromTronScan(address) {
   return [];
 }
 
+function scanTransferRows(res) {
+  if (!res) return [];
+  return res.data || res.transfers || res.transactions || res.txs || (Array.isArray(res) ? res : null) || res.items || [];
+}
+
+function normalizeScanTransferToGridTx(row) {
+  const from = row.transferFromAddress || row.from_address || row.from || row.fromAddress || row.ownerAddress || '';
+  const to = row.transferToAddress || row.to_address || row.to || row.toAddress || '';
+  const amount = row.amount ?? row.quant ?? row.transfer_amount ?? 0;
+  const ts = row.block_timestamp || row.timestamp || row.block_ts || 0;
+  return {
+    txID: row.transactionHash || row.transaction_id || row.hash || row.txID || '',
+    block_timestamp: ts,
+    raw_data: {
+      contract: [{
+        type: 'TransferContract',
+        parameter: { value: { owner_address: from, to, to_address: to, amount } },
+      }],
+    },
+  };
+}
+
+function normalizeScanTrc20TransferToGridTx(row) {
+  const from = row.from_address || row.from || row.transferFromAddress || row.ownerAddress || '';
+  const to = row.to_address || row.to || row.transferToAddress || '';
+  const contract = row.contract_address || row.tokenId || row.tokenAddress || row.token_id || '';
+  const amount = row.quant ?? row.amount ?? row.value ?? row.token_amount ?? 0;
+  const ts = row.block_timestamp || row.timestamp || 0;
+  return {
+    txID: row.transaction_id || row.transactionHash || row.hash || row.txID || '',
+    block_timestamp: ts,
+    _scanTrc20Peer: to,
+    raw_data: {
+      contract: [{
+        type: 'TriggerSmartContract',
+        parameter: { value: { owner_address: from, contract_address: contract, amount, data: '' } },
+      }],
+    },
+  };
+}
+
+async function fetchTronScanNativeTransfers(address, limit = 200) {
+  const endpoints = [
+    ['/transfer', { address, start: 0, limit }],
+    ['/transactions', { address, start: 0, limit }],
+  ];
+  for (const [path, params] of endpoints) {
+    try {
+      const rows = scanTransferRows(await scanGet(path, params));
+      if (rows.length) return rows.map(normalizeScanTransferToGridTx);
+    } catch (_) {}
+  }
+  return [];
+}
+
+function dedupeTxList(txs) {
+  const seen = new Set();
+  const out = [];
+  for (const tx of txs) {
+    const id = tx.txID || tx.transaction_id || tx.transactionHash
+      || `${tx.block_timestamp || 0}:${tx.raw_data?.contract?.[0]?.type || 'tx'}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(tx);
+  }
+  return out;
+}
+
+async function fetchAmlTxHistory(address) {
+  const [page1, page2] = await Promise.all([
+    gridGet(`/v1/accounts/${address}/transactions`, { limit: 200, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
+    gridGet(`/v1/accounts/${address}/transactions`, { limit: 200, order_by: 'block_timestamp,desc', start: 200 }).catch(() => ({ data: [] })),
+  ]);
+  let txs = (page1.data || []).concat(page2.data || []);
+  if (txs.length >= 50) return dedupeTxList(txs).slice(0, 400);
+
+  const [nativeScan, trc20Raw] = await Promise.all([
+    fetchTronScanNativeTransfers(address, 200).catch(() => []),
+    fetchTrc20FromTronScan(address).catch(() => []),
+  ]);
+  const trc20Txs = trc20Raw.map(normalizeScanTrc20TransferToGridTx).filter(t => t._scanTrc20Peer);
+  txs = dedupeTxList(txs.concat(nativeScan, trc20Txs));
+  txs.sort((a, b) => (b.block_timestamp || 0) - (a.block_timestamp || 0));
+  return txs.slice(0, 400);
+}
+
 
 // ==================================
-//  TRX PRICE  (used by wallet.js for USD calculations)
+//  TRX PRICE  (wallet USD + analytics market — shared CMC cache)
 // ==================================
 let TRX_PRICE  = null;
 let TRX_CHANGE = null;
 
-const _PRICE_KEY = 'trxs_price_v1';
-const _PRICE_TTL = 3 * 60 * 1000;
+const TRX_MARKET_KEY = 'tronsec_trx_market_v1';
+const TRX_MARKET_TTL = 30 * 60 * 1000;
+window.TRONSEC_TRX_MARKET_TTL = TRX_MARKET_TTL;
 
-function _priceFromCache() {
+function readTrxMarketCache() {
   try {
-    const d = JSON.parse(sessionStorage.getItem(_PRICE_KEY));
-    if (d && Date.now() - d.ts < _PRICE_TTL) return d;
-  } catch(_) {}
+    const d = JSON.parse(localStorage.getItem(TRX_MARKET_KEY));
+    if (d && d.usd) return d;
+  } catch (_) {}
   return null;
 }
 
-function _priceToCache(usd, change) {
-  try { sessionStorage.setItem(_PRICE_KEY, JSON.stringify({usd, change, ts: Date.now()})); } catch(_) {}
+function isTrxMarketCacheFresh(entry) {
+  return !!(entry && entry.ts && Date.now() - entry.ts < TRX_MARKET_TTL);
 }
 
-async function fetchTrxPrice() {
+function writeTrxMarketCache(quote) {
+  if (!quote?.usd) return;
   try {
-    const r = await fetch(`${BASE_SCAN}/funds`, {cache:'no-store', headers: tronscanHeaders()});
-    if (r.ok) {
-      const d = await r.json();
-      const usd = parseFloat(d.priceInUsd || 0) || null;
-      if (usd) return {usd, change: null};
-    }
-  } catch(_) {}
-  const r2 = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=tron&vs_currencies=usd&include_24hr_change=true', {cache:'no-store'});
-  if (!r2.ok) throw new Error('CoinGecko '+r2.status);
-  const d2 = await r2.json();
-  return {usd: d2?.tron?.usd || null, change: d2?.tron?.usd_24h_change || null};
+    localStorage.setItem(TRX_MARKET_KEY, JSON.stringify({
+      usd: quote.usd,
+      change: quote.change ?? null,
+      marketCap: quote.marketCap ?? null,
+      volume24h: quote.volume24h ?? null,
+      ts: Date.now(),
+    }));
+  } catch (_) {}
 }
 
-const _priceReady = (async function initPrice() {
-  const cached = _priceFromCache();
-  if (cached) {
-    TRX_PRICE  = cached.usd;
-    TRX_CHANGE = cached.change;
-    return;
+function syncTrxPriceGlobals(quote) {
+  if (!quote?.usd) return;
+  TRX_PRICE = quote.usd;
+  TRX_CHANGE = quote.change ?? null;
+}
+
+async function fetchTrxQuoteFromCmc() {
+  if (!useApiProxy()) return null;
+  try {
+    const res = await fetch(window.tronsecProxyUrl('/cmc/v1/cryptocurrency/quotes/latest', {
+      symbol: 'TRX',
+      convert: 'USD',
+    }), { cache: 'no-store' });
+    if (!res.ok) return null;
+    const body = await res.json();
+    const q = body?.data?.TRX?.quote?.USD;
+    const usd = parseFloat(q?.price || 0) || null;
+    if (!usd) return null;
+    const change = q?.percent_change_24h;
+    return {
+      usd,
+      change: change != null && Number.isFinite(Number(change)) ? Number(change) : null,
+      marketCap: q?.market_cap ?? null,
+      volume24h: q?.volume_24h ?? null,
+    };
+  } catch (_) {
+    return null;
   }
+}
+
+async function fetchTrxQuoteFromScan() {
   try {
-    const {usd, change} = await fetchTrxPrice();
-    TRX_PRICE  = usd; TRX_CHANGE = change;
-    _priceToCache(usd, change);
-  } catch(_) {}
-  setInterval(async () => {
-    try {
-      const {usd, change} = await fetchTrxPrice();
-      TRX_PRICE  = usd; TRX_CHANGE = change;
-      _priceToCache(usd, change);
-    } catch(_) {}
-  }, _PRICE_TTL);
-})();
+    const p = await scanGet('/token/price', { token: 'trx' });
+    const usd = parseFloat(p?.priceInUsd ?? p?.price ?? 0) || null;
+    if (usd) {
+      const changeRaw = p?.priceChange24h ?? p?.percentChangeIn24h ?? p?.change24h;
+      const change = changeRaw != null ? parseFloat(changeRaw) : null;
+      return { usd, change: Number.isFinite(change) ? change : null };
+    }
+  } catch (_) {}
+  try {
+    const list = await scanGet('/getAssetWithPriceList', { limit: 20 });
+    const trx = (list?.data || []).find(t => String(t.abbr || '').toLowerCase() === 'trx' || t.id === '_');
+    const usd = parseFloat(trx?.priceInUsd || 0) || null;
+    if (usd) return { usd, change: null };
+  } catch (_) {}
+  return null;
+}
+
+async function fetchTrxMarketQuote(opts = {}) {
+  const cacheOnly = !!opts.cacheOnly;
+  const cached = readTrxMarketCache();
+
+  if (cached?.usd) {
+    syncTrxPriceGlobals(cached);
+    if (cacheOnly || isTrxMarketCacheFresh(cached)) return cached;
+  }
+  if (cacheOnly) return cached || null;
+
+  let quote = await fetchTrxQuoteFromCmc();
+  if (!quote?.usd) {
+    const scan = await fetchTrxQuoteFromScan();
+    if (scan?.usd) quote = { ...scan, marketCap: null, volume24h: null };
+  }
+  if (quote?.usd) {
+    writeTrxMarketCache(quote);
+    syncTrxPriceGlobals(quote);
+  }
+  return quote;
+}
+
+let _trxPriceInflight = null;
+
+function hydrateTrxPriceFromCache() {
+  const cached = readTrxMarketCache();
+  if (cached?.usd) syncTrxPriceGlobals(cached);
+  return cached;
+}
+
+async function ensureTrxPrice(opts = {}) {
+  const cacheOnly = !!opts.cacheOnly;
+  const cached = hydrateTrxPriceFromCache();
+  if (cached?.usd && (cacheOnly || isTrxMarketCacheFresh(cached))) {
+    return { usd: cached.usd, change: cached.change ?? null };
+  }
+  if (cacheOnly) {
+    return cached?.usd ? { usd: cached.usd, change: cached.change ?? null } : { usd: null, change: null };
+  }
+  if (!_trxPriceInflight) {
+    _trxPriceInflight = fetchTrxMarketQuote().finally(() => { _trxPriceInflight = null; });
+  }
+  const quote = await _trxPriceInflight;
+  if (quote?.usd) return { usd: quote.usd, change: quote.change ?? null };
+  return {
+    usd: TRX_PRICE,
+    change: TRX_CHANGE,
+  };
+}
+
+window.ensureTrxPrice = ensureTrxPrice;
+hydrateTrxPriceFromCache();
 // ==================================
 //  SKELETON LOADERS
 // ==================================
@@ -752,8 +1295,113 @@ function alertBox(type, html) {
   return `<div class="alert alert-${type}">${icSVG(IC.alert)}<div>${html}</div></div>`;
 }
 
+const MODULE_STATE_ARIA = {
+  empty: 'No scan yet',
+  cached: 'Cached result in module',
+  error: 'Last scan failed',
+};
+
+const MODULE_STATE_TABS = {
+  scanner: { result: 'wallet-result', err: 'wallet-err' },
+  approvals: { result: 'approvals-result', err: 'approvals-err' },
+  'aml-check': { result: 'aml-result', err: 'aml-err' },
+  'scan-url': { result: 'phish-result', err: 'phish-err' },
+  'contract-scan': { result: 'contract-result', err: 'contract-err' },
+  'tx-decoder': { result: 'tx-result', err: 'tx-err' },
+};
+
+function setModuleNavState(tabId, state) {
+  if (!MODULE_STATE_TABS[tabId] || !['empty', 'cached', 'error'].includes(state)) return;
+  document.querySelectorAll(`.app-sidebar [data-tab-btn="${tabId}"]`).forEach(btn => {
+    const dot = btn.querySelector('.sidebar-nav-state:not(.is-spacer)');
+    if (!dot) return;
+    dot.classList.remove('is-empty', 'is-cached', 'is-error');
+    dot.classList.add(`is-${state}`);
+    dot.dataset.moduleState = state;
+    dot.setAttribute('aria-label', MODULE_STATE_ARIA[state] || state);
+  });
+}
+
+function syncModuleNavState(tabId) {
+  const cfg = MODULE_STATE_TABS[tabId];
+  if (!cfg) return;
+  const err = document.getElementById(cfg.err);
+  const result = document.getElementById(cfg.result);
+  if (err && err.innerHTML.trim()) {
+    setModuleNavState(tabId, 'error');
+    return;
+  }
+  if (!result || !result.innerHTML.trim()) {
+    setModuleNavState(tabId, 'empty');
+    return;
+  }
+  if (result.querySelector('.sk')) return;
+  setModuleNavState(tabId, 'cached');
+}
+
+function injectModuleNavStateDots() {
+  Object.keys(MODULE_STATE_TABS).forEach(tabId => {
+    document.querySelectorAll(`.app-sidebar [data-tab-btn="${tabId}"]`).forEach(btn => {
+      if (btn.querySelector('.sidebar-nav-state:not(.is-spacer)')) return;
+      const dot = document.createElement('span');
+      dot.className = 'sidebar-nav-state is-empty';
+      dot.setAttribute('role', 'img');
+      dot.setAttribute('aria-label', MODULE_STATE_ARIA.empty);
+      dot.dataset.moduleState = 'empty';
+      const label = btn.querySelector('.module-file');
+      if (label) label.insertAdjacentElement('afterend', dot);
+      else btn.appendChild(dot);
+    });
+  });
+}
+
+let _moduleResultObserver = null;
+function observeModuleResultNodes() {
+  if (_moduleResultObserver) return;
+  const tabByNodeId = {};
+  Object.entries(MODULE_STATE_TABS).forEach(([tabId, cfg]) => {
+    tabByNodeId[cfg.result] = tabId;
+    tabByNodeId[cfg.err] = tabId;
+  });
+  _moduleResultObserver = new MutationObserver(muts => {
+    const touched = new Set();
+    muts.forEach(m => {
+      let node = m.target;
+      while (node && node !== document.body) {
+        if (node.id && tabByNodeId[node.id]) {
+          touched.add(tabByNodeId[node.id]);
+          break;
+        }
+        node = node.parentNode;
+      }
+    });
+    touched.forEach(syncModuleNavState);
+  });
+  const opts = { childList: true, subtree: true, characterData: true };
+  Object.values(MODULE_STATE_TABS).forEach(cfg => {
+    const result = document.getElementById(cfg.result);
+    const err = document.getElementById(cfg.err);
+    if (result) _moduleResultObserver.observe(result, opts);
+    if (err) _moduleResultObserver.observe(err, opts);
+  });
+}
+
+function initModuleNavStates() {
+  injectModuleNavStateDots();
+  observeModuleResultNodes();
+  Object.keys(MODULE_STATE_TABS).forEach(syncModuleNavState);
+}
+
 function setError(el, msg) {
   el.innerHTML = msg ? alertBox('red', esc(msg)) : '';
+  if (el && el.id) {
+    for (const [tabId, cfg] of Object.entries(MODULE_STATE_TABS)) {
+      if (cfg.err === el.id) {
+        syncModuleNavState(tabId);
+        break;
+      }
+    }
+  }
 }
 function flashInput(el) {
   if (!el) return;
@@ -824,7 +1472,39 @@ const GLOSSARY = {
   block:            { lbl:'Block',            desc:'A batch of transactions recorded on the blockchain at a specific time.' },
   fee:              { lbl:'Fee',              desc:'Transaction fee paid in TRX for processing on the TRON network.' },
   tronscan:         { lbl:'TronScan',         desc:'Official TRON blockchain explorer for viewing transactions and addresses.' },
+  approval:         { lbl:'Approval',         desc:'Permission for a contract to spend your TRC-20 tokens without further confirmation.' },
+  approvals:        { lbl:'Approvals',        desc:'Active on-chain permissions letting contracts move your tokens.' },
+  transferFrom:     { lbl:'transferFrom',     desc:'Transfers tokens using a prior approval — common in DeFi and drainers.' },
+  multicall:        { lbl:'multicall',        desc:'Batches multiple contract calls in one transaction — review all inner actions.' },
+  verified:         { lbl:'Verified',         desc:'Source code published on TronScan and matches deployed bytecode.' },
+  liquidity:        { lbl:'Liquidity',        desc:'Tokens locked in a pool — depth affects price impact and exit risk.' },
+  trc10:            { lbl:'TRC10',            desc:'TRON native token standard — simpler than TRC-20, no smart contract required.' },
+  staking:          { lbl:'Staking',          desc:'Freezing TRX for bandwidth, energy, and TRON Power used to vote for SRs.' },
+  sr:               { lbl:'SR',               desc:'Super Representative — block producer that earns and shares network rewards.' },
+  riskScore:        { lbl:'Risk score',       desc:'Composite 0–100 rating from automated heuristics and pattern checks.' },
+  risk:             { lbl:'Risk',             desc:'Estimated severity of interacting with this address, contract, transaction, or URL.' },
+  status:           { lbl:'Status',           desc:'Whether the transaction succeeded or reverted on-chain.' },
+  type:             { lbl:'Type',             desc:'On-chain operation category — transfer, contract call, stake, vote, etc.' },
+  drainer:          { lbl:'Drainer',          desc:'Malicious contract or site designed to steal tokens via approvals or tricks.' },
+  claimSplit:       { lbl:'Claim split',      desc:'Drainer pattern: claim(recipient, %) sends a share of approved assets to attacker.' },
+  mintFn:           { lbl:'mint()',           desc:'Creates new tokens — inflates supply and can dilute existing holders.' },
+  officialToken:    { lbl:'Official token',   desc:'Recognized issuer contract (e.g. USDT) — issuer compliance controls are normal.' },
+  heuristics:       { lbl:'Heuristics',       desc:'Rule-based detectors that flag suspicious URLs, contracts, or wallet behavior.' },
+  scanEngines:      { lbl:'Multi-engine scan', desc:'URL reputation checked across several security databases (e.g. VirusTotal).' },
+  smartContract:    { lbl:'Smart contract',   desc:'Program deployed on TRON — executes logic when called via transactions.' },
+  warnings:         { lbl:'Warnings',         desc:'Non-critical risk patterns that deserve manual review before interacting.' },
+  holders:          { lbl:'Holders',          desc:'Number of distinct addresses holding this token.' },
+  blacklist:        { lbl:'Blacklist',        desc:'Address blocked from sending or receiving by token issuers or security services.' },
+  communityBlocklist: { lbl:'Community blocklist', desc:'Crowdsourced list of known phishing and scam domains maintained by security communities.' },
 };
+
+/** KV / stat label: plain i18n string, or pre-rendered `tt()` HTML. */
+function kvLabel(label) {
+  if (label == null || label === '') return '';
+  const s = String(label);
+  if (s.includes('class="term"')) return s;
+  return esc(t(s));
+}
 
 function tt(key, fallback) {
   const g = GLOSSARY[key];
@@ -917,4 +1597,5 @@ function setupTermTooltips() {
 document.addEventListener('DOMContentLoaded', () => {
   if (typeof lucide !== 'undefined') lucide.createIcons();
   setupTermTooltips();
+  initModuleNavStates();
 });

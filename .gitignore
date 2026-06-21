@@ -1,6 +1,4 @@
 node_modules/
-dist/
-github/
 .env
 .env.*
 app/js/secrets.local.js

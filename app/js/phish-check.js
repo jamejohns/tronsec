@@ -2,17 +2,14 @@
 //  PHISHING URL CHECKER
 // ==================================
 
-const VT_API_KEY = (window.TRONSEC_KEYS && window.TRONSEC_KEYS.virustotal) || '';
-const VT_BASE    = 'https://www.virustotal.com/api/v3';
+function vtEndpoint(path) {
+  return window.tronsecProxyUrl('/vt' + path);
+}
 
-// -- CORS Proxy --------------------------------------------------------
-// VirusTotal ????????? ??????? ?? ???????? (??? CORS-??????????).
-// ????? ?????? Cloudflare Worker ?? vt-proxy-worker.js ? ???????? URL ????:
-const VT_PROXY = 'https://vt-proxy.garethmanyas1234.workers.dev';
-// ?? ?????? Worker-? ??????? ? VT ????? ?????? ? CORS-???????.
-
-function vtProxify(path) {
-  return VT_PROXY + path;
+function vtRequestHeaders(contentType) {
+  const headers = {};
+  if (contentType) headers['Content-Type'] = contentType;
+  return headers;
 }
 
 // -- DOM refs ----------------------------------------------------------
@@ -32,9 +29,9 @@ phishBtn.addEventListener('click', phishCheck);
 
 async function vtSubmitUrl(url) {
   const body = new URLSearchParams({ url });
-  const res = await fetch(vtProxify('/urls'), {
+  const res = await fetch(vtEndpoint('/urls'), {
     method:  'POST',
-    headers: { 'x-apikey': VT_API_KEY, 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: vtRequestHeaders('application/x-www-form-urlencoded'),
     body,
   });
   if (!res.ok) {
@@ -46,16 +43,16 @@ async function vtSubmitUrl(url) {
 }
 
 async function vtGetAnalysis(analysisId) {
-  const res = await fetch(vtProxify(`/analyses/${analysisId}`), {
-    headers: { 'x-apikey': VT_API_KEY },
+  const res = await fetch(vtEndpoint(`/analyses/${analysisId}`), {
+    headers: vtRequestHeaders(),
   });
   if (!res.ok) throw new Error(`VT analysis error ${res.status}`);
   return res.json();
 }
 
 async function vtGetUrlReport(urlId) {
-  const res = await fetch(vtProxify(`/urls/${urlId}`), {
-    headers: { 'x-apikey': VT_API_KEY },
+  const res = await fetch(vtEndpoint(`/urls/${urlId}`), {
+    headers: vtRequestHeaders(),
   });
   if (!res.ok) throw new Error(`VT url report error ${res.status}`);
   return res.json();
@@ -307,7 +304,7 @@ function phishBlock(titleHtml, bodyHtml, meta = '') {
 
 function phishKvRow(label, valueHtml, last) {
   return `<div class="kv-row${last ? ' kv-row--last' : ''}">
-    <span class="kv-label">${t(label)}</span>
+    <span class="kv-label">${kvLabel(label)}</span>
     <span class="kv-val">${valueHtml}</span>
   </div>`;
 }
@@ -435,9 +432,9 @@ async function phishCheck() {
 
   if (!raw) { flashInput(phishInput); showToast('Enter a URL'); return; }
 
-  if (!VT_API_KEY) {
-    setError(phishErr, 'VirusTotal API key not configured. Add keys in app/js/secrets.local.js — see README.');
-    showToast('API keys required — see README');
+  if (!window.tronsecVtConfigured()) {
+    setError(phishErr, 'Phishing scan requires TRONSEC_PROXY.base in secrets.local.js (Cloudflare Worker with VIRUSTOTAL_API_KEY).');
+    showToast('Configure Cloudflare Worker proxy — see workers/tronsec-api-proxy/README.md');
     return;
   }
 
@@ -517,9 +514,9 @@ async function phishCheck() {
     }
 
     const sourcesHtml = phishPanel('Sources checked', `
-      ${phishKvRow('Multi-engine scan', vtStatusBadge(vtResult.status))}
-      ${phishKvRow('Community blocklist', mmStatusBadge(mmStatus))}
-      ${phishKvRow('Pattern analysis', `<span class="badge ${heurCount ? 'b-amber' : 'b-green'}">${t(heurCount === 1 ? '{count} flag' : '{count} flags', { count: heurCount })}</span>`, true)}
+      ${phishKvRow(tt('scanEngines'), vtStatusBadge(vtResult.status))}
+      ${phishKvRow(tt('communityBlocklist'), mmStatusBadge(mmStatus))}
+      ${phishKvRow(tt('heuristics'), `<span class="badge ${heurCount ? 'b-amber' : 'b-green'}">${t(heurCount === 1 ? '{count} flag' : '{count} flags', { count: heurCount })}</span>`, true)}
     `);
 
     const domainHtml = phishPanel('Domain info', `
@@ -528,7 +525,7 @@ async function phishCheck() {
       ${phishKvRow('TLD', `.${esc(getTld(parsed.hostname))}${SUSPICIOUS_TLDS.has(getTld(parsed.hostname)) ? ` <span class="badge b-amber">${t('risky')}</span>` : ''}`)}
       ${phishKvRow('Subdomains', (() => { const c = parsed.full.split('.').length - 2; return c === 0 ? t('None') : t(c === 1 ? '{count} level' : '{count} levels', { count: c }); })())}
       ${phishKvRow('Domain length', t('{length} chars', { length: parsed.hostname.length }))}
-      ${phishKvRow('Full report', `<a class="a-link" href="${esc(vtScanLink)}" target="_blank" rel="noopener">${t('View scan report')} ${icSVG(IC.link, 9)}</a>`, true)}
+      ${phishKvRow('Full report', `<a class="a-link a-link-inline" href="${esc(vtScanLink)}" target="_blank" rel="noopener"><span>${t('View scan report')}</span>${icSVG(IC.link, 9)}</a>`, true)}
     `);
 
     phishRes.innerHTML = `
