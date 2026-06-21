@@ -208,8 +208,7 @@ function startAnalyticsPoll() {
 function refreshAllAnalytics(force) {
     if (force) showAnalyticsSkeletons();
     if (force || !cacheIsFresh('network')) fetchTronNetworkStatus();
-    if (force) fetchMarketData({ cacheOnly: true });
-    else if (!cacheIsFresh('market')) fetchMarketData();
+    if (force || !cacheIsFresh('market')) fetchMarketData();
     if (force || !cacheIsFresh('fgMarket')) fetchFearGreedForMarket();
     if (force || !cacheIsFresh('token')) fetchTokenActivity();
     if (force || !cacheIsFresh('security')) fetchSecurityMetrics();
@@ -309,6 +308,7 @@ function applyMarketQuoteToUI(quote) {
         } else {
             mcap.innerText = '—';
         }
+        mcap.className = 'an-mini-val';
     }
     if (vol) {
         if (quote.volume24h != null) {
@@ -316,7 +316,19 @@ function applyMarketQuoteToUI(quote) {
         } else {
             vol.innerText = '—';
         }
+        vol.className = 'an-mini-val';
     }
+}
+
+function applyMarketUnavailable() {
+    const price = document.getElementById('market-trx-price');
+    const change = document.getElementById('market-trx-change');
+    const mcap = document.getElementById('market-trx-mcap');
+    const vol = document.getElementById('market-trx-volume');
+    if (price) { price.innerText = '—'; price.className = 'an-card-value'; }
+    if (change) { change.innerText = '—'; change.className = 'an-card-change'; }
+    if (mcap) { mcap.innerText = '—'; mcap.className = 'an-mini-val'; }
+    if (vol) { vol.innerText = '—'; vol.className = 'an-mini-val'; }
 }
 
 async function fetchMarketData(opts = {}) {
@@ -329,29 +341,35 @@ async function fetchMarketData(opts = {}) {
         return;
     }
 
-    if (cached?.usd && typeof isTrxMarketCacheFresh === 'function' && isTrxMarketCacheFresh(cached)) {
+    if (cached?.usd) {
         applyMarketQuoteToUI(cached);
-        cacheBust('market');
-        return;
+        if (typeof isTrxMarketCacheFresh === 'function' && isTrxMarketCacheFresh(cached)) {
+            cacheBust('market');
+            return;
+        }
+    } else {
+        const price = document.getElementById('market-trx-price');
+        const change = document.getElementById('market-trx-change');
+        const mcap = document.getElementById('market-trx-mcap');
+        const vol = document.getElementById('market-trx-volume');
+        if (price) { price.className = 'an-card-value'; price.innerHTML = '<span class="sk an-sk-card-value"></span>'; }
+        if (change) { change.className = 'an-card-change'; change.innerHTML = '<span class="sk an-sk-mini"></span>'; }
+        if (mcap) mcap.innerHTML = '<span class="sk an-sk-mini"></span>';
+        if (vol) vol.innerHTML = '<span class="sk an-sk-mini"></span>';
     }
 
-    const price = document.getElementById('market-trx-price');
-    const change = document.getElementById('market-trx-change');
-    const mcap = document.getElementById('market-trx-mcap');
-    const vol = document.getElementById('market-trx-volume');
-    if (price) { price.className = 'an-card-value'; price.innerHTML = '<span class="sk an-sk-card-value"></span>'; }
-    if (change) { change.className = 'an-card-change'; change.innerHTML = '<span class="sk an-sk-mini"></span>'; }
-    if (mcap) mcap.innerHTML = '<span class="sk an-sk-mini"></span>';
-    if (vol) vol.innerHTML = '<span class="sk an-sk-mini"></span>';
     try {
         const quote = typeof fetchTrxMarketQuote === 'function' ? await fetchTrxMarketQuote() : null;
         if (quote?.usd) {
             applyMarketQuoteToUI(quote);
         } else if (cached?.usd) {
             applyMarketQuoteToUI(cached);
+        } else {
+            applyMarketUnavailable();
         }
     } catch (_) {
         if (cached?.usd) applyMarketQuoteToUI(cached);
+        else applyMarketUnavailable();
     }
     cacheBust('market');
 }
