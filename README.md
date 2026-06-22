@@ -18,6 +18,8 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/jamejohns/tronsec/actions/workflows/ci.yml"><img src="https://github.com/jamejohns/tronsec/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/github/license/jamejohns/tronsec?style=flat-square" alt="MIT License">
   <img src="https://img.shields.io/badge/TRON-Mainnet-e50914?style=flat-square" alt="TRON">
   <img src="https://img.shields.io/badge/JavaScript-vanilla-f7df1e?style=flat-square&logo=javascript&logoColor=000" alt="JS">
   <img src="https://img.shields.io/badge/Languages-8-64748b?style=flat-square" alt="i18n">
@@ -26,6 +28,10 @@
 
 <p align="center">
   <a href="https://github.com/jamejohns/tronsec/issues">Report issue</a>
+  &nbsp;·&nbsp;
+  <a href="CONTRIBUTING.md">Contribute</a>
+  &nbsp;·&nbsp;
+  <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 <br>
@@ -34,7 +40,9 @@
 
 **TRONSEC** is a client-side security workbench. Paste a TRON address, contract, transaction hash, or URL — get structured risk signals and explorer-grade context without connecting a wallet or creating an account.
 
-This repository contains the **open-source application** (UI shell, modules, assets, i18n). The marketing site and localized page wrappers are hosted separately at **[tronsec.io](https://tronsec.io)**.
+This repository contains the **open-source application** (UI shell, modules, assets, i18n) under the [MIT license](LICENSE). The marketing site and localized page wrappers are hosted separately at **[tronsec.io](https://tronsec.io)**.
+
+> **Live demo:** [tronsec.io/app](https://tronsec.io/app/) — no install, no wallet connect.
 
 <br>
 

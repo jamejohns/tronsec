@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Block secrets.local.js in tree
+        run: |
+          if [ -f app/js/secrets.local.js ]; then
+            echo "::error::app/js/secrets.local.js must not be committed"
+            exit 1
+          fi
+
+      - name: Secret pattern scan
+        run: |
+          set -e
+          patterns=(
+            'sk-[A-Za-z0-9]{20,}'
+            'telegramBotToken[[:space:]]*:[[:space:]]*['\''"][^'\''"]{10,}['\''"]'
+            'Bearer [A-Za-z0-9._-]{20,}'
+          )
+          found=0
+          while IFS= read -r -d '' file; do
+            for pat in "${patterns[@]}"; do
+              if grep -qE "$pat" "$file" 2>/dev/null; then
+                echo "::error::Possible secret in $file (pattern: $pat)"
+                found=1
+              fi
+            done
+          done < <(find app assets -type f \( -name '*.js' -o -name '*.html' -o -name '*.css' -o -name '*.json' \) -print0)
+          exit $found
+
+      - name: Required app files
+        run: |
+          test -f app/js/aml.js
+          test -f app/js/shared.js
+          test -f app/js/proxy-config.js
+          test -f app/index.html
+          grep -q fetchAmlTxHistory app/js/aml.js
+          grep -q fetchAmlTxHistory app/js/shared.js
+
+      - name: License present
+        run: test -f LICENSE
