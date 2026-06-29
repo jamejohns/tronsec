@@ -139,6 +139,9 @@
 <button onclick='switchTab("tx-decoder")' data-tab-btn=tx-decoder class="sidebar-nav-btn">
 <i data-lucide=code-2 class="w-4 h-4"></i> <span class="module-file">tx_decoder.hex</span>
 </button>
+<button onclick='switchTab("vanity")' data-tab-btn=vanity class="sidebar-nav-btn">
+<i data-lucide=wand-2 class="w-4 h-4"></i> <span class="module-file">vanity.gen</span>
+</button>
 <button onclick='switchTab("report")' data-tab-btn=report class="sidebar-nav-btn">
 <i data-lucide=flag class="w-4 h-4"></i> <span class="module-file">report_scam.md</span>
 </button>
@@ -557,6 +560,113 @@
 </div>
 </div>
 </section>
+<section id=tab-vanity class="tab-content space-y-4 md:space-y-6">
+<div class="module-panel">
+<div class="module-panel-head">
+<div class="module-head-top">
+<h2>Vanity address</h2>
+<button type="button" onclick='purgeTab("vanity")' class="module-action-btn">
+[ CLEAR CACHE ]
+</button>
+</div>
+<div class="module-desc">
+<p class="module-desc-lead">Generate a TRON address with a custom prefix, suffix, contains pattern, or both ends — runs locally in your browser. Private keys never leave this device.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">Local only</span>
+<span class="module-desc-tag">Base58 pattern</span>
+<span class="module-desc-tag">Multi-core</span>
+<span class="module-desc-tag">Mainnet</span>
+</div>
+</div>
+</div>
+<div class="vanity-panel">
+<div class="vanity-flow" id="vanity-flow">
+<div class="vanity-hero">
+<div class="vanity-hero-preview" id=vanity-preview aria-live="polite">
+<code class="vanity-preview-addr mono" id=vanity-preview-addr>T············</code>
+</div>
+<p class="vanity-hero-caption" id=vanity-hero-caption>Enter a pattern to preview your address</p>
+</div>
+<div class="vanity-compose" id="vanity-compose">
+<div class="vanity-mode-segment" id=vanity-mode-group role="tablist" aria-label="Match position">
+<button type="button" class="vanity-mode-btn" data-mode="prefix" role="tab" aria-selected="false" title="Match start of address">
+<span class="vanity-mode-label vanity-mode-label--full">Prefix</span>
+<span class="vanity-mode-label vanity-mode-label--short">Prefix</span>
+</button>
+<button type="button" class="vanity-mode-btn is-active" data-mode="suffix" role="tab" aria-selected="true" title="Match end of address">
+<span class="vanity-mode-label vanity-mode-label--full">Suffix</span>
+<span class="vanity-mode-label vanity-mode-label--short">Suffix</span>
+</button>
+<button type="button" class="vanity-mode-btn" data-mode="contains" role="tab" aria-selected="false" title="Match anywhere in address">
+<span class="vanity-mode-label vanity-mode-label--full">Contains</span>
+<span class="vanity-mode-label vanity-mode-label--short">Contains</span>
+</button>
+<button type="button" class="vanity-mode-btn" data-mode="both" role="tab" aria-selected="false" title="Match prefix and suffix together">
+<span class="vanity-mode-label vanity-mode-label--full">Prefix+Suffix</span>
+<span class="vanity-mode-label vanity-mode-label--short">Both</span>
+</button>
+</div>
+<div class="search-bar vanity-search-bar">
+<div class="vanity-single-input" id="vanity-single-input">
+<div class="search-wrap vanity-input-wrap" id=vanity-input-wrap>
+<i data-lucide=wand-2 class="field-icon"></i>
+<input class="field-input" id=vanity-pattern placeholder="Pattern, e.g. SEC" spellcheck="false" maxlength="7" autocomplete="off" aria-label="Pattern">
+<span class="vanity-char-count" id="vanity-char-count" aria-hidden="true"></span>
+</div>
+</div>
+<div class="vanity-dual-input hidden" id="vanity-dual-input">
+<div class="vanity-dual-fields">
+<div class="search-wrap vanity-input-wrap" id="vanity-prefix-wrap">
+<span class="vanity-field-tag">Prefix</span>
+<input class="field-input vanity-part-input" id=vanity-prefix-pattern placeholder="SEC" spellcheck="false" maxlength="4" autocomplete="off" aria-label="Prefix pattern">
+</div>
+<span class="vanity-dual-join" aria-hidden="true">…</span>
+<div class="search-wrap vanity-input-wrap" id="vanity-suffix-wrap">
+<span class="vanity-field-tag">Suffix</span>
+<input class="field-input vanity-part-input" id=vanity-suffix-pattern placeholder="TRX" spellcheck="false" maxlength="4" autocomplete="off" aria-label="Suffix pattern">
+</div>
+</div>
+</div>
+<button type="button" id=vanity-start-btn class="inline-flex items-center justify-center gap-2 shrink-0">
+<span class=scan-btn-text data-idle="[ GENERATE ]" data-busy="[ SEARCHING ]">[ GENERATE ]</span>
+<span class="scan-btn-loader hidden"></span>
+</button>
+</div>
+<div class="vanity-toolbar">
+<div class="vanity-presets" id=vanity-presets role="group" aria-label="Quick patterns">
+<button type="button" class="vanity-preset" data-pattern="SEC">SEC</button>
+<button type="button" class="vanity-preset" data-pattern="TRX">TRX</button>
+<button type="button" class="vanity-preset" data-pattern="MAX">MAX</button>
+</div>
+<div class="vanity-presets vanity-presets-both hidden" id=vanity-presets-both role="group" aria-label="Quick prefix+suffix pairs">
+<button type="button" class="vanity-preset vanity-preset-both" data-prefix="T" data-suffix="X">T + X</button>
+<button type="button" class="vanity-preset vanity-preset-both" data-prefix="TR" data-suffix="X">TR + X</button>
+<button type="button" class="vanity-preset vanity-preset-both" data-prefix="MA" data-suffix="X">MA + X</button>
+</div>
+<button type="button" id=vanity-case-toggle class="vanity-case-toggle" aria-pressed="false">Case-sensitive</button>
+<input type="checkbox" id=vanity-case-sensitive class="vanity-case-checkbox" tabindex="-1" aria-hidden="true">
+</div>
+<div class="vanity-meta-bar" id=vanity-meta-bar>
+<div class="vanity-meta-idle" id=vanity-meta-idle>
+<span class="vanity-meta-tag" id="vanity-meta-tag-1">Base58</span>
+<span class="vanity-meta-tag" id="vanity-meta-tag-2">Max 7</span>
+<span class="vanity-meta-tag">Local only</span>
+</div>
+<span id=vanity-status-text class="vanity-meta-line hidden"></span>
+<span id=vanity-difficulty class="badge b-ghost vanity-diff-badge hidden" hidden>—</span>
+</div>
+</div>
+<div id=vanity-err></div>
+<div id=vanity-progress></div>
+<div id=vanity-result></div>
+<div id=vanity-empty class="appr-empty">
+<i data-lucide=wand-2 class="appr-empty-icon"></i>
+<p class="appr-empty-title">Generate a vanity TRON address</p>
+<p class="appr-empty-hint">Pick a mode, enter a pattern, and press Generate — search runs locally on your CPU</p>
+</div>
+</div>
+</div>
+</section>
 <section id=tab-scan-url class="tab-content space-y-4 md:space-y-6">
 <div class="module-panel">
 <div class="module-panel-head">
@@ -655,6 +765,7 @@
 <div class="mobile-sheet-block-label">Tools</div>
 <div class="grid grid-cols-2 gap-2">
 <button type="button" onclick='switchTab("tx-decoder"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=code-2 class="w-4 h-4 shrink-0 opacity-70"></i> TX decoder</button>
+<button type="button" onclick='switchTab("vanity"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=wand-2 class="w-4 h-4 shrink-0 opacity-70"></i> Vanity</button>
 <button type="button" onclick='switchTab("contract-scan"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=file-search class="w-4 h-4 shrink-0 opacity-70"></i> Contract scan</button>
 <button type="button" onclick='switchTab("scan-url"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=globe class="w-4 h-4 shrink-0 opacity-70"></i> URL scanner</button>
 <button type="button" onclick='switchTab("report"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=flag class="w-4 h-4 shrink-0 opacity-70"></i> Report scam</button>
@@ -698,6 +809,7 @@
 <script src=js/contract.js></script>
 <script src=js/approvals.js></script>
 <script src=js/tx-decoder.js></script>
+<script src=js/vanity.js></script>
 <script src=js/tour.js></script>
 <script src=js/hotkeys.js></script>
 </body>

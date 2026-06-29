@@ -11,7 +11,10 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
 
   const volMap = {};
   for (const d of directTransfers) {
-    volMap[d.peer] = (volMap[d.peer] || 0) + (d.amount || 0);
+    if (d.isTrc20) continue;
+    const amt = Number(d.amount) || 0;
+    if (!amt) continue;
+    volMap[d.peer] = (volMap[d.peer] || 0) + amt;
   }
 
   const shortAddr = a => a.slice(0, 6) + '...' + a.slice(-4);
@@ -204,7 +207,7 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
     });
 
   const highRisk = peers.filter(p => nodeType(p[0], p[1]) !== 'safe').length;
-  const totalVol = Object.values(volMap).reduce((s, v) => s + v, 0);
+  const totalVol = Object.values(volMap).reduce((s, v) => s + (Number(v) || 0), 0);
   const totalPeerTx = peers.reduce((s, p) => s + p[1], 0);
 
   const statsEl = document.createElement('div');
@@ -257,8 +260,9 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
 }
 
 function fmtVolume(sun) {
-  if (!sun || sun <= 0) return '0';
-  const trx = sun / 1e6;
+  const n = Number(sun);
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  const trx = n / 1e6;
   if (trx >= 1e6) return (trx / 1e6).toFixed(1) + 'M';
   if (trx >= 1e3) return (trx / 1e3).toFixed(1) + 'K';
   return trx.toFixed(0);

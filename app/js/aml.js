@@ -38,9 +38,9 @@ function amlActionBtn({ id, label, icon, href, variant }) {
 }
 
 function amlExtractTags(tagAcc) {
-  if (!tagAcc) return [];
-  const raw = Array.isArray(tagAcc) ? tagAcc : (tagAcc.data || (tagAcc.tag ? [tagAcc] : []));
-  return raw.map(t => t.tagName || t.tag || t.label || '').filter(Boolean);
+  return normalizeTagList(tagAcc)
+    .map((t) => (typeof t === 'string' ? t : (t.tagName || t.tag || t.label || '')))
+    .filter(Boolean);
 }
 
 function amlAlertInline(type, html) {
@@ -624,7 +624,9 @@ async function amlScan() {
     const txCount = txs.length;
 
     const scanProfile = scanAcc?.data?.[0] || scanAcc || {};
-    const acc = accRes?.data?.length ? accRes.data[0] : buildInactiveAccount(scanProfile);
+    const acc = accRes?.data?.length
+      ? normalizeAccountRecord(accRes.data[0])
+      : buildInactiveAccount(scanProfile);
     const tokens = (tokenRes?.data || []).filter(t=>t.tokenType==='trc20' && parseFloat(t.balance || 0) > 0);
     const ageDays = acc.create_time ? Math.round((Date.now() - acc.create_time)/86400000) : null;
     const balanceTrx = acc.balance != null ? (acc.balance / 1_000_000) : null;
@@ -646,9 +648,9 @@ async function amlScan() {
       if (secToken.increase_total_supply === 1)       hardFlags.push('Token supply can be increased by owner (mintable)');
     }
     if (tagAcc) {
-      const tags = Array.isArray(tagAcc) ? tagAcc : (tagAcc.data || tagAcc.tag ? [tagAcc] : []);
+      const tags = normalizeTagList(tagAcc);
       for (const t of tags) {
-        const tagName = t.tagName || t.tag || t.label || '';
+        const tagName = (typeof t === 'string' ? t : (t.tagName || t.tag || t.label || ''));
         if (tagName && /scam|phish|fraud|blacklist|sanction|malicious|hack|exploit/i.test(tagName)) {
           hardFlags.push('Security tag: ' + tagName);
         }
@@ -670,27 +672,32 @@ async function amlScan() {
       const contractAddrHex = val?.contract_address || null;
       const amount = val?.amount || val?.call_value || 0;
       const time = tx.block_timestamp || 0;
+      const isTrc20 = !!tx._isTrc20;
 
       if (tType === 'TransferContract') {
-        if (fromHex) hexSet.add(fromHex.toLowerCase());
-        if (toHex) hexSet.add(toHex.toLowerCase());
-        txMeta.push({ type:'direct', fromHex, toHex, contractHex:null, isDex:false, amount, time });
+        trackResolveAddr(hexSet, fromHex);
+        trackResolveAddr(hexSet, toHex);
+        txMeta.push({ type:'direct', fromHex, toHex, contractHex:null, isDex:false, amount, time, isTrc20:false });
       } else if (tType === 'TriggerSmartContract') {
-        if (contractAddrHex) hexSet.add(contractAddrHex.toLowerCase());
-        if (fromHex) hexSet.add(fromHex.toLowerCase());
-        const recipientHex = getTRC20Recipient(tx) || tx._scanTrc20Peer || null;
-        if (recipientHex) hexSet.add(String(recipientHex).toLowerCase());
-        txMeta.push({ type:'trigger', peerHex:recipientHex, contractHex:contractAddrHex, isDex:null, amount, time });
+        const trc20From = tx._trc20From || fromHex || null;
+        const trc20To = tx._trc20To || val?.to_address || getTRC20Recipient(tx) || tx._scanTrc20Peer || null;
+        trackResolveAddr(hexSet, contractAddrHex);
+        trackResolveAddr(hexSet, trc20From);
+        trackResolveAddr(hexSet, trc20To);
+        txMeta.push({ type:'trigger', fromHex:trc20From, toHex:trc20To, peerHex:trc20To, contractHex:contractAddrHex, isDex:null, amount, time, isTrc20 });
       }
     }
 
-    // Resolve all unique hex addresses in parallel
-    const hexEntries = await Promise.all([...hexSet].map(async h => [h, await hexToTronAddress(h)]));
+    // Resolve all unique addresses in parallel (preserve Base58 checksum casing)
+    const hexEntries = await Promise.all([...hexSet].map(async h => {
+      const resolved = await hexToTronAddress(h);
+      const final = sameTronAddr(resolved, addr) ? addr : resolved;
+      return [addrLookupKey(h), final];
+    }));
     const hexMap = new Map(hexEntries);
 
-    function resolve(hex) {
-      if (!hex) return null;
-      return hexMap.get(hex.toLowerCase()) || hex;
+    function resolve(a) {
+      return lookupResolvedAddr(hexMap, a, addr);
     }
 
     // -- Categorize transactions --
@@ -701,48 +708,61 @@ async function amlScan() {
       if (m.type === 'direct') {
         const from = resolve(m.fromHex);
         const to = resolve(m.toHex);
-        const peer = from === addr ? to : (to === addr ? from : (to || from));
-        if (peer && peer !== addr) {
-          directTransfers.push({ peer, amount:m.amount, time:m.time });
+        const peer = sameTronAddr(from, addr) ? to : (sameTronAddr(to, addr) ? from : (to || from));
+        if (peer && !sameTronAddr(peer, addr)) {
+          directTransfers.push({ peer, amount: Number(m.amount) || 0, time: m.time, isTrc20: false });
         }
       } else if (m.type === 'trigger') {
         const contractAddr = resolve(m.contractHex);
         const isDex = contractAddr ? isKnownDex(contractAddr) : false;
         m.isDex = isDex;
 
-        if (m.peerHex && !isDex) {
-          const peer = resolve(m.peerHex);
-          if (peer && peer !== addr) {
-            directTransfers.push({ peer, amount:m.amount, time:m.time });
-          }
+        const from = resolve(m.fromHex);
+        const to = resolve(m.toHex || m.peerHex);
+        const peer = sameTronAddr(from, addr) ? to
+          : (sameTronAddr(to, addr) ? from : (to || (m.peerHex ? resolve(m.peerHex) : null)));
+        if (peer && !sameTronAddr(peer, addr) && !isDex && isValidTron(peer)) {
+          directTransfers.push({ peer, amount: 0, time: m.time, isTrc20: !!m.isTrc20 });
         }
 
-        if (contractAddr) {
-          contractInteractions.set(contractAddr, (contractInteractions.get(contractAddr) || 0) + 1);
+        if (contractAddr && isValidTron(contractAddr)) {
+          const cKey = addrLookupKey(contractAddr);
+          const prev = contractInteractions.get(cKey);
+          contractInteractions.set(cKey, {
+            addr: (prev?.addr && isValidTron(prev.addr)) ? prev.addr : contractAddr,
+            count: (prev?.count || 0) + 1,
+          });
         }
       }
     }
 
     // -- Peer concentration (direct transfers only) --
     const peerCounts = {};
+    const peerDisplay = {};
     for (const d of directTransfers) {
-      peerCounts[d.peer] = (peerCounts[d.peer] || 0) + 1;
+      const k = addrLookupKey(d.peer);
+      peerCounts[k] = (peerCounts[k] || 0) + 1;
+      if (!peerDisplay[k] || isValidTron(d.peer)) peerDisplay[k] = d.peer;
     }
     const uniquePeers = Object.keys(peerCounts).length;
     const maxToSingle = Math.max(0, ...Object.values(peerCounts));
     const dtCount = directTransfers.length;
     const concentration = dtCount > 0 ? (maxToSingle / dtCount) : 0;
 
-    const topPeers = Object.entries(peerCounts).sort((a,b)=>b[1]-a[1]).slice(0,6);
+    const topPeers = Object.entries(peerCounts)
+      .map(([k, c]) => [peerDisplay[k], c])
+      .sort((a,b)=>b[1]-a[1])
+      .slice(0,6);
 
     // Top contracts used (from contractInteractions, sorted)
-    const topContracts = [...contractInteractions.entries()]
-      .sort((a,b) => b[1] - a[1])
-      .slice(0, 6);
+    const topContracts = [...contractInteractions.values()]
+      .sort((a,b) => b.count - a.count)
+      .slice(0, 6)
+      .map(v => [v.addr, v.count]);
 
     // -- Resolve top-5 peer addresses for recursive security check --
     const peerFlags = [];
-    const topPeerAddrs = topPeers.slice(0, 5).map(p => p[0]);
+    const topPeerAddrs = topPeers.slice(0, 5).map(p => p[0]).filter(isValidTron);
     if (topPeerAddrs.length > 0) {
       const peerSecResults = await Promise.all(
         topPeerAddrs.map(pAddr =>
@@ -762,11 +782,12 @@ async function amlScan() {
     let knownEntityCount = 0;
     if (tagAcc) {
       for (const p of topPeers) {
+        if (!isValidTron(p[0])) continue;
         const pTag = await scanGet('/account/tag', {address: p[0]}).catch(() => null);
         if (pTag) {
-          const tagList = Array.isArray(pTag) ? pTag : (pTag.data || pTag.tag ? [pTag] : []);
+          const tagList = normalizeTagList(pTag);
           for (const t of tagList) {
-            const tn = (t.tagName || t.tag || t.label || '').toLowerCase();
+            const tn = (typeof t === 'string' ? t : (t.tagName || t.tag || t.label || '')).toLowerCase();
             if (/exchange|cex|dex|verified|known|legit|bridge|protocol/i.test(tn)) {
               knownEntityCount++;
               break;
