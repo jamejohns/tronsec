@@ -112,6 +112,25 @@ function upstreamHeaders(kind) {
 //  UTILS
 // ==================================
 const isValidTron = a => /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test((a||'').trim());
+const sameTronAddr = (a, b) => !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
+const isTronHexAddr = s => /^0?x?41[0-9a-f]{40}$/i.test(String(s || ''));
+const addrLookupKey = a => {
+  const s = String(a || '').trim();
+  if (!s) return '';
+  if (isTronHexAddr(s)) return 'h:' + s.replace(/^0x/i, '').toLowerCase();
+  return 'b:' + s.toLowerCase();
+};
+function trackResolveAddr(set, addr) {
+  if (!addr) return;
+  const s = String(addr);
+  set.add(isTronHexAddr(s) ? s.replace(/^0x/i, '').toLowerCase() : s);
+}
+function lookupResolvedAddr(map, addr, hintAddr) {
+  if (!addr) return null;
+  let v = map.get(addrLookupKey(addr)) || addr;
+  if (hintAddr && sameTronAddr(v, hintAddr)) return hintAddr;
+  return v;
+}
 const short = a => a ? `${a.slice(0,6)}?${a.slice(-4)}` : '—';
 /** Human-readable address or tx hash for prose (ellipsis, not "?"). */
 const addrLabel = a => {
@@ -596,6 +615,49 @@ async function scanGet(path, params={}) {
   return _enqueueScan(url, headers);
 }
 
+/** TronScan may return frozen as { total, balances: [] } instead of an array. */
+function normalizeFrozenV2(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (!raw || typeof raw !== 'object') return [];
+  if (Array.isArray(raw.balances)) {
+    return raw.balances.map((b) => ({
+      amount: Number(b.amount ?? b.frozen_balance ?? 0) || 0,
+      type: b.resource ?? b.type ?? b.frozen_balance_resource,
+    }));
+  }
+  if (Array.isArray(raw.frozen)) return raw.frozen;
+  if (raw.amount != null || raw.frozen_balance != null) return [raw];
+  return [];
+}
+
+function asArray(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (raw == null) return [];
+  return [raw];
+}
+
+function normalizeTagList(tagAcc) {
+  if (!tagAcc) return [];
+  if (Array.isArray(tagAcc)) return tagAcc;
+  if (Array.isArray(tagAcc.data)) return tagAcc.data;
+  if (tagAcc.tagName || tagAcc.tag || tagAcc.label) return [tagAcc];
+  if (tagAcc.chainTags && typeof tagAcc.chainTags === 'object') {
+    const out = [];
+    for (const group of Object.values(tagAcc.chainTags)) {
+      if (Array.isArray(group)) out.push(...group);
+    }
+    return out;
+  }
+  return [];
+}
+
+function normalizeAccountRecord(acc) {
+  if (!acc || typeof acc !== 'object') return acc;
+  acc.frozenV2 = normalizeFrozenV2(acc.frozenV2 ?? acc.frozen);
+  acc.votes = asArray(acc.votes);
+  return acc;
+}
+
 function userFriendlyFetchError(e) {
   if (!e) return t('Unknown fetch error');
   if (typeof e === 'string') return t(e);
@@ -618,7 +680,7 @@ async function fetchTrc20FromTronScan(address) {
     try {
       const res = await scanGet(path, params);
       if (!res) continue;
-      const arr = res.data || res.transfers || res.transactions || res.txs || (Array.isArray(res) ? res : null) || res.items;
+      const arr = res.token_transfers || res.data || res.transfers || res.transactions || res.txs || (Array.isArray(res) ? res : null) || res.items;
       if (arr && arr.length) return arr;
     } catch(_) {}
   }
@@ -627,7 +689,7 @@ async function fetchTrc20FromTronScan(address) {
 
 function scanTransferRows(res) {
   if (!res) return [];
-  return res.data || res.transfers || res.transactions || res.txs || (Array.isArray(res) ? res : null) || res.items || [];
+  return res.token_transfers || res.data || res.transfers || res.transactions || res.txs || (Array.isArray(res) ? res : null) || res.items || [];
 }
 
 function normalizeScanTransferToGridTx(row) {
@@ -647,23 +709,29 @@ function normalizeScanTransferToGridTx(row) {
   };
 }
 
-function normalizeScanTrc20TransferToGridTx(row) {
-  const from = row.from_address || row.from || row.transferFromAddress || row.ownerAddress || '';
-  const to = row.to_address || row.to || row.transferToAddress || '';
-  const contract = row.contract_address || row.tokenId || row.tokenAddress || row.token_id || '';
+function normalizeTrc20ToAmlTx(row) {
+  const from = row.from_address || row.from || row.transferFromAddress || row.ownerAddress || row.owner_address || '';
+  const to = row.to_address || row.to || row.transferToAddress || row.toAddress || '';
+  const contract = row.contract_address || row.tokenId || row.tokenAddress || row.token_id || row.token_info?.address || '';
   const amount = row.quant ?? row.amount ?? row.value ?? row.token_amount ?? 0;
-  const ts = row.block_timestamp || row.timestamp || 0;
+  const ts = row.block_timestamp || row.block_ts || row.timestamp || 0;
   return {
     txID: row.transaction_id || row.transactionHash || row.hash || row.txID || '',
     block_timestamp: ts,
-    _scanTrc20Peer: to,
+    _trc20From: from,
+    _trc20To: to,
+    _isTrc20: true,
     raw_data: {
       contract: [{
         type: 'TriggerSmartContract',
-        parameter: { value: { owner_address: from, contract_address: contract, amount, data: '' } },
+        parameter: { value: { owner_address: from, to_address: to, contract_address: contract, amount, data: '' } },
       }],
     },
   };
+}
+
+function normalizeScanTrc20TransferToGridTx(row) {
+  return normalizeTrc20ToAmlTx(row);
 }
 
 async function fetchTronScanNativeTransfers(address, limit = 200) {
@@ -694,19 +762,28 @@ function dedupeTxList(txs) {
 }
 
 async function fetchAmlTxHistory(address) {
-  const [page1, page2] = await Promise.all([
+  const [page1, page2, trc20Grid] = await Promise.all([
     gridGet(`/v1/accounts/${address}/transactions`, { limit: 200, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
     gridGet(`/v1/accounts/${address}/transactions`, { limit: 200, order_by: 'block_timestamp,desc', start: 200 }).catch(() => ({ data: [] })),
+    gridGet(`/v1/accounts/${address}/transactions/trc20`, { limit: 200, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
   ]);
   let txs = (page1.data || []).concat(page2.data || []);
-  if (txs.length >= 50) return dedupeTxList(txs).slice(0, 400);
+  const gridTrc20 = (trc20Grid.data || [])
+    .filter(t => (t.type || t.event_type || 'Transfer') !== 'Approval')
+    .map(normalizeTrc20ToAmlTx)
+    .filter(t => t._trc20From || t._trc20To);
+  txs = dedupeTxList(txs.concat(gridTrc20));
+  if (txs.length >= 50) return txs.slice(0, 400);
 
   const [nativeScan, trc20Raw] = await Promise.all([
     fetchTronScanNativeTransfers(address, 200).catch(() => []),
     fetchTrc20FromTronScan(address).catch(() => []),
   ]);
-  const trc20Txs = trc20Raw.map(normalizeScanTrc20TransferToGridTx).filter(t => t._scanTrc20Peer);
-  txs = dedupeTxList(txs.concat(nativeScan, trc20Txs));
+  const trc20Scan = trc20Raw
+    .filter(r => (r.event_type || r.type || 'Transfer') !== 'Approval')
+    .map(normalizeScanTrc20TransferToGridTx)
+    .filter(t => t._trc20From || t._trc20To);
+  txs = dedupeTxList(txs.concat(nativeScan, trc20Scan));
   txs.sort((a, b) => (b.block_timestamp || 0) - (a.block_timestamp || 0));
   return txs.slice(0, 400);
 }
@@ -1376,6 +1453,7 @@ const MODULE_STATE_TABS = {
   'scan-url': { result: 'phish-result', err: 'phish-err' },
   'contract-scan': { result: 'contract-result', err: 'contract-err' },
   'tx-decoder': { result: 'tx-result', err: 'tx-err' },
+  vanity: { result: 'vanity-result', err: 'vanity-err' },
 };
 
 function setModuleNavState(tabId, state) {

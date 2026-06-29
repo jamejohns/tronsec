@@ -397,13 +397,13 @@ async function fetchContractIntel(addr, standard) {
 async function contractScan() {
   const addr = contractInput.value.trim();
   setError(contractErr, '');
-  contractRes.innerHTML = '';
-  contractEmpty.style.display = 'none';
   contractAbiLimit = 10;
   contractResult = null;
   contractExtra = null;
   if (!addr) { flashInput(contractInput); showToast(t('Enter a contract address')); return; }
   if (!isValidTron(addr)) { flashInput(contractInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
+  contractRes.innerHTML = '';
+  contractEmpty.style.display = 'none';
   spinBtn(contractBtn, true);
   contractRes.innerHTML = SK.contract();
 

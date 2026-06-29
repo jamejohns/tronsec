@@ -558,8 +558,6 @@ async function fetchTokenDecimals(contractAddress) {
 async function txDecode() {
   const hash = txInput.value.trim();
   setError(txErr, '');
-  txRes.innerHTML = '';
-  txEmpty.style.display = 'none';
 
   if (!hash) { flashInput(txInput); showToast('Enter a TX hash or hex data'); return; }
   if (!/^[0-9a-fA-F]{64}$/.test(hash)) {
@@ -568,6 +566,8 @@ async function txDecode() {
     return;
   }
 
+  txRes.innerHTML = '';
+  txEmpty.style.display = 'none';
   spinBtn(txBtn, true);
   txRes.innerHTML = SK.txDecoder();
 

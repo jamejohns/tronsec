@@ -33,6 +33,7 @@
     { id: 'url-mod',       tab: 'scan-url',      name: 'scan_url.sh',      desc: 'URL Phishing Scanner',     icon: 'circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"' },
     { id: 'contract-mod',  tab: 'contract-scan', name: 'contract_scan.sh', desc: 'Contract Scan Engine',      icon: 'path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><circle cx="11.5" cy="14.5" r="2.5"' },
     { id: 'txdecoder-mod', tab: 'tx-decoder',    name: 'tx_decoder.hex',   desc: 'TX Decoder',               icon: 'path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"', },
+    { id: 'vanity-mod',    tab: 'vanity',        name: 'vanity.gen',       desc: 'Vanity Address Generator', icon: 'path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8 19 13"/><path d="M17.8 6.2 19 5"/><path d="M3 21l9-9"/><path d="M12.2 6.2 11 5"', },
     { id: 'report-mod',    tab: 'report',        name: 'report_scam.md',   desc: 'Report Scam',              icon: 'path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"' },
   ];
 

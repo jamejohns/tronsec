@@ -80,6 +80,7 @@ function purgeTabNow(tabId, section) {
     if (tabId === 'contract-scan' && typeof resetContractScanCache === 'function') resetContractScanCache();
     if (tabId === 'scanner' && typeof resetWalletScanCache === 'function') resetWalletScanCache();
     if (tabId === 'approvals' && typeof resetApprovalsScanCache === 'function') resetApprovalsScanCache();
+    if (tabId === 'vanity' && typeof resetVanityGen === 'function') resetVanityGen();
     if (typeof syncModuleNavState === 'function') syncModuleNavState(tabId);
 }
 

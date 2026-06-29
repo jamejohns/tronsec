@@ -428,7 +428,6 @@ function parseDomain(raw) {
 async function phishCheck() {
   const raw = phishInput.value.trim();
   setError(phishErr, '');
-  phishEmpty.style.display = 'none';
 
   if (!raw) { flashInput(phishInput); showToast('Enter a URL'); return; }
 
@@ -446,6 +445,7 @@ async function phishCheck() {
   }
 
   requireCaptcha(async () => {
+    phishEmpty.style.display = 'none';
     phishRes.innerHTML = SK.phishCheck();
     spinBtn(phishBtn, true);
 

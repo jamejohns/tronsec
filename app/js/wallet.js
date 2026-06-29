@@ -38,7 +38,7 @@ function buildInactiveAccount(scanProfile) {
     free_net_limit: sp.freeNetLimit ?? bw.freeNetLimit ?? bw.netLimit ?? 1500,
     EnergyUsed: sp.energyUsed ?? bw.energyUsed ?? 0,
     EnergyLimit: sp.energyLimit ?? bw.energyLimit ?? 0,
-    frozenV2: sp.frozenV2 || sp.frozen || [],
+    frozenV2: normalizeFrozenV2(sp.frozenV2 ?? sp.frozen),
     create_time: sp.date_created || sp.createTime || sp.create_time,
     latest_opration_time: sp.latest_operation_time || sp.latestOperationTime || sp.latest_operation_time,
     _inactive: true,
@@ -77,9 +77,9 @@ function walletMeter(label, used, total, tone) {
 }
 
 function parseAccountTags(tagAcc) {
-  if (!tagAcc) return [];
-  const raw = Array.isArray(tagAcc) ? tagAcc : (tagAcc.data || (tagAcc.tagName || tagAcc.tag ? [tagAcc] : []));
-  return raw.map(t => t.tagName || t.tag || t.label || '').filter(Boolean);
+  return normalizeTagList(tagAcc)
+    .map((t) => (typeof t === 'string' ? t : (t.tagName || t.tag || t.label || '')))
+    .filter(Boolean);
 }
 
 function buildWalletSecurity(secAcc, tags, heuristics) {
@@ -129,7 +129,7 @@ function buildActivityItem(tx, addr) {
     const amount = amountRaw / Math.pow(10, decimals || 6);
     const from = rawVal.owner_address || tx.from || null;
     const to = rawVal.to_address || tx.to || null;
-    const isIn = to === addr;
+    const isIn = sameTronAddr(to, addr);
     iconCls = isIn ? 'is-in' : 'is-out';
     iconPath = isIn ? IC.arrowDown : IC.arrowUp;
     title = isIn ? t('Received {symbol}', { symbol }) : t('Sent {symbol}', { symbol });
@@ -141,8 +141,8 @@ function buildActivityItem(tx, addr) {
     const from = val?.owner_address || null;
     const to = val?.to_address || null;
     const amount = val?.amount || val?.call_value || 0;
-    const isIn = type === 'TransferContract' && to === addr;
-    const isOut = type === 'TransferContract' && from === addr;
+    const isIn = type === 'TransferContract' && sameTronAddr(to, addr);
+    const isOut = type === 'TransferContract' && sameTronAddr(from, addr);
     if (isIn) { iconCls = 'is-in'; iconPath = IC.arrowDown; title = t('Received TRX'); meta = t('from {addr}', { addr: addrLabel(from || '?') }); }
     else if (isOut) { iconCls = 'is-out'; iconPath = IC.arrowUp; title = t('Sent TRX'); meta = t('to {addr}', { addr: addrLabel(to || '?') }); }
     else {
@@ -410,8 +410,8 @@ async function walletScan() {
 
   try {
     const [accRes, txRes, trc20TxRes, tokenRes, scanAcc, secAcc, tagAcc] = await Promise.all([
-      gridGet(`/v1/accounts/${addr}`),
-      gridGet(`/v1/accounts/${addr}/transactions`, { limit: 50, order_by: 'block_timestamp,desc' }),
+      gridGet(`/v1/accounts/${addr}`).catch(() => ({ data: [] })),
+      gridGet(`/v1/accounts/${addr}/transactions`, { limit: 50, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
       gridGet(`/v1/accounts/${addr}/transactions/trc20`, { limit: 100, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
       scanGet('/account/tokens', { address: addr, start: 0, limit: 50 }).catch(() => null),
       scanGet('/account', { address: addr }).catch(() => null),
@@ -421,13 +421,24 @@ async function walletScan() {
     if (gen !== walletScanGen) return;
 
     const scanProfile = scanAcc?.data?.[0] || scanAcc || {};
+
+    let trc20List = trc20TxRes?.data || [];
+    if (!trc20List.length) {
+      try {
+        const scanFound = await fetchTrc20FromTronScan(addr).catch(() => []);
+        if (scanFound.length) trc20List = trc20List.concat(scanFound);
+      } catch (_) {}
+    }
+
     let acc;
     if (accRes.data?.length) {
-      acc = accRes.data[0];
+      acc = normalizeAccountRecord(accRes.data[0]);
     } else {
-      const hasTrc20 = tokenRes?.data?.some(t => parseFloat(t.balance || 0) > 0);
-      const hasTxs = (txRes.data || []).length > 0;
-      if (!hasTrc20 && !hasTxs) {
+      const hasTrc20Bal = tokenRes?.data?.some(t => parseFloat(t.balance || 0) > 0);
+      const hasNativeTxs = (txRes.data || []).length > 0;
+      const hasTrc20Txs = trc20List.length > 0;
+      const scanTxCount = Number(scanProfile.totalTransactionCount ?? scanProfile.transactions ?? scanProfile.transaction_count ?? 0) || 0;
+      if (!hasTrc20Bal && !hasNativeTxs && !hasTrc20Txs && scanTxCount <= 0) {
         walletRes.innerHTML = '';
         if (walletEmpty) walletEmpty.style.display = '';
         setError(walletErr, t('Address not found or no on-chain activity.'));
@@ -440,26 +451,18 @@ async function walletScan() {
     walletHasMore = nativeTxs.length === 50;
     if (nativeTxs.length) walletOldestTs = nativeTxs[nativeTxs.length - 1].block_timestamp || 0;
 
-    let trc20List = trc20TxRes?.data || [];
-    if (!trc20List.length) {
-      try {
-        const scanFound = await fetchTrc20FromTronScan(addr).catch(() => []);
-        if (scanFound.length) trc20List = trc20List.concat(scanFound);
-      } catch (_) {}
-    }
-
     const approvalCount = countDistinctApprovals(trc20List, nativeTxs);
     const MAX_U256 = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
     const normTrc20 = trc20List.filter(t => {
-      if (t.type === 'Approval') return false;
-      const val = String(t.value || t.amount || t.token_amount || t.transfer_amount || t.transferValue || t['amount_str'] || 0);
+      if (t.type === 'Approval' || t.event_type === 'Approval') return false;
+      const val = String(t.value || t.amount || t.quant || t.token_amount || t.transfer_amount || t.transferValue || t['amount_str'] || 0);
       return val !== MAX_U256;
     }).map(t => {
       const owner = t.owner_address || t.ownerAddress || t.owner || t.from || t.from_address || t.fromAddress || t.sender || t.account || null;
       const toAddr = t.to_address || t.toAddress || t.to || t.receiver || t.to_address_hex || null;
-      let amount = t.value || t.amount || t.token_amount || t.transfer_amount || t.transferValue || t['amount_str'] || 0;
+      let amount = t.value || t.amount || t.quant || t.token_amount || t.transfer_amount || t.transferValue || t['amount_str'] || 0;
       const tokenInfo = t.token_info || t.tokenInfo || t.token || t.token_data || {};
-      const blockTs = Number(t.block_timestamp || t.timestamp || t.block || t.date || t.time || 0) || 0;
+      const blockTs = Number(t.block_timestamp || t.block_ts || t.timestamp || t.block || t.date || t.time || 0) || 0;
       const decimals = parseInt(tokenInfo?.decimals || tokenInfo?.tokenDecimal || t.tokenDecimal || 6);
       const symbol = tokenInfo?.tokenAbbr || tokenInfo?.symbol || tokenInfo?.tokenName || tokenInfo?.name || t.tokenName || t.tokenAbbr || t.token || 'TOKEN';
       if (typeof amount === 'string' && amount.startsWith('0x')) {
@@ -551,7 +554,7 @@ function renderWallet() {
   const energyUsed = acc.EnergyUsed ?? res.energy_used ?? scanProfile.energyUsed ?? 0;
   const energyLimit = acc.EnergyLimit ?? res.energy_limit ?? scanProfile.energyLimit ?? 0;
   const energyPct = energyLimit > 0 ? Math.round((energyUsed / energyLimit) * 100) : 0;
-  const frozen = acc.frozenV2 || [];
+  const frozen = normalizeFrozenV2(acc.frozenV2 ?? acc.frozen);
   const staked = frozen.reduce((s, f) => s + (f.amount || 0), 0);
   const stakedBw = frozen.filter(f => (f.type || '').includes('BANDWIDTH') || f.type === undefined).reduce((s, f) => s + (f.amount || 0), 0);
   const stakedEnergy = frozen.filter(f => (f.type || '').includes('ENERGY')).reduce((s, f) => s + (f.amount || 0), 0);
@@ -561,10 +564,13 @@ function renderWallet() {
   const trc20UsdTotal = trc20.reduce((sum, t) => sum + (tokenUsd(t) || 0), 0);
   const totalPortfolioUsd = (trxUsdVal || 0) + trc20UsdTotal;
   const txs = walletTxs;
-  const votes = acc.votes || [];
+  const votes = asArray(acc.votes);
   const votePower = votes.reduce((s, v) => s + (v.vote_count || 0), 0);
   const isMultisig = (acc.active_permission?.keys?.length > 1) || (acc.owner_permission?.keys?.length > 1);
-  const txCount = scanProfile.totalTransactionCount ?? scanProfile.transactions ?? scanProfile.transaction_count ?? txs.length;
+  const txCount = Math.max(
+    txs.length,
+    Number(scanProfile.totalTransactionCount ?? scanProfile.transactions ?? scanProfile.transaction_count) || 0
+  );
   const createdTs = acc.create_time || scanProfile.date_created || scanProfile.createTime;
   const lastActiveTs = acc.latest_opration_time || scanProfile.latest_operation_time || scanProfile.latestOperationTime;
   const created = createdTs ? new Date(createdTs).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
