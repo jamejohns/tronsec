@@ -540,8 +540,12 @@ function esc(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function withProxyHeaders(headers) {
+  return headers || {};
+}
+
 async function gridGet(path, params={}) {
-  const headers = upstreamHeaders('grid');
+  const headers = withProxyHeaders(upstreamHeaders('grid'));
   const res = await fetch(gridRequestUrl(path, params), {headers});
   if (!res.ok) {
     let bodyText = '';
@@ -558,7 +562,7 @@ async function gridGet(path, params={}) {
 }
 
 async function gridPost(path, body) {
-  const headers = {'Content-Type':'application/json', ...upstreamHeaders('grid')};
+  const headers = withProxyHeaders({'Content-Type':'application/json', ...upstreamHeaders('grid')});
   const res = await fetch(gridRequestUrl(path), {method:'POST', headers, body:JSON.stringify(body)});
   if (!res.ok) {
     let bodyText = '';
@@ -611,7 +615,7 @@ function _enqueueScan(url, headers) {
 
 async function scanGet(path, params={}) {
   const url = new URL(scanRequestUrl(path, params));
-  const headers = upstreamHeaders('scan');
+  const headers = withProxyHeaders(upstreamHeaders('scan'));
   return _enqueueScan(url, headers);
 }
 
@@ -1715,19 +1719,28 @@ function hideTermTip() {
   if (_termTip) _termTip.style.opacity = '0';
 }
 
+function termNodeFromTarget(node) {
+  let el = node && node.nodeType === 1 ? node : node && node.parentElement;
+  while (el) {
+    if (el.classList && el.classList.contains('term')) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
 function setupTermTooltips() {
   document.addEventListener('mouseover', e => {
-    const t = e.target.closest('.term');
+    const t = termNodeFromTarget(e.target);
     if (t) { showTermTip(t.dataset.term, t); return; }
     hideTermTip();
   });
   document.addEventListener('mouseleave', e => {
-    if (e.target.closest('.term')) return;
+    if (termNodeFromTarget(e.target)) return;
     hideTermTip();
   });
   // touch support
   document.addEventListener('touchstart', e => {
-    const t = e.target.closest('.term');
+    const t = termNodeFromTarget(e.target);
     if (!t) { hideTermTip(); return; }
     e.preventDefault();
     const shown = t.dataset.tipShown;

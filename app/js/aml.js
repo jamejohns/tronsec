@@ -1046,6 +1046,7 @@ async function amlScan() {
 
     bindAmlActions(addr);
 
+
     if (topPeers.length > 0) {
       renderAMLGraph('aml-graph-container', addr, topPeers, peerFlags, directTransfers, txCount);
     }

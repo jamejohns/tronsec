@@ -1,5 +1,5 @@
 {
-  "id": "https://tronsec.io/app/",
+  "id": "/app/",
   "name": "TRONSEC",
   "short_name": "TRONSEC",
   "description": "Free read-only TRON wallet scanner, approvals monitor, and security terminal by tronsec.io.",
@@ -12,14 +12,22 @@
   "lang": "en",
   "icons": [
     {
+      "src": "/assets/brand/favicon-48x48.png",
+      "sizes": "48x48",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
       "src": "/assets/brand/favicon-16x16.png",
       "sizes": "16x16",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "/assets/brand/favicon-32x32.png",
       "sizes": "32x32",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "/assets/brand/apple-touch-icon.png",
@@ -31,19 +39,41 @@
       "src": "/assets/brand/android-chrome-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/assets/brand/android-chrome-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
-      "src": "/assets/brand/favicon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
+      "src": "/assets/brand/android-chrome-192x192-maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/assets/brand/android-chrome-512x512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/assets/pwa/screenshot-wide.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "TRONSEC security terminal on desktop"
+    },
+    {
+      "src": "/assets/pwa/screenshot-narrow.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "TRONSEC wallet scanner on mobile"
     }
   ],
   "categories": ["finance", "security", "utilities"]

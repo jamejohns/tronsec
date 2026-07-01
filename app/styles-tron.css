@@ -466,7 +466,6 @@ button svg[data-lucide] { pointer-events: none; }
   letter-spacing: .04em;
 }
 .app-header-status {
-  display: inline-flex;
   align-items: center;
   gap: 6px;
   margin-left: 12px;
@@ -479,6 +478,15 @@ button svg[data-lucide] { pointer-events: none; }
   font-family: var(--mono) !important;
   letter-spacing: .02em;
   white-space: nowrap;
+}
+/* hidden sm:flex — Tailwind visibility; pill layout stays on sm+ */
+.app-header-status.hidden {
+  display: none !important;
+}
+@media (min-width: 640px) {
+  .app-header-status.hidden.sm\:flex {
+    display: inline-flex !important;
+  }
 }
 .app-header-chain-icon {
   width: 14px;
@@ -535,6 +543,15 @@ button svg[data-lucide] { pointer-events: none; }
   background: rgba(255,255,255,.015) !important;
   padding: 16px 12px !important;
   overflow: hidden;
+}
+/* hidden md:flex — Tailwind visibility; layout styles stay on md+ */
+.app-sidebar.hidden {
+  display: none !important;
+}
+@media (min-width: 768px) {
+  .app-sidebar.hidden.md\:flex {
+    display: flex !important;
+  }
 }
 .sidebar-scroll {
   flex: 1 1 auto;
@@ -2367,6 +2384,9 @@ nav.hidden.md\:flex button[onclick*="openCommandPalette"] {
   padding: 3px 8px; font-size: 11px; font-weight: 500;
   border-radius: 6px; text-transform: none; letter-spacing: 0;
 }
+.badge.hidden {
+  display: none !important;
+}
 .b-red { background: var(--red-soft); color: var(--red); border: 1px solid rgba(251,113,133,.18); }
 .b-amber { background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(251,191,36,.18); }
 .b-green { background: var(--green-soft); color: var(--green); border: 1px solid rgba(52,211,153,.18); }
@@ -3629,6 +3649,132 @@ nav.hidden.md\:flex button[onclick*="openCommandPalette"] {
 .term { text-decoration: underline dotted rgba(161,161,170,.5); text-underline-offset: 3px; cursor: help; }
 .term:hover { color: var(--text); }
 
+/* pwa install */
+#pwa-install-btn.hidden {
+  display: none !important;
+}
+.pwa-install-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  background: rgba(0,0,0,0);
+  backdrop-filter: blur(0);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .28s var(--ease), backdrop-filter .28s var(--ease), background .28s var(--ease), visibility .28s var(--ease);
+}
+.pwa-install-overlay.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  background: rgba(0,0,0,.72);
+  backdrop-filter: blur(10px);
+}
+.pwa-install-overlay.is-closing {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  background: rgba(0,0,0,0);
+  backdrop-filter: blur(0);
+}
+.pwa-install-card {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  padding: 22px 22px 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+  box-shadow: 0 24px 64px rgba(0,0,0,.45);
+  transform: translateY(18px) scale(.96);
+  opacity: 0;
+  transition: transform .32s var(--ease), opacity .32s var(--ease);
+}
+.pwa-install-overlay.is-open .pwa-install-card {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+}
+.pwa-install-overlay.is-closing .pwa-install-card {
+  transform: translateY(12px) scale(.98);
+  opacity: 0;
+}
+.pwa-install-close {
+  position: absolute; top: 10px; right: 10px;
+  display: grid; place-items: center;
+  width: 30px; height: 30px;
+  background: none; border: none;
+  color: var(--text-3); cursor: pointer;
+  border-radius: 7px;
+  transition: color .15s ease, background .15s ease;
+}
+.pwa-install-close:hover { color: var(--text); background: rgba(255,255,255,.05); }
+.pwa-install-brand {
+  display: flex;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.pwa-install-brand img {
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px var(--line);
+}
+.pwa-install-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.pwa-install-lead {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-3);
+  margin-bottom: 16px;
+}
+.pwa-install-steps {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pwa-install-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.pwa-install-step-num {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.03);
+  font-family: var(--mono) !important;
+  font-size: 10px;
+  color: var(--text-3);
+}
+.pwa-install-cta {
+  width: 100%;
+  height: 38px;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  background: rgba(255,255,255,.04);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+.pwa-install-cta:hover {
+  background: rgba(255,255,255,.07);
+  border-color: var(--line-strong);
+}
+
 /* qr modal */
 .qr-modal-overlay {
   position: fixed; inset: 0; z-index: 100;
@@ -3766,8 +3912,14 @@ nav.hidden.md\:flex button[onclick*="openCommandPalette"] {
   border-top-color: var(--text);
   border-radius: 50%;
   animation: spin .8s linear infinite;
-  display: inline-block;
   flex-shrink: 0;
+}
+.spinner:not(.hidden), .scan-btn-loader:not(.hidden), .spin:not(.hidden) {
+  display: inline-block;
+}
+.spinner.hidden, .scan-btn-loader.hidden, .spin.hidden {
+  display: none !important;
+  animation: none !important;
 }
 .fg-loading { opacity: .5; pointer-events: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -4763,3 +4915,4 @@ body.vanity-is-searching #vanity-start-btn { pointer-events: none; }
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
