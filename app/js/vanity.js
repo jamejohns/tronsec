@@ -54,6 +54,7 @@ let vanityFound = false;
 let vanityActiveWorkers = 0;
 let vanityLastMode = 'suffix';
 let vanityLastPattern = '';
+let vanityLastPatternDesc = '';
 let vanityLastPrefix = '';
 let vanityLastSuffix = '';
 let vanityProgressReady = false;
@@ -866,7 +867,7 @@ function vanityWorkerUrl() {
   return new URL('js/vanity-worker.js', window.location.href).href;
 }
 
-function vanityStart() {
+async function vanityStart() {
   if (vanityRunning || vanityStartBtn?.disabled) return;
   setError(vanityErr, '');
 
@@ -937,6 +938,10 @@ function vanityStart() {
   vanityFound = false;
   vanitySmoothedRate = 0;
   vanityStartedAt = Date.now();
+  const vanityPatternDesc = vanityIsBothMode(mode)
+    ? `prefix:${prefix} suffix:${suffix}`
+    : trimmed;
+  vanityLastPatternDesc = vanityPatternDesc;
   if (vanityEmpty) vanityEmpty.style.display = 'none';
   if (vanityResult) vanityResult.innerHTML = '';
   vanityClearProgressDOM();
@@ -1006,6 +1011,9 @@ function vanityOnWorkerMessage(e) {
     vanityStopWorkers();
     vanityRenderFound(msg.address, msg.privateKey, vanityTotalAttempts);
     vanitySetRunning(false);
+    if (msg.address) {
+      const elapsed = vanityStartedAt ? ((Date.now() - vanityStartedAt) / 1000).toFixed(1) : '';
+    }
     showToast(t('Vanity address found'));
   }
 }

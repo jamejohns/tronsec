@@ -32,7 +32,6 @@
 <link rel="alternate" hreflang="id" href="https://tronsec.io/id/app/">
 <link rel="canonical" href="https://tronsec.io/app/">
 <script type=application/ld+json>{"@context":"https://schema.org","@type":"WebApplication","name":"TRONSEC","url":"https://tronsec.io/app/","description":"TRONSEC — TRON onchain security & risk platform — AML screening, phishing detection, wallet/contract/transaction analysis for the TRON ecosystem.","applicationCategory":"SecurityApplication","operatingSystem":"Web","browserRequirements":"Requires JavaScript","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
-<script src=https://cdn.tailwindcss.com></script>
 <script src=https://unpkg.com/lucide@latest></script>
 <script src=https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js></script>
 <script src=https://d3js.org/d3.v7.min.js></script>
@@ -44,8 +43,8 @@
 <link rel=apple-touch-icon href=/assets/brand/apple-touch-icon.png>
 <link rel=manifest href=/manifest.json>
 <link rel=stylesheet href=/assets/css/fonts.css>
+<link rel=stylesheet href=tailwind.css>
 <link rel=stylesheet href=styles-tron.css>
-<script>tailwind.config={darkMode:"class",theme:{extend:{colors:{darkBg:"#000000",darkCard:"#111113",panelBorder:"rgba(255,255,255,.06)",hackGreen:"#34d399",hackAmber:"#fbbf24",hackRed:"#fb7185",hackCyan:"#c8ced8"},fontFamily:{sans:["Inter","system-ui","sans-serif"],mono:["JetBrains Mono","ui-monospace","monospace"]}}}}</script>
 </head>
 <body class="bg-darkBg text-slate-300 h-full text-[14px] antialiased overflow-x-hidden flex flex-col">
 <div id="init-loader" class="init-loader" aria-hidden="false" aria-busy="true" aria-label="Loading TRONSEC">
@@ -109,7 +108,7 @@
 </button>
 </div>
 <div class=space-y-1>
-<div class="sidebar-label">Modules</div>
+<div class="sidebar-label">Main</div>
 <div class=space-y-1>
 <button onclick='switchTab("scanner")' data-tab-btn=scanner class="sidebar-nav-btn tab-nav-active">
 <i data-lucide=fingerprint class="w-4 h-4"></i> <span class="module-file">scanner.sh</span>
@@ -154,7 +153,7 @@
 <span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
 <a href="https://t.me/tronsec_chat" target="_blank" rel="noopener" class="sidebar-aside-ghost" data-footer-telegram>telegram</a>
 <span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
-<a href="/changelog/" target="_blank" rel="noopener" class="sidebar-aside-ghost sidebar-aside-ghost--with-badge" data-footer-changelog>changelog <span class="sidebar-aside-ver">v1.0.1</span></a>
+<a href="/changelog/" target="_blank" rel="noopener" class="sidebar-aside-ghost sidebar-aside-ghost--with-badge" data-footer-changelog>changelog <span class="sidebar-aside-ver">v1.0.2</span></a>
 </div>
 </div>
 </nav>
@@ -762,13 +761,18 @@
 <button type="button" onclick=closeMobileMoreMenu() class="captcha-close" aria-label="Close">&times;</button>
 </div>
 <div class="mobile-sheet-block">
+<div class="mobile-sheet-block-label">Security</div>
+<div class="grid grid-cols-2 gap-2">
+<button type="button" onclick='switchTab("contract-scan"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=file-search class="w-4 h-4 shrink-0 opacity-70"></i> <span data-i18n="Contract scan">Contract scan</span></button>
+<button type="button" onclick='switchTab("scan-url"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=globe class="w-4 h-4 shrink-0 opacity-70"></i> <span data-i18n="URL scanner">URL scanner</span></button>
+</div>
+</div>
+<div class="mobile-sheet-block">
 <div class="mobile-sheet-block-label">Tools</div>
 <div class="grid grid-cols-2 gap-2">
-<button type="button" onclick='switchTab("tx-decoder"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=code-2 class="w-4 h-4 shrink-0 opacity-70"></i> TX decoder</button>
-<button type="button" onclick='switchTab("vanity"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=wand-2 class="w-4 h-4 shrink-0 opacity-70"></i> Vanity</button>
-<button type="button" onclick='switchTab("contract-scan"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=file-search class="w-4 h-4 shrink-0 opacity-70"></i> Contract scan</button>
-<button type="button" onclick='switchTab("scan-url"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=globe class="w-4 h-4 shrink-0 opacity-70"></i> URL scanner</button>
-<button type="button" onclick='switchTab("report"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=flag class="w-4 h-4 shrink-0 opacity-70"></i> Report scam</button>
+<button type="button" onclick='switchTab("tx-decoder"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=code-2 class="w-4 h-4 shrink-0 opacity-70"></i> <span data-i18n="TX decoder">TX decoder</span></button>
+<button type="button" onclick='switchTab("vanity"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=wand-2 class="w-4 h-4 shrink-0 opacity-70"></i> <span data-i18n="Vanity Address Generator">Vanity</span></button>
+<button type="button" onclick='switchTab("report"),closeMobileMoreMenu()' class="mobile-sheet-btn px-2 py-2 h-10 flex items-center gap-2"><i data-lucide=flag class="w-4 h-4 shrink-0 opacity-70"></i> <span data-i18n="Report scam">Report scam</span></button>
 </div>
 </div>
 <div class="sidebar-aside-ghostline mobile-sheet-ghostline">
@@ -776,7 +780,7 @@
 <span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
 <a href="https://t.me/tronsec_chat" target="_blank" rel="noopener" class="sidebar-aside-ghost" data-footer-telegram>telegram</a>
 <span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
-<a href="/changelog/" target="_blank" rel="noopener" class="sidebar-aside-ghost sidebar-aside-ghost--with-badge" data-footer-changelog>changelog <span class="sidebar-aside-ver">v1.0.1</span></a>
+<a href="/changelog/" target="_blank" rel="noopener" class="sidebar-aside-ghost sidebar-aside-ghost--with-badge" data-footer-changelog>changelog <span class="sidebar-aside-ver">v1.0.2</span></a>
 </div>
 
 
@@ -812,5 +816,9 @@
 <script src=js/vanity.js></script>
 <script src=js/tour.js></script>
 <script src=js/hotkeys.js></script>
+<script src=js/pwa-install.js></script>
+<script>
+if('serviceWorker'in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(function(){})})}
+</script>
 </body>
 </html>

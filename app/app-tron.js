@@ -649,6 +649,7 @@ function applyDomI18n() {
 
     const textSelectors = [
         '.sidebar-label',
+        '.mobile-sheet-block-label',
         '.app-header-status span',
         '.module-panel-head h2',
         '.module-desc-lead',

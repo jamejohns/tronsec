@@ -1009,6 +1009,7 @@ async function txDecode() {
 
     bindTxActions(hash);
 
+
     txRes.querySelectorAll('.tx-scan-contract-btn, .wallet-contract-scan-btn').forEach(btn => {
       btn.addEventListener('click', e => {
         e.preventDefault();

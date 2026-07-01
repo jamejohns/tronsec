@@ -1,4 +1,6 @@
 (function () {
+  'use strict';
+
   function proxyBase() {
     const b = window.TRONSEC_PROXY && window.TRONSEC_PROXY.base;
     return typeof b === 'string' ? b.replace(/\/$/, '') : '';
@@ -11,7 +13,9 @@
   window.tronsecProxyUrl = function tronsecProxyUrl(route, params) {
     const url = new URL(proxyBase() + route);
     if (params && typeof params === 'object') {
-      Object.entries(params).forEach(([k, v]) => {
+      Object.entries(params).forEach(function (entry) {
+        const k = entry[0];
+        const v = entry[1];
         if (v != null && v !== '') url.searchParams.set(k, v);
       });
     }

@@ -7,6 +7,14 @@ Live product: **[tronsec.io/app](https://tronsec.io/app/)**.
 
 ## [Unreleased]
 
+### Added
+- PWA service worker (`sw.js`) and mobile-only install prompt (`pwa-install.js`)
+- Install UI strings in all eight app locales
+
+### Changed
+- Manifest installability fixes (`id`, maskable PNG icons)
+- Install button hidden on desktop (≥768px)
+
 ## [1.1.0] - 2026-06-29
 
 ### Added
