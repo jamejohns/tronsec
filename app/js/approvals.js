@@ -26,21 +26,6 @@ approvalsInput.addEventListener('keydown', e => {
 });
 approvalsBtn.addEventListener('click', approvalsScan);
 
-function apprRevokeFootnote() {
-  return `<p class="aml-disclaimer appr-revoke-footnote">${t('Revoke from this interface is under development — you can audit allowances here; on-chain revoke will be available in a future update.')}</p>`;
-}
-
-(function initApprovalsRevokeFootnotes() {
-  const desc = document.querySelector('#tab-approvals .module-desc');
-  if (desc && !desc.querySelector('.appr-revoke-footnote')) {
-    desc.insertAdjacentHTML('beforeend', apprRevokeFootnote());
-  }
-  const empty = document.getElementById('approvals-empty');
-  if (empty && !empty.querySelector('.appr-revoke-footnote')) {
-    empty.insertAdjacentHTML('beforeend', apprRevokeFootnote());
-  }
-})();
-
 function apprRowIcon(symbol) {
   const label = (symbol || '?').replace(/^0x/i, '').slice(0, 3).toUpperCase() || 'TKN';
   return `<div class="appr-row-icon">${esc(label)}</div>`;
@@ -61,8 +46,7 @@ function apprRowRiskClass(amount, decimals) {
 
 function apprRevokeBtn() {
   const label = esc(GLOSSARY.revoke?.lbl || 'Revoke');
-  const hint = esc(t('Revoke from this interface is under development.'));
-  return `<button type="button" class="wallet-action-btn wallet-action-btn--danger revoke-one-btn is-dev" disabled title="${hint}">${icSVG(IC.trash, 14)}<span>${label}</span><span class="appr-revoke-soon">${esc(t('In development'))}</span></button>`;
+  return `<button type="button" class="wallet-action-btn wallet-action-btn--danger revoke-one-btn">${icSVG(IC.trash, 14)}<span>${label}</span></button>`;
 }
 
 async function mergeApprovalCandidates(scanItems, txItems) {
@@ -193,7 +177,6 @@ function renderApprovals() {
           <span class="appr-section-title">${tt('allowance')} <span>· ${list.length}</span></span>
         </div>
         <div class="appr-list">${rowsHtml}</div>
-        ${apprRevokeFootnote()}
       </div>
     </div>`;
 
