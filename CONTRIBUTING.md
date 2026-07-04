@@ -4,10 +4,10 @@ Thank you for your interest in TRONSEC. This repository is the **public applicat
 
 ## What this repo contains
 
-| In this repo | Not in this repo (private / hosted separately) |
+| In this repo | Not in this repo (hosted separately) |
 |:--|:--|
 | `app/` — readable JavaScript UI | Marketing site HTML |
-| `assets/` — brand, fonts, i18n | `dist/` obfuscated production build |
+| `assets/` — brand, fonts, i18n | Obfuscated production build |
 | Worker proxy URL in `proxy-config.js` | Cloudflare Worker source & API secrets |
 
 Default branch: **`main`**.
@@ -16,7 +16,7 @@ Default branch: **`main`**.
 
 1. **Bug reports** — [open an issue](https://github.com/jamejohns/tronsec/issues) with steps to reproduce, browser, and a TRON address / tx hash if relevant (redact personal data).
 2. **Small fixes** — fork, branch from `main`, edit files under `app/` or `assets/`, open a PR with a clear description.
-3. **Larger features** — open an issue first to align scope; the maintainer may land changes in the private staging tree and sync here.
+3. **Larger features** — open an issue first to align scope; the maintainer may land changes upstream and sync here.
 
 ## Local setup
 
@@ -32,14 +32,14 @@ Open **http://localhost:8080/app/**.
 ## Rules
 
 - **Never commit API keys**, bot tokens, or `app/js/secrets.local.js`.
-- Keep changes **read-only** — no wallet connect, no transaction signing.
+- Keep changes **read-only** — no wallet connect, no transaction signing from this UI.
 - Preserve attribution in `app/js/brand.js` when forking.
-- The **Approvals** tab is UI-only in this export; do not imply live revoke without wiring APIs.
+- Vanity generator: private keys must remain client-side only.
 - PRs should be focused; avoid drive-by refactors.
 
 ## Maintainer sync
 
-The public tree is periodically synced from an internal staging app. Your PR may be merged directly or cherry-picked into staging and re-exported — either way you will be credited in the commit message.
+The public tree is periodically synced from the main application sources. Your PR may be merged directly or cherry-picked upstream and re-exported — either way you will be credited in the commit message.
 
 ## Questions
 
