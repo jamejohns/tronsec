@@ -609,7 +609,7 @@
 <div class="vanity-single-input" id="vanity-single-input">
 <div class="search-wrap vanity-input-wrap" id=vanity-input-wrap>
 <i data-lucide=wand-2 class="field-icon"></i>
-<input class="field-input" id=vanity-pattern placeholder="Pattern, e.g. SEC" spellcheck="false" maxlength="7" autocomplete="off" aria-label="Pattern">
+<input class="field-input" id=vanity-pattern value=SEC placeholder="Pattern, e.g. SEC" spellcheck="false" maxlength="7" autocomplete="off" aria-label="Pattern">
 <span class="vanity-char-count" id="vanity-char-count" aria-hidden="true"></span>
 </div>
 </div>
@@ -617,12 +617,12 @@
 <div class="vanity-dual-fields">
 <div class="search-wrap vanity-input-wrap" id="vanity-prefix-wrap">
 <span class="vanity-field-tag">Prefix</span>
-<input class="field-input vanity-part-input" id=vanity-prefix-pattern placeholder="SEC" spellcheck="false" maxlength="4" autocomplete="off" aria-label="Prefix pattern">
+<input class="field-input vanity-part-input" id=vanity-prefix-pattern value=TR placeholder="SEC" spellcheck="false" maxlength="4" autocomplete="off" aria-label="Prefix pattern">
 </div>
 <span class="vanity-dual-join" aria-hidden="true">…</span>
 <div class="search-wrap vanity-input-wrap" id="vanity-suffix-wrap">
 <span class="vanity-field-tag">Suffix</span>
-<input class="field-input vanity-part-input" id=vanity-suffix-pattern placeholder="TRX" spellcheck="false" maxlength="4" autocomplete="off" aria-label="Suffix pattern">
+<input class="field-input vanity-part-input" id=vanity-suffix-pattern value=X placeholder="TRX" spellcheck="false" maxlength="4" autocomplete="off" aria-label="Suffix pattern">
 </div>
 </div>
 </div>
@@ -633,7 +633,7 @@
 </div>
 <div class="vanity-toolbar">
 <div class="vanity-presets" id=vanity-presets role="group" aria-label="Quick patterns">
-<button type="button" class="vanity-preset" data-pattern="SEC">SEC</button>
+<button type="button" class="vanity-preset is-active" data-pattern="SEC">SEC</button>
 <button type="button" class="vanity-preset" data-pattern="TRX">TRX</button>
 <button type="button" class="vanity-preset" data-pattern="MAX">MAX</button>
 </div>
@@ -797,7 +797,6 @@
 <button onclick=toggleMobileMoreMenu() data-tab-btn=more class="flex flex-col items-center gap-0.5 sidebar-nav-btn"><i data-lucide=more-horizontal class="w-4 h-4"></i><span class=text-[9px] data-i18n=More>More</span></button>
 </nav>
 <script src=js/secrets.js></script>
-<script src=js/secrets.local.js></script>
 <script src=js/proxy-config.js></script>
 <script src=js/api-proxy.js></script>
 <script src=js/i18n.js></script>

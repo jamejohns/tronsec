@@ -6,6 +6,10 @@ const VANITY_BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxy
 const VANITY_MAX_PATTERN = 7;
 const VANITY_MAX_BOTH_PART = 4;
 const VANITY_PREFS_KEY = 'TRONSEC_vanity_prefs';
+const VANITY_DEFAULT_MODE = 'suffix';
+const VANITY_DEFAULT_PATTERN = 'SEC';
+const VANITY_DEFAULT_PREFIX = 'TR';
+const VANITY_DEFAULT_SUFFIX = 'X';
 const VANITY_PREVIEW_LEN = 16;
 const TRON_ADDR_LEN = 34;
 const TRON_MIN_N = 65n * (256n ** 24n);
@@ -495,10 +499,20 @@ function vanitySavePrefs() {
   } catch (_) { /* ignore */ }
 }
 
+function vanityApplyDefaults() {
+  if (vanityPatternInput) vanityPatternInput.value = VANITY_DEFAULT_PATTERN;
+  if (vanityPrefixPatternInput) vanityPrefixPatternInput.value = VANITY_DEFAULT_PREFIX;
+  if (vanitySuffixPatternInput) vanitySuffixPatternInput.value = VANITY_DEFAULT_SUFFIX;
+  vanitySetMode(VANITY_DEFAULT_MODE);
+}
+
 function vanityLoadPrefs() {
   try {
     const raw = localStorage.getItem(VANITY_PREFS_KEY);
-    if (!raw) return;
+    if (!raw) {
+      vanityApplyDefaults();
+      return;
+    }
     const prefs = JSON.parse(raw);
     if (prefs.pattern && vanityPatternInput) {
       const cleaned = [...prefs.pattern.trim()].filter((ch) => VANITY_BASE58.includes(ch)).join('');
