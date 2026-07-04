@@ -2,6 +2,8 @@
 
 Public-facing plans for the TRONSEC application. Timelines are approximate.
 
+Product development on tronsec.io started **April 2026**; the public GitHub repo followed in **June 2026**. Month-by-month history: [CHANGELOG § Development history](CHANGELOG.md#development-history).
+
 ## Shipped (see [CHANGELOG](CHANGELOG.md))
 
 - Wallet scanner, AML, contract audit, TX decoder, URL scanner

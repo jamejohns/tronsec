@@ -5,6 +5,41 @@ All notable changes to the public TRONSEC application export are documented here
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 Live product: **[tronsec.io/app](https://tronsec.io/app/)**.
 
+GitHub release tags begin at **v1.0.0** (June 2026). The product itself shipped on tronsec.io earlier; this section records that pre-OSS history so the repo does not read like a weekend project.
+
+## Development history
+
+### April 2026 — foundation
+
+- Read-only security terminal shell (sidebar modules, command palette, dark UI)
+- Cloudflare Worker API proxy — TronGrid, TronScan, VirusTotal credentials kept server-side
+- **Wallet scanner:** TRX balance, TRC-20 holdings, stake / bandwidth / energy, activity feed, basic security flags
+- Shared fetch layer, address validation, risk badge patterns reused across modules
+
+### May 2026 — core security modules
+
+- **AML check:** on-chain heuristics, counterparty exposure, token-flow graph (D3), PDF export
+- **Contract audit:** privileged functions, proxy patterns, TRON-specific bytecode signals
+- **TX decoder:** TRC-20 transfers, approvals in transactions, fee breakdown, scam-pattern warnings
+- **URL scanner:** TRON-focused phishing heuristics + VirusTotal (via worker)
+- **Scam report** UI (structured address / domain reports through worker when configured)
+- **i18n:** EN, RU, ZH, ES, PT-BR, VI, TR, ID
+
+### June 2026 — polish & public OSS
+
+- PWA manifest, service worker, mobile install prompt
+- **Vanity address generator** — Base58 patterns in local Web Workers; keys never leave the browser
+- **TRC-20 approvals monitor** — allowance list, unlimited-approval warnings, spender risk
+- Production marketing site + app deploy at **tronsec.io**
+- **2026-06-17** — first public GitHub export **[v1.0.0]**
+- **2026-06-29** — **[v1.1.0]** (vanity module, PWA, AML / wallet edge-case fixes)
+
+### July 2026 — OSS documentation wave
+
+- **2026-07-04** — **[v1.2.0]** — approvals UX defaults, `ARCHITECTURE.md` / `SECURITY.md` / `ROADMAP.md`, README aligned with live 9-module app
+
+---
+
 ## [Unreleased]
 
 ## [1.2.0] - 2026-07-04
