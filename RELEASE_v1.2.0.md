@@ -36,7 +36,7 @@ Full UI strings for EN, RU, ZH, ES, PT-BR, VI, TR, ID.
 Service worker shell, mobile install prompt, manifest with maskable icons.
 
 ### OSS hygiene
-CI blocks committed secrets and internal telemetry markers. Public `api-proxy.js` contains proxy helpers only.
+CI blocks committed secrets on every push. Public `api-proxy.js` contains proxy URL helpers only.
 
 ---
 

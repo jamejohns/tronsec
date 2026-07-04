@@ -61,7 +61,6 @@ Do not ship API keys inside static JS files served to end users.
 The public GitHub tree is a readable snapshot of the application UI. It is synced from the main app sources and verified by CI:
 
 - No `secrets.local.js`
-- No internal activity/telemetry hooks
 - Secret pattern scan on every push
 
 The marketing site, obfuscated production build, and worker source may live outside this repository.

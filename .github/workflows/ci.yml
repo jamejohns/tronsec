@@ -38,7 +38,6 @@ jobs:
           done < <(find app assets -type f \( -name '*.js' -o -name '*.html' -o -name '*.css' -o -name '*.json' \) -print0)
           exit $found
 
-
       - name: Required app files
         run: |
           test -f app/js/aml.js
