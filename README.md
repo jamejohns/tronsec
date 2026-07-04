@@ -20,6 +20,7 @@
 <p align="center">
   <a href="https://github.com/jamejohns/tronsec/actions/workflows/ci.yml"><img src="https://github.com/jamejohns/tronsec/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/github/license/jamejohns/tronsec?style=flat-square" alt="MIT License">
+  <img src="https://img.shields.io/badge/API_keys-server--side_(Worker)-22c55e?style=flat-square" alt="Server-side API keys">
   <img src="https://img.shields.io/badge/TRON-Mainnet-e50914?style=flat-square" alt="TRON">
   <img src="https://img.shields.io/badge/JavaScript-vanilla-f7df1e?style=flat-square&logo=javascript&logoColor=000" alt="JS">
   <img src="https://img.shields.io/badge/Languages-8-64748b?style=flat-square" alt="i18n">
@@ -33,6 +34,8 @@
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
   &nbsp;·&nbsp;
+  <a href="ARCHITECTURE.md">Architecture</a>
+  &nbsp;·&nbsp;
   <a href="ROADMAP.md">Roadmap</a>
 </p>
 
@@ -40,11 +43,33 @@
 
 ## Overview
 
-**TRONSEC** is a client-side security workbench for TRON. Paste an address, contract, transaction hash, or URL — get structured risk signals and explorer-grade context **without connecting a wallet** or creating an account.
+**TRONSEC** is a read-only security workbench for TRON. Paste an address, contract, transaction hash, or URL — get structured risk signals without connecting a wallet or creating an account.
 
-This repository contains the **open-source application** (UI shell, modules, assets, i18n) under the [MIT license](LICENSE). The marketing site and localized page wrappers are hosted separately at **[tronsec.io](https://tronsec.io)**.
+This repository is the **open-source application** (MIT). The marketing site lives at **[tronsec.io](https://tronsec.io)**.
 
-> **Live demo:** [tronsec.io/app](https://tronsec.io/app/) — no install, no wallet connect.
+> **Live demo:** [tronsec.io/app](https://tronsec.io/app/)
+
+<br>
+
+## Production: API keys stay on the server
+
+**[tronsec.io](https://tronsec.io) does not ship API keys in the browser.**
+
+The deployed app is static HTML/JS. Every upstream call (TronGrid, TronScan, VirusTotal, optional scam-report backend) goes through a **Cloudflare Worker** proxy. Credentials are **Wrangler secrets on the worker** — they never appear in the client bundle, DevTools, or this git tree.
+
+```
+Browser  →  Cloudflare Worker (secrets)  →  TronGrid / TronScan / VirusTotal
+```
+
+| Production loads | Contains secrets? |
+|:--|:--|
+| `app/js/proxy-config.js` | No — public worker URL only |
+| `app/js/secrets.js` | No — empty placeholders |
+| `app/js/secrets.local.js` | **Not shipped** — gitignored, not in prod HTML |
+
+Cloning this repo and running locally uses the **same worker proxy by default** — no keys required.
+
+Full diagram: **[ARCHITECTURE.md](ARCHITECTURE.md)**
 
 <br>
 
@@ -57,10 +82,10 @@ This repository contains the **open-source application** (UI shell, modules, ass
 | **AML check** | On-chain heuristics, counterparty exposure, token flows, PDF export |
 | **Contract audit** | Privileged functions, proxy patterns, TRON-specific bytecode signals |
 | **TX decoder** | TRC-20 transfers, approvals, contract calls, fees, scam-pattern warnings |
-| **URL scanner** | Typosquatting, homoglyphs, VirusTotal lookup |
-| **Vanity generator** | Custom Base58 prefix/suffix/contains patterns — **runs locally** in Web Workers; keys never leave the browser |
-| **Scam report** | Structured address/domain reports with evidence links |
-| **Network dashboard** | Live TRX price, chain stats, Fear & Greed (read-only) |
+| **URL scanner** | Typosquatting, homoglyphs, VirusTotal (via worker) |
+| **Vanity generator** | Base58 patterns in **local Web Workers** — generated keys never leave your browser |
+| **Scam report** | Structured address/domain reports (delivered via worker when configured) |
+| **Network dashboard** | Live TRX price, chain stats, Fear & Greed |
 
 <br>
 
@@ -69,21 +94,16 @@ This repository contains the **open-source application** (UI shell, modules, ass
 ```bash
 git clone https://github.com/jamejohns/tronsec.git
 cd tronsec
-cp app/js/secrets.local.example.js app/js/secrets.local.js
 python -m http.server 8080
 ```
 
-Open **http://localhost:8080/app/** (serve repo root, not `app/` alone).
-
-By default the app talks to upstream APIs through a **Cloudflare Worker proxy** (`app/js/proxy-config.js`). No browser-side API keys are required for a basic local run.
+Open **http://localhost:8080/app/** — works out of the box via the public worker proxy (`proxy-config.js`). **No API keys needed.**
 
 <br>
 
-## API access (Worker proxy)
+## Worker proxy routes
 
-Production **[tronsec.io](https://tronsec.io)** does not ship TronGrid / TronScan / VirusTotal credentials to the browser. The client calls a thin proxy; keys live as **Wrangler secrets** on the worker.
-
-Default proxy URL (public, not a secret):
+Public worker base URL (not a secret):
 
 ```js
 // app/js/proxy-config.js
@@ -96,40 +116,34 @@ window.TRONSEC_PROXY = { base: 'https://api-proxy.tronsec-io.workers.dev' };
 | `/scan/*` | TronScan |
 | `/vt/*` | VirusTotal |
 | `/cmc/*` | CoinMarketCap (TRX quotes) |
-| `/telegram/sendMessage` | User-submitted scam reports only (optional worker route) |
+| `/telegram/sendMessage` | Scam-report form delivery (worker-held credentials) |
 
-**Self-hosting:** deploy your own Cloudflare Worker with the same route layout, store API keys as worker secrets, then override in `app/js/secrets.local.js`:
-
-```js
-window.TRONSEC_PROXY = { base: 'https://your-worker.workers.dev' };
-```
-
-Restrict CORS on the worker to your domain — otherwise anyone can relay requests through your keys.
+**Self-hosting:** deploy your own worker, store keys as server secrets, point `proxy-config.js` at your worker URL, restrict CORS to your domain.
 
 <br>
 
-## Local dev fallback (direct keys)
+## Optional: local dev without proxy
 
-Optional — only if you **do not** use a proxy. Edit `app/js/secrets.local.js` (gitignored):
+<details>
+<summary><strong>Advanced — direct TronGrid/TronScan keys in the browser (dev machines only)</strong></summary>
+
+This path is **not used on tronsec.io**. Only for developers who intentionally disable the proxy:
+
+```bash
+cp app/js/secrets.local.example.js app/js/secrets.local.js
+```
 
 ```js
-// Disable proxy for this session
 window.TRONSEC_PROXY = { base: '' };
-
 Object.assign(window.TRONSEC_KEYS, {
-  trongrid: 'YOUR_TRONGRID_API_KEY',
-  tronscan: 'YOUR_TRONSCAN_API_KEY',
+  trongrid: 'YOUR_DEV_TRONGRID_KEY',
+  tronscan: 'YOUR_DEV_TRONSCAN_KEY',
 });
 ```
 
-| Key | Powers | Where to get |
-|:--|:--|:--|
-| `trongrid` | Wallet · AML · TX · contracts · approvals | [trongrid.io](https://www.trongrid.io/) |
-| `tronscan` | Balances · labels · history | [TronScan docs](https://docs.tronscan.org/) |
+Keys are visible in DevTools. VirusTotal still requires a worker. Never commit `secrets.local.js`.
 
-**VirusTotal** requires the worker proxy (or your own worker with `/vt/*`). Direct browser keys for VT are not supported in this build.
-
-Without a working proxy or direct TronGrid/TronScan keys, the UI loads but live scans fail.
+</details>
 
 <br>
 
@@ -137,21 +151,21 @@ Without a working proxy or direct TronGrid/TronScan keys, the UI loads but live 
 
 ```
 app/                 Shell, styles, modules (vanilla JS)
-assets/              Brand, fonts, i18n (EN RU ZH ES PT VI TR ID)
+assets/              Brand, fonts, i18n (8 locales)
 manifest.json        PWA metadata
-sw.js                Service worker (offline shell)
+sw.js                Service worker
 ```
 
-Stack: vanilla JavaScript · Tailwind · Lucide · D3.js · TronGrid / TronScan / VirusTotal.
+Stack: vanilla JavaScript · Tailwind · Lucide · D3.js · TronGrid / TronScan / VirusTotal (via worker).
 
 <br>
 
 ## Security & privacy
 
 - **Read-only** — no wallet connection, no transaction signing from this UI.
-- **Vanity keys stay local** — generated private keys never leave your browser.
-- **Do not commit API keys** — use a worker proxy in production; `secrets.local.js` is gitignored.
-- Direct browser keys (dev fallback) are visible in DevTools — rotate if ever exposed.
+- **Production keys server-side** — Cloudflare Worker + Wrangler secrets on the live site.
+- **Vanity keys stay local** — generated private keys never sent to any server.
+- **No seed phrases** — TRONSEC never asks for your wallet mnemonic.
 - Official product: **[tronsec.io](https://tronsec.io)** — keep `app/js/brand.js` attribution when forking.
 
 See [SECURITY.md](SECURITY.md) for responsible disclosure.
