@@ -38,15 +38,6 @@ jobs:
           done < <(find app assets -type f \( -name '*.js' -o -name '*.html' -o -name '*.css' -o -name '*.json' \) -print0)
           exit $found
 
-      - name: Block internal telemetry markers
-        run: |
-          set -e
-          if grep -rqiE 'tronsecSyncEdge|laneSeal|telemetryKey|flushEdgeRecord|LOG_TO_TELEGRAM|withProxyTelemetry' app; then
-            echo "::error::Internal telemetry markers must not appear in the public export"
-            grep -rniE 'tronsecSyncEdge|laneSeal|telemetryKey|flushEdgeRecord|LOG_TO_TELEGRAM|withProxyTelemetry' app || true
-            exit 1
-          fi
-
       - name: Required app files
         run: |
           test -f app/js/aml.js

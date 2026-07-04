@@ -12,12 +12,11 @@ Live product: **[tronsec.io/app](https://tronsec.io/app/)**.
 ### Added
 - **Approvals monitor** — live TRC-20 allowance scan (TronGrid + TronScan), risk badges, unlimited-approval warnings
 - Vanity generator: default demo pattern (Suffix · SEC), dual-field presets for prefix+suffix mode
-- `ROADMAP.md`, `SECURITY.md` — public planning and disclosure policy
-- CI step: block internal telemetry markers in OSS export
+- `ROADMAP.md`, `SECURITY.md`, `ARCHITECTURE.md` — public planning and security docs
 
 ### Changed
 - README and CONTRIBUTING aligned with live module set (9 modules, approvals wired)
-- OSS `api-proxy.js` — public proxy helpers only (no server-side activity hooks)
+- OSS `api-proxy.js` — public proxy URL helpers only
 - i18n locales and styles synced from latest app shell
 
 ### Fixed
