@@ -432,7 +432,7 @@ async function phishCheck() {
   if (!raw) { flashInput(phishInput); showToast('Enter a URL'); return; }
 
   if (!window.tronsecVtConfigured()) {
-    setError(phishErr, 'Phishing scan requires TRONSEC_PROXY.base in secrets.local.js (Cloudflare Worker with VIRUSTOTAL_API_KEY).');
+    setError(phishErr, 'Phishing scan requires TRONSEC_PROXY.base (Cloudflare Worker with VIRUSTOTAL_API_KEY).');
     showToast('Configure Cloudflare Worker proxy — see workers/tronsec-api-proxy/README.md');
     return;
   }

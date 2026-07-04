@@ -52,7 +52,7 @@ function amlAlertInline(type, html) {
 
 function amlAlertList(type, title, items) {
   return `<div class="aml-alert aml-alert--${type}">
-    <div class="aml-alert-head">${icSVG(IC.alert, 14)}<span class="aml-alert-title">${esc(title)}</span></div>
+    <div class="aml-alert-head">${icSVG(IC.alert, 14)}<span class="aml-alert-title">${esc(t(title))}</span></div>
     <ul class="aml-alert-list">${items.map(item => `<li>${item}</li>`).join('')}</ul>
   </div>`;
 }
@@ -374,11 +374,11 @@ function amlExportPdf(report) {
 
     pdf.text(m + 18, cardY + 54, String(report.finalScore), 28, 'mono', scoreColor, true);
     pdf.text(m + 46, cardY + 54, '/100', 11, 'mono', AML_PDF.text3);
-    pdf.text(m + 18, cardY + 36, report.statusLabel, 11, 'sans', scoreColor, true);
-    pdf.text(m + 18, cardY + 22, report.hasHardSignals ? 'Composite risk signal' : 'Activity risk signal', 8, 'sans', AML_PDF.text4);
-    pdf.text(m + 18, cardY + 10, 'Sample: latest 400 transactions', 7, 'mono', AML_PDF.text4);
+    pdf.text(m + 18, cardY + 36, t(report.statusLabel), 11, 'sans', scoreColor, true);
+    pdf.text(m + 18, cardY + 22, report.hasHardSignals ? t('Composite risk signal') : t('Activity risk signal'), 8, 'sans', AML_PDF.text4);
+    pdf.text(m + 18, cardY + 10, t('Sample: latest 400 transactions'), 7, 'mono', AML_PDF.text4);
 
-    pdf.text(m + 200, cardY + 62, 'SUBJECT ADDRESS', 7, 'mono', AML_PDF.text4, true);
+    pdf.text(m + 200, cardY + 62, t('SUBJECT ADDRESS'), 7, 'mono', AML_PDF.text4, true);
     const addrLines = pdf.wrapText(report.addr, pdf.W - m * 2 - 212, 8.5, 'mono');
     addrLines.slice(0, 2).forEach((line, i) => {
       pdf.text(m + 200, cardY + 48 - i * 12, line, 8.5, 'mono', AML_PDF.text2);
@@ -387,21 +387,21 @@ function amlExportPdf(report) {
     pdf.cursorY = cardY - 22;
 
     if (report.assessmentText) {
-      pdf.section('Assessment');
-      pdf.bullet(report.assessmentText, scoreColor);
+      pdf.section(t('Assessment'));
+      pdf.bullet(t(report.assessmentText), scoreColor);
     }
     if (report.hardFlags?.length) {
-      pdf.section('Security flags');
-      report.hardFlags.forEach(flag => pdf.bullet(flag, AML_PDF.red));
+      pdf.section(t('Security flags'));
+      report.hardFlags.forEach(flag => pdf.bullet(t(flag), AML_PDF.red));
     }
     if (report.peerFlags?.length) {
-      pdf.section('Flagged counterparties');
+      pdf.section(t('Flagged counterparties'));
       report.peerFlags.slice(0, 8).forEach(p => pdf.bullet(p, AML_PDF.amber));
     }
     if (report.scoreFactors?.length) {
-      pdf.section('Signal breakdown');
+      pdf.section(t('Signal breakdown'));
       report.scoreFactors.forEach(f => {
-        const lines = pdf.wrapText(f.label, pdf.W - m * 2 - 70, 8.5, 'sans');
+        const lines = pdf.wrapText(t(f.label), pdf.W - m * 2 - 70, 8.5, 'sans');
         pdf.need(lines.length * 12 + 4);
         lines.forEach((line, i) => {
           pdf.text(m, pdf.cursorY, line, 8.5, 'sans', AML_PDF.text2);
@@ -415,25 +415,25 @@ function amlExportPdf(report) {
       });
     }
 
-    pdf.section('On-chain summary');
-    pdf.row('Transactions sampled', `${Math.min(report.txCount, 400)} of latest 400`);
-    pdf.row('Direct transfers', String(report.dtCount));
-    pdf.row('Concentration', report.dtCount > 0 ? `${(report.concentration * 100).toFixed(0)}% / ${report.uniquePeers} peers` : '-');
-    pdf.row('Account age', report.ageDays !== null ? `${report.ageDays} days` : 'Unknown');
-    if (report.balanceTrx !== null) pdf.row('Balance', `${report.balanceTrx.toFixed(2)} TRX`, AML_PDF.info);
-    if (report.accCreated) pdf.row('Created', report.accCreated);
-    if (report.activityWindow) pdf.row('Activity window', report.activityWindow);
+    pdf.section(t('On-chain summary'));
+    pdf.row(t('Transactions sampled'), `${Math.min(report.txCount, 400)} ${t('of latest 400')}`);
+    pdf.row(t('Direct transfers'), String(report.dtCount));
+    pdf.row(t('Concentration'), report.dtCount > 0 ? `${(report.concentration * 100).toFixed(0)}% / ${report.uniquePeers}${t(' peers')}` : '-');
+    pdf.row(t('Account age'), report.ageDays !== null ? `${report.ageDays} days` : t('Unknown'));
+    if (report.balanceTrx !== null) pdf.row(t('Balance'), `${report.balanceTrx.toFixed(2)} TRX`, AML_PDF.info);
+    if (report.accCreated) pdf.row(t('Created'), report.accCreated);
+    if (report.activityWindow) pdf.row(t('Activity window'), report.activityWindow);
 
     if (report.parsedTokens?.length) {
-      pdf.section('Token exposure');
-      report.parsedTokens.slice(0, 6).forEach(t => {
-        const val = t.usd != null ? `$${t.usd.toFixed(2)}` : t.balance.toFixed(4);
-        pdf.row(t.symbol, `${val} / bal ${t.balance.toFixed(4)}`);
+      pdf.section(t('Token exposure'));
+      report.parsedTokens.slice(0, 6).forEach(tok => {
+        const val = tok.usd != null ? `$${tok.usd.toFixed(2)}` : tok.balance.toFixed(4);
+        pdf.row(tok.symbol, `${val} / bal ${tok.balance.toFixed(4)}`);
       });
     }
     if (report.topPeers?.length) {
-      pdf.section('Top counterparties');
-      report.topPeers.slice(0, 8).forEach(([a, c]) => pdf.row(addrLabel(a), `${c} direct transfers`));
+      pdf.section(t('Top counterparties'));
+      report.topPeers.slice(0, 8).forEach(([a, c]) => pdf.row(addrLabel(a), t('{count} direct transfers', { count: c })));
     }
 
     pdf.disclaimerBox(t('This report is a risk analysis based on the latest 400 on-chain transactions and public security tags. It is not a legal or compliance determination.'));
@@ -480,14 +480,14 @@ function amlRiskStat(status, statusLabel, finalScore, isFlagged, hasHardSignals)
   const meter = (status !== 'insufficient' || hasHardSignals)
     ? `<div class="aml-risk-meter"><div class="aml-risk-meter-fill ${cls}" style="width:${Math.max(4, finalScore)}%"></div></div>`
     : '';
-  const statLabel = hasHardSignals ? 'Composite risk signal' : 'Activity risk signal';
+  const statLabel = hasHardSignals ? t('Composite risk signal') : t('Activity risk signal');
   return `<div class="an-stat aml-risk-stat">
     <div class="an-stat-label">${statLabel}</div>
     <div class="aml-risk-body">
       ${icon}
       <div class="aml-risk-text">
         <div class="an-stat-value ${cls}">${scoreText}</div>
-        <div class="an-stat-sub">${esc(statusLabel)}</div>
+        <div class="an-stat-sub">${esc(t(statusLabel))}</div>
         ${meter}
       </div>
     </div>
@@ -500,7 +500,7 @@ function amlPeerRow(addr, count, flagCls, flagLabel, isFlaggedPeer) {
     <div class="aml-row-icon">${esc(initials)}</div>
     <div class="aml-row-body">
       <div class="aml-row-title">${amlAddrLink(addr)}</div>
-      <div class="aml-row-meta">${count} direct transfers</div>
+      <div class="aml-row-meta">${t('{count} direct transfers', { count })}</div>
     </div>
     <div class="aml-row-action">${badge(flagCls, flagLabel)}</div>
   </div>`;
@@ -525,7 +525,7 @@ function amlPanel(titleHtml, rowsHtml, meta = '') {
 function amlRowsBlock(titleHtml, rowsHtml, meta = '', emptyMsg = '') {
   const body = rowsHtml
     ? `<div class="aml-rows">${rowsHtml}</div>`
-    : `<div class="aml-empty">${esc(emptyMsg)}</div>`;
+    : `<div class="aml-empty">${esc(t(emptyMsg))}</div>`;
   return amlBlock(titleHtml, body, meta);
 }
 
@@ -535,11 +535,11 @@ function amlSignalsPanel(factors, finalScore, status) {
   }
   const body = `<div class="aml-signals">${factors.map(f => `
       <div class="aml-signal${f.tier === 'hard' ? ' is-hard' : ''}${f.pts < 0 ? ' is-positive' : f.pts >= 15 ? ' is-high' : ''}">
-        <span class="aml-signal-label">${esc(f.label)}</span>
+        <span class="aml-signal-label">${esc(t(f.label))}</span>
         <span class="aml-signal-pts ${f.pts < 0 ? 'is-green' : f.pts >= 15 ? 'is-red' : 'is-amber'}">${f.pts > 0 ? '+' : ''}${f.pts}</span>
       </div>`).join('')}
     </div>`;
-  return amlBlock('Signal breakdown', body, `${finalScore}/100 composite`);
+  return amlBlock('Signal breakdown', body, `${finalScore}/100 ${t('composite')}`);
 }
 
 function amlTokensPanel(parsedTokens) {
@@ -652,7 +652,7 @@ async function amlScan() {
       for (const t of tags) {
         const tagName = (typeof t === 'string' ? t : (t.tagName || t.tag || t.label || ''));
         if (tagName && /scam|phish|fraud|blacklist|sanction|malicious|hack|exploit/i.test(tagName)) {
-          hardFlags.push('Security tag: ' + tagName);
+          hardFlags.push(t('Security tag: ') + tagName);
         }
       }
     }
@@ -897,7 +897,7 @@ async function amlScan() {
 
     let alertsHtml = '';
     if (isFlagged && hardFlags.length) {
-      alertsHtml += amlAlertList('red', 'Security flags', hardFlags.map(f => esc(f)));
+      alertsHtml += amlAlertList('red', 'Security flags', hardFlags.map(f => esc(t(f))));
     }
     if (isFlagged && txCount === 0 && (tokens.length > 0 || scanProfile.totalTransactionCount || scanProfile.transactions)) {
       alertsHtml += amlAlertInline('amber', t('Security flags detected, but recent transaction history could not be loaded — activity metrics below may be incomplete.'));
@@ -911,9 +911,9 @@ async function amlScan() {
     const heroHtml = `
       ${amlRiskStat(status, statusLabel, finalScore, isFlagged, hasHardSignals)}
       <div class="an-stat">
-        <div class="an-stat-label">Transactions</div>
+        <div class="an-stat-label">${t('Transactions')}</div>
         <div class="an-stat-value is-info">${txCount}</div>
-        <div class="an-stat-sub">${dtCount} direct · ${txCount - dtCount} contract</div>
+        <div class="an-stat-sub">${dtCount} ${t('direct')} · ${txCount - dtCount} ${t('contract')}</div>
       </div>
       <div class="an-stat">
         <div class="an-stat-label">${tt('concentration')}</div>
@@ -921,25 +921,25 @@ async function amlScan() {
         <div class="an-stat-sub">${uniquePeers} ${tt('counterparty')}s</div>
       </div>
       <div class="an-stat">
-        <div class="an-stat-label">Account age</div>
+        <div class="an-stat-label">${t('Account age')}</div>
         <div class="an-stat-value is-amber">${ageDays !== null ? ageDays + '<span class="aml-score-unit">d</span>' : '—'}</div>
-        <div class="an-stat-sub">${knownEntityCount > 0 ? knownEntityCount + ' known ' + tt('entity') + (knownEntityCount > 1 ? 's' : '') : 'latest 400 transactions'}</div>
+        <div class="an-stat-sub">${knownEntityCount > 0 ? knownEntityCount + ' known ' + tt('entity') + (knownEntityCount > 1 ? 's' : '') : t('latest 400 transactions')}</div>
       </div>`;
 
     let assessmentHtml;
     let assessmentText;
     if (isFlagged) {
-      assessmentText = `${ttLabel('flagged')} - ${hardFlags[0] || 'Security flags detected'}`;
-      assessmentHtml = amlAlertInline('red', `<strong>${tt('flagged')}</strong> — ${esc(hardFlags[0] || 'Security flags detected')}`);
+      assessmentText = `${ttLabel('flagged')} - ${t(hardFlags[0] || 'Security flags detected')}`;
+      assessmentHtml = amlAlertInline('red', `<strong>${tt('flagged')}</strong> — ${esc(t(hardFlags[0] || 'Security flags detected'))}`);
     } else if (status === 'unusual') {
-      assessmentText = 'Unusual activity — review counterparties and transaction history below.';
-      assessmentHtml = amlAlertInline('amber', '<strong>Unusual activity</strong> — review counterparties and transaction history below.');
+      assessmentText = t('Unusual activity — review counterparties and transaction history below.');
+      assessmentHtml = amlAlertInline('amber', t('Unusual activity — review counterparties and transaction history below.'));
     } else if (status === 'insufficient') {
-      assessmentText = 'Insufficient transaction data to evaluate activity risk.';
-      assessmentHtml = amlAlertInline('amber', 'Insufficient transaction data to evaluate activity risk.');
+      assessmentText = t('Insufficient transaction data to evaluate activity risk.');
+      assessmentHtml = amlAlertInline('amber', t('Insufficient transaction data to evaluate activity risk.'));
     } else {
-      assessmentText = 'No flags found — address appears to be a regular wallet.';
-      assessmentHtml = amlAlertInline('green', '<strong>No flags found</strong> — address appears to be a regular wallet.');
+      assessmentText = t('No flags found — address appears to be a regular wallet.');
+      assessmentHtml = amlAlertInline('green', t('No flags found — address appears to be a regular wallet.'));
     }
 
     const secAccDanger = secAcc && (secAcc.is_black_list || secAcc.has_fraud_transaction || secAcc.fraud_token_creator);

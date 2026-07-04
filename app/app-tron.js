@@ -706,6 +706,27 @@ function applyDomI18n() {
 
     const loader = document.getElementById('init-loader');
     if (loader) loader.setAttribute('aria-label', t('Loading TRONSEC'));
+
+    const tagline = document.querySelector('.init-loader-tagline');
+    if (tagline) {
+        tagline.innerHTML =
+            t('TRX SECURITY SCANNER') +
+            ' <span class="init-loader-sep">|</span> ' +
+            t('POWERED BY') +
+            ' <span class="init-loader-tron">TRON</span>';
+    }
+
+    document.querySelectorAll('[data-footer-donate]').forEach((el) => {
+        el.textContent = t('donate');
+    });
+    document.querySelectorAll('[data-footer-telegram]').forEach((el) => {
+        el.textContent = t('telegram');
+    });
+    document.querySelectorAll('[data-footer-changelog]').forEach((el) => {
+        const ver = el.querySelector('.sidebar-aside-ver');
+        const version = ver ? ver.textContent.trim() : '';
+        el.innerHTML = t('changelog') + (version ? ` <span class="sidebar-aside-ver">${version}</span>` : '');
+    });
 }
 
 function initLangSwitcher() {
