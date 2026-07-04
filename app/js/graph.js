@@ -30,7 +30,7 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
     return 'safe';
   }
 
-  let nodes = [{ id: targetAddr, label: 'You', type: 'center', txCount: 0, volume: 0 }];
+  let nodes = [{ id: targetAddr, label: t('You'), type: 'center', txCount: 0, volume: 0 }];
   for (const [addr, count] of peers) {
     nodes.push({
       id: addr,
@@ -132,7 +132,7 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
     .attr('font-weight', '600')
     .attr('font-family', 'var(--mono)')
     .attr('fill', d => d.type === 'center' ? '#111113' : colors[d.type])
-    .text(d => d.type === 'center' ? 'You' : d.txCount);
+    .text(d => d.type === 'center' ? t('You') : d.txCount);
 
   nodeG.append('text')
     .attr('class', 'node-addr')
@@ -152,9 +152,9 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
     .attr('font-family', 'var(--font-ui)')
     .attr('fill', d => d.type === 'center' ? '#52525b' : (colors[d.type] || '#52525b'))
     .attr('dy', d => rScale(d) + 17)
-    .text(d => d.type === 'center' ? 'Target' :
-      d.type === 'danger' ? 'Flagged' :
-      d.type === 'warn' ? 'Watch' : 'OK');
+    .text(d => d.type === 'center' ? t('Target') :
+      d.type === 'danger' ? t('Flagged') :
+      d.type === 'warn' ? t('Watch') : t('OK'));
 
   nodeG.on('mouseenter', (event, d) => {
     if (filtered && d.type === 'safe') return;
@@ -241,13 +241,13 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
       <span class="aml-graph-legend-item"><i class="aml-graph-dot aml-graph-dot--safe"></i>${t('OK')}</span>
       <span class="aml-graph-legend-hint">${t('Line width = tx count · drag nodes · scroll to zoom')}</span>
     </div>
-    <button type="button" id="graph-filter-btn" class="wallet-action-btn wallet-action-btn--ghost aml-graph-filter">Show flagged only</button>`;
+    <button type="button" id="graph-filter-btn" class="wallet-action-btn wallet-action-btn--ghost aml-graph-filter">${t('Show flagged only')}</button>`;
   root.appendChild(foot);
 
   const filterBtn = foot.querySelector('#graph-filter-btn');
   filterBtn?.addEventListener('click', () => {
     filtered = !filtered;
-    filterBtn.textContent = filtered ? 'Show all' : 'Show flagged only';
+    filterBtn.textContent = filtered ? t('Show all') : t('Show flagged only');
     filterBtn.classList.toggle('is-active', filtered);
     applyFilter();
   });
