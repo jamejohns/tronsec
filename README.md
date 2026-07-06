@@ -45,6 +45,8 @@
 
 **TRONSEC** is a read-only security workbench for TRON. Paste an address, contract, transaction hash, or URL — get structured risk signals without connecting a wallet or creating an account.
 
+Focus areas: **on-chain risk** · **financial crime signals** · **secure client architecture** — wallet compromise patterns, TRC-20 approvals, phishing & drainer surfaces, and read-only tooling that helps users decide before they sign.
+
 This repository is the **open-source application** (MIT). The marketing site lives at **[tronsec.io](https://tronsec.io)**.
 
 > **Live demo:** [tronsec.io/app](https://tronsec.io/app/)
@@ -101,6 +103,20 @@ Full diagram: **[ARCHITECTURE.md](ARCHITECTURE.md)**
 | **Vanity generator** | Base58 patterns in **local Web Workers** — generated keys never leave your browser |
 | **Scam report** | Structured address/domain reports (delivered via worker when configured) |
 | **Network dashboard** | Live TRX price, chain stats, Fear & Greed |
+
+<br>
+
+## Pet OSS (satellite repos)
+
+Small, focused tools extracted from TRONSEC patterns — also pinned on [@jamejohns](https://github.com/jamejohns):
+
+| Repo | What it is |
+|:--|:--|
+| [**tronsec-worker-starter**](https://github.com/jamejohns/tronsec-worker-starter) | Cloudflare Worker API proxy — TronGrid, TronScan, VirusTotal keys stay server-side |
+| [**tron-approvals-check**](https://github.com/jamejohns/tron-approvals-check) | CLI to list TRON token approvals and flag unlimited or risky spenders |
+| [**tron-phish-rules**](https://github.com/jamejohns/tron-phish-rules) | Versioned TRON phishing URL heuristics + offline checker (no VirusTotal required) |
+
+Use the worker starter with the CLI tools, or run the full terminal here.
 
 <br>
 
