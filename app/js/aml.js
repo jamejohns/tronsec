@@ -78,6 +78,40 @@ function amlStatusBadge(status, isFlagged) {
   return badge('b-green', 'Clean');
 }
 
+async function renderAmlContractRedirect(addr) {
+  let contractLabel = '';
+  try {
+    const wrap = await scanGet('/contract', { contract: addr });
+    const meta = wrap?.data?.[0] || {};
+    contractLabel = meta.tag1 || meta.name || meta.project_name || '';
+  } catch (_) {}
+
+  const contractIcon = icSVG('M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M10 13h4 M10 17h7', 40);
+  const CS = 'Contract Scan';
+  const full = t('AML screening scores wallet addresses and their transaction patterns. For tokens and smart contracts, use Contract Scan to review bytecode, permissions, and upgrade risks.');
+  const csIdx = full.indexOf(CS);
+  const link = `<a href="#" class="appr-empty-link" id="aml-open-contract-scan-btn">${esc(CS)}</a>`;
+  const hintHtml = csIdx >= 0
+    ? `${esc(full.slice(0, csIdx))}${link}${esc(full.slice(csIdx + CS.length))}`
+    : `${esc(full)} ${link}`;
+  const prefix = contractLabel ? `${esc(contractLabel)} — ` : '';
+
+  return `<div class="appr-scan">
+    <div class="appr-empty appr-empty--inline">
+      <div class="appr-empty-icon">${contractIcon}</div>
+      <p class="appr-empty-title">${esc(t('This is a contract, not a wallet'))}</p>
+      <p class="appr-empty-hint">${prefix}${hintHtml}</p>
+    </div>
+  </div>`;
+}
+
+function bindAmlContractRedirect(addr) {
+  document.getElementById('aml-open-contract-scan-btn')?.addEventListener('click', e => {
+    e.preventDefault();
+    openContractScan(addr);
+  });
+}
+
 function bindAmlActions(addr) {
   document.getElementById('aml-copy-addr-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(addr).then(() => {
@@ -605,10 +639,21 @@ async function amlScan() {
   setError(amlErr, '');
   if (!addr) { flashInput(amlInput); showToast('Enter a TRON address'); return; }
   if (!isValidTron(addr)) { flashInput(amlInput); showToast('Invalid TRON address — must start with T, 34 chars.'); return; }
+
+  spinBtn(amlBtn, true);
+  amlEmpty.style.display = 'none';
+
+  try {
+    if (await probeTronContract(addr)) {
+      amlRes.innerHTML = await renderAmlContractRedirect(addr);
+      bindAmlContractRedirect(addr);
+      spinBtn(amlBtn, false);
+      return;
+    }
+  } catch (_) {}
+
   requireCaptcha(async () => {
-    spinBtn(amlBtn, true);
     amlRes.innerHTML = SK.aml();
-    amlEmpty.style.display = 'none';
 
     try {
     const [accRes, tokenRes, secAcc, tagAcc, secToken, scanAcc] = await Promise.all([
@@ -1056,6 +1101,9 @@ async function amlScan() {
   } finally {
     spinBtn(amlBtn, false);
   }
+  }, () => {
+    spinBtn(amlBtn, false);
+    if (!amlRes.innerHTML.trim()) amlEmpty.style.display = '';
   });
 }
 

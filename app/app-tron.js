@@ -208,9 +208,9 @@ function startAnalyticsPoll() {
 
 function refreshAllAnalytics(force) {
     if (force) showAnalyticsSkeletons();
-    if (force || !cacheIsFresh('network')) fetchTronNetworkStatus();
     if (force || !cacheIsFresh('market')) fetchMarketData();
     if (force || !cacheIsFresh('fgMarket')) fetchFearGreedForMarket();
+    if (force || !cacheIsFresh('network')) fetchTronNetworkStatus();
     if (force || !cacheIsFresh('token')) fetchTokenActivity();
     if (force || !cacheIsFresh('security')) fetchSecurityMetrics();
 }
@@ -784,6 +784,7 @@ function loadSavedTheme() {
 
 // ============ CAPTCHA SYSTEM ============
 let _captchaCallback = null;
+let _captchaOnCancel = null;
 let _captchaRequired = 3;
 const CAPTCHA_BTN_OFF = 'captcha-btn captcha-btn--disabled';
 const CAPTCHA_BTN_ON = 'captcha-btn captcha-btn--primary';
@@ -864,8 +865,9 @@ function applyCaptchaI18n() {
   }
 }
 
-function requireCaptcha(callback) {
+function requireCaptcha(callback, onCancel) {
   _captchaCallback = callback;
+  _captchaOnCancel = onCancel || null;
   const modal = document.getElementById('captcha-modal');
   resetCaptcha();
   modal.classList.remove('is-closing');
@@ -895,11 +897,15 @@ function closeCaptcha(afterClose) {
     if (typeof afterClose === 'function') afterClose();
     return;
   }
+  const wasPending = _captchaCallback != null;
+  const onCancel = _captchaOnCancel;
   modal.classList.remove('is-open');
   modal.classList.add('is-closing');
   setTimeout(() => {
     modal.classList.remove('is-closing');
     _captchaCallback = null;
+    _captchaOnCancel = null;
+    if (wasPending && typeof afterClose !== 'function' && typeof onCancel === 'function') onCancel();
     if (typeof afterClose === 'function') afterClose();
   }, 320);
 }

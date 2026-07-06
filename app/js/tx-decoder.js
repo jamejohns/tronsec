@@ -361,6 +361,32 @@ async function hydrateDecodedAddresses(decoded) {
   return out;
 }
 
+function isTronScanRiskyTx(scanInfo) {
+  if (!scanInfo) return false;
+  const v = scanInfo.riskTransaction;
+  return v === true || v === 1 || v === '1';
+}
+
+function trc10TransferFromScan(scanInfo, cVal) {
+  const cd = scanInfo?.contractData;
+  if (!cd && !cVal?.amount) return null;
+  const ti = cd?.tokenInfo;
+  const decimals = ti?.tokenDecimal ?? 0;
+  const raw = cd?.amount ?? cVal.amount ?? 0;
+  return {
+    from_address: cd?.owner_address || cVal.owner_address,
+    to_address: cd?.to_address || cVal.to_address,
+    contract_address: ti?.tokenId != null ? String(ti.tokenId) : String(cVal.asset_name || ''),
+    amount_str: String(raw),
+    symbol: ti?.tokenAbbr || ti?.tokenName || String(cVal.asset_name || '?'),
+    decimals,
+    name: ti?.tokenName || '',
+    tokenType: 'trc10',
+    vip: !!ti?.vip,
+    source: 'scan-trc10',
+  };
+}
+
 function collectTrc20Transfers(scanInfo) {
   const raw = [
     ...(scanInfo?.trc20 || []),
@@ -608,7 +634,13 @@ async function txDecode() {
     let contractMethods = [];
     const details    = []; // [{label, value, mono?}]
     const trigger    = scanInfo?.trigger_info || null;
-    const mergedTransfers = await mergeTrc20Transfers(scanInfo, txInfo);
+    let mergedTransfers = await mergeTrc20Transfers(scanInfo, txInfo);
+    const trc10Row = cType === 'TransferAssetContract' ? trc10TransferFromScan(scanInfo, cVal) : null;
+    if (trc10Row) {
+      const key = [trc10Row.from_address, trc10Row.to_address, trc10Row.contract_address, trc10Row.amount_str].join('|');
+      const dup = mergedTransfers.some(tr => [tr.from_address, tr.to_address, tr.contract_address, tr.amount_str].join('|') === key);
+      if (!dup) mergedTransfers = [...mergedTransfers, trc10Row];
+    }
     const hasTokenMovements = mergedTransfers.length > 0;
 
     // From / To
@@ -628,14 +660,19 @@ async function txDecode() {
       }
 
       case 'TransferAssetContract': {
-        const asset = cVal.asset_name || t('TRC10 token');
-        const amt   = cVal.amount || 0;
-        summaryTitleHtml = esc(`Sent ${amt} ${asset}`);
-        summaryDesc  = '';
-        details.push({ label: 'Token',  value: asset });
-        details.push({ label: 'Amount', value: String(amt), mono: true });
-        details.push({ label: 'From',   value: fromAddr, mono: true, link: true });
-        details.push({ label: 'To',     value: toAddr,   mono: true, link: true });
+        const ti = scanInfo?.contractData?.tokenInfo;
+        const sym = ti?.tokenAbbr || ti?.tokenName || cVal.asset_name || t('TRC10 token');
+        const dec = ti?.tokenDecimal ?? 0;
+        const amt = fmtTokenAmt(BigInt(cVal.amount || scanInfo?.contractData?.amount || 0), dec);
+        summaryTitleHtml = esc(t('Sent {amount} {symbol}', { amount: amt, symbol: sym }));
+        summaryDesc = isTronScanRiskyTx(scanInfo)
+          ? t('TronScan marks this as a risky spam/airdrop transfer. Do not follow links in the token name or interact with the sender.')
+          : (ti ? t('TRC10 token transfer — verify the asset ID before treating this as a real payment.') : '');
+        if (isTronScanRiskyTx(scanInfo)) summaryRisk = 'high';
+        details.push({ label: 'Token', value: ti?.tokenName ? `${sym} (${ti.tokenName})` : sym });
+        details.push({ label: 'Amount', value: `${amt} ${sym}`, mono: true });
+        details.push({ label: 'From', value: fromAddr, mono: true, link: true });
+        details.push({ label: 'To', value: toAddr, mono: true, link: true });
         break;
       }
 
@@ -845,6 +882,11 @@ async function txDecode() {
     const riskAlerts = [];
     const sel = cType === 'TriggerSmartContract' ? selector : '';
 
+    if (isTronScanRiskyTx(scanInfo)) {
+      riskAlerts.push({ lvl: 'red', msg: t('TronScan flagged this transaction as risky.') });
+      summaryRisk = 'high';
+    }
+
     // -- Selector-based risk heuristics --
     if (cType === 'TriggerSmartContract') {
       const scamPattern = isClaimScamPattern(sel, trigger, cVal.data, contractMethods, contractAddr);
@@ -854,10 +896,6 @@ async function txDecode() {
       }
       if (isClaimSplitCall(trigger, sel)) {
         riskAlerts.push({ lvl: 'red', msg: t('claim(recipient, percentage) — splits your approved tokens to a recipient wallet by percentage.') });
-        summaryRisk = 'high';
-      }
-      if (scanInfo?.riskTransaction) {
-        riskAlerts.push({ lvl: 'red', msg: t('TronScan flagged this transaction as risky.') });
         summaryRisk = 'high';
       }
       if ((sel === '4e71d92d' || sel === 'aad3ec96') && !OFFICIAL_TOKEN_ADDRS.has(contractAddr) && isDrainContractProfile(contractMethods, contractAddr)) {

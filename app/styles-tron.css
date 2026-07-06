@@ -2661,6 +2661,13 @@ nav.hidden.md\:flex button[onclick*="openCommandPalette"] {
   font-size: 12px; color: var(--text-3); margin-top: 6px;
   font-family: var(--font-ui) !important;
 }
+.appr-empty-link {
+  color: var(--info);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.appr-empty-link:hover { color: var(--text); }
 
 /* ── AML check output ── */
 .aml-scan {

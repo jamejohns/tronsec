@@ -153,7 +153,7 @@
 <span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
 <a href="https://t.me/tronsec_chat" target="_blank" rel="noopener" class="sidebar-aside-ghost" data-footer-telegram>telegram</a>
 <span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
-<a href="/changelog/" target="_blank" rel="noopener" class="sidebar-aside-ghost sidebar-aside-ghost--with-badge" data-footer-changelog>changelog <span class="sidebar-aside-ver">v1.0.2</span></a>
+<a href="/changelog/" target="_blank" rel="noopener" class="sidebar-aside-ghost sidebar-aside-ghost--with-badge" data-footer-changelog>changelog <span class="sidebar-aside-ver">v1.0.3</span></a>
 </div>
 </div>
 </nav>
@@ -200,39 +200,6 @@
 <section id=tab-analytics class="tab-content space-y-4 md:space-y-6">
 <div class="module-panel">
 <div class="module-panel-head">
-<div class="module-head-top">
-<h2>TRON Network</h2>
-<button type="button" onclick=refreshAllAnalytics(true) class="module-action-btn">
-[ REFRESH ]
-</button>
-</div>
-<div class="module-desc">
-<p class="module-desc-lead">Live chain economics — current energy and bandwidth unit costs, total on-chain accounts, cumulative TRX burned for fees, and network-wide staked supply.</p>
-<div class="module-desc-tags">
-<span class="module-desc-tag">Energy price</span>
-<span class="module-desc-tag">Bandwidth</span>
-<span class="module-desc-tag">Accounts</span>
-<span class="module-desc-tag">TRX burn</span>
-</div>
-</div>
-</div>
-<div class="an-body">
-<div class="an-section-label">Resource costs</div>
-<div class="an-stat-grid an-stat-grid--3" id=tron-fee-grid>
-<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
-<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
-<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
-</div>
-<div class="an-section-label">Network totals</div>
-<div class="an-stat-grid an-stat-grid--3" id=tron-network-grid>
-<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
-<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
-<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
-</div>
-</div>
-</div>
-<div class="module-panel">
-<div class="module-panel-head">
 <h2>Market overview</h2>
 <div class="module-desc">
 <p class="module-desc-lead">TRX market snapshot — spot price with 24h change, market capitalization, trading volume, and the crypto Fear &amp; Greed Index for broader sentiment context.</p>
@@ -265,6 +232,39 @@
 <div class="an-mini-stat"><span class="an-mini-label">24h volume</span><span id=market-trx-volume class="an-mini-val"><span class="sk an-sk-mini"></span></span></div>
 </div>
 </div>
+</div>
+</div>
+</div>
+<div class="module-panel">
+<div class="module-panel-head">
+<div class="module-head-top">
+<h2>TRON Network</h2>
+<button type="button" onclick=refreshAllAnalytics(true) class="module-action-btn">
+[ REFRESH ]
+</button>
+</div>
+<div class="module-desc">
+<p class="module-desc-lead">Live chain economics — current energy and bandwidth unit costs, total on-chain accounts, cumulative TRX burned for fees, and network-wide staked supply.</p>
+<div class="module-desc-tags">
+<span class="module-desc-tag">Energy price</span>
+<span class="module-desc-tag">Bandwidth</span>
+<span class="module-desc-tag">Accounts</span>
+<span class="module-desc-tag">TRX burn</span>
+</div>
+</div>
+</div>
+<div class="an-body">
+<div class="an-section-label">Resource costs</div>
+<div class="an-stat-grid an-stat-grid--3" id=tron-fee-grid>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
+</div>
+<div class="an-section-label">Network totals</div>
+<div class="an-stat-grid an-stat-grid--3" id=tron-network-grid>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
+<div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
 </div>
 </div>
 </div>
@@ -780,8 +780,9 @@
 <span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
 <a href="https://t.me/tronsec_chat" target="_blank" rel="noopener" class="sidebar-aside-ghost" data-footer-telegram>telegram</a>
 <span class="sidebar-aside-ghost-dot" aria-hidden="true">·</span>
-<a href="/changelog/" target="_blank" rel="noopener" class="sidebar-aside-ghost sidebar-aside-ghost--with-badge" data-footer-changelog>changelog <span class="sidebar-aside-ver">v1.0.2</span></a>
+<a href="/changelog/" target="_blank" rel="noopener" class="sidebar-aside-ghost sidebar-aside-ghost--with-badge" data-footer-changelog>changelog <span class="sidebar-aside-ver">v1.0.3</span></a>
 </div>
+
 
 
 
