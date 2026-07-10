@@ -213,7 +213,7 @@
 </div>
 <div class="an-body">
 <div class="an-hero-grid">
-<div class="an-card">
+<div class="an-card" id=market-fg-card>
 <div class="an-card-label">Fear &amp; Greed Index</div>
 <div class="an-card-main">
 <span id=market-fg-value class="an-card-value"><span class="sk an-sk-card-value"></span></span>
@@ -233,6 +233,8 @@
 </div>
 </div>
 </div>
+<div class="an-section-label">TRX price (7 days)</div>
+<div id=an-trx-chart class="an-chart" role="img" aria-label="TRX price trend"></div>
 </div>
 </div>
 <div class="module-panel">
@@ -266,13 +268,21 @@
 <div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
 <div class="an-stat an-stat--sk"><div class="sk an-sk-label"></div><div class="sk an-sk-value"></div><div class="sk an-sk-sub"></div></div>
 </div>
+<div class="an-section-label">Resource usage (7 days)</div>
+<div class="an-chart-wrap">
+<div class="an-chart-legend">
+<span class="an-chart-legend-item an-chart-legend--energy">Energy (network)</span>
+<span class="an-chart-legend-item an-chart-legend--bw">Bandwidth (network)</span>
+</div>
+<div id=an-resource-chart class="an-chart" role="img" aria-label="Energy and bandwidth usage trend"></div>
+</div>
 </div>
 </div>
 <div class="module-panel">
 <div class="module-panel-head">
 <h2>Token activity</h2>
 <div class="module-desc">
-<p class="module-desc-lead">Stablecoin and transfer pulse on TRON — count of USDT TRC-20 transactions and total network transfer volume over the last 24 hours.</p>
+<p class="module-desc-lead">Stablecoin pulse on TRON — USDT TRC-20 transfer count and on-chain transfer volume over the last 24 hours.</p>
 <div class="module-desc-tags">
 <span class="module-desc-tag">USDT transfers</span>
 <span class="module-desc-tag">24h volume</span>
@@ -288,11 +298,13 @@
 <div class="an-stat-sub">on-chain TRC20 transfers</div>
 </div>
 <div class="an-stat">
-<div class="an-stat-label">Transfer volume (24h)</div>
+<div class="an-stat-label">USDT transfer volume (24h)</div>
 <div id=transfer-volume-24h class="an-stat-value"><span class="sk an-sk-value an-sk-value--inline"></span></div>
-<div class="an-stat-sub">network-wide TRX moved</div>
+<div class="an-stat-sub">on-chain USDT volume (USD)</div>
 </div>
 </div>
+<div class="an-section-label">USDT activity (7 days)</div>
+<div id=an-usdt-chart class="an-chart" role="img" aria-label="USDT transfer count trend"></div>
 </div>
 </div>
 <div class="module-panel">

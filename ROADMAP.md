@@ -9,6 +9,7 @@ Product development on tronsec.io started **April 2026**; the public GitHub repo
 - Wallet scanner, AML, contract audit, TX decoder, URL scanner
 - TRC-20 approvals monitor
 - Vanity address generator (local Web Workers)
+- **Network analytics** — live TRX price, chain stats, Fear & Greed, 7-day TRX / resource / USDT charts (D3)
 - 8-language UI, PWA install, worker proxy integration
 
 ## Next
