@@ -21,7 +21,9 @@ const CACHE_TTL = {
   market: 30 * 60 * 1000,
   fgMarket: 300000,
   token: 120000,
-  security: 300000
+  security: 300000,
+  resourceChart: 120000,
+  trxChart: 300000,
 };
 function cacheIsFresh(key) { return analyticsCache[key] && Date.now() - analyticsCache[key] < CACHE_TTL[key]; }
 function cacheBust(key) { analyticsCache[key] = Date.now(); }
@@ -115,6 +117,7 @@ function switchTab(tabId) {
     if (_firstAnalytics) { _firstAnalytics = false; refreshAllAnalytics(true); }
     else { refreshAllAnalytics(false); }
     startAnalyticsPoll();
+    bindAnChartResize();
   } else {
     clearAnalyticsPoll();
   }
@@ -179,6 +182,12 @@ function showAnalyticsSkeletons() {
     showMarketSkeleton();
     setAnStatLoading('usdt-tx-count');
     setAnStatLoading('transfer-volume-24h');
+    const chartHost = document.getElementById('an-usdt-chart');
+    if (chartHost) chartHost.innerHTML = '<div class="an-chart-skeleton" aria-hidden="true"></div>';
+    const resHost = document.getElementById('an-resource-chart');
+    if (resHost) resHost.innerHTML = '<div class="an-chart-skeleton" aria-hidden="true"></div>';
+    const trxHost = document.getElementById('an-trx-chart');
+    if (trxHost) trxHost.innerHTML = '<div class="an-chart-skeleton" aria-hidden="true"></div>';
 }
 
 
@@ -197,6 +206,7 @@ function clearAnalyticsPoll() {
 
 function startAnalyticsPoll() {
   clearAnalyticsPoll();
+  bindAnChartResize();
   _analyticsPollId = setInterval(() => {
     if (!isAnalyticsTabActive()) {
       clearAnalyticsPoll();
@@ -207,12 +217,20 @@ function startAnalyticsPoll() {
 }
 
 function refreshAllAnalytics(force) {
-    if (force) showAnalyticsSkeletons();
+    if (force) {
+        _statsOverviewRows = null;
+        _statsOverviewAt = 0;
+        _trxPriceHistory = null;
+        _trxPriceHistoryAt = 0;
+        showAnalyticsSkeletons();
+    }
     if (force || !cacheIsFresh('market')) fetchMarketData();
     if (force || !cacheIsFresh('fgMarket')) fetchFearGreedForMarket();
     if (force || !cacheIsFresh('network')) fetchTronNetworkStatus();
     if (force || !cacheIsFresh('token')) fetchTokenActivity();
     if (force || !cacheIsFresh('security')) fetchSecurityMetrics();
+    if (force || !cacheIsFresh('resourceChart')) fetchResourceCharts(force);
+    if (force || !cacheIsFresh('trxChart')) fetchTrxPriceChart(force);
 }
 async function fetchTronNetworkStatus() {
     const feeGrid = document.getElementById('tron-fee-grid');
@@ -374,25 +392,561 @@ async function fetchMarketData(opts = {}) {
     }
     cacheBust('market');
 }
+function applyFearGreedUnavailable() {
+    const fgVal = document.getElementById('market-fg-value');
+    const fgSent = document.getElementById('market-fg-sentiment');
+    const fgBar = document.getElementById('market-fg-bar');
+    const fgCard = document.getElementById('market-fg-card');
+    if (fgVal) { fgVal.textContent = '—'; fgVal.className = 'an-card-value is-muted'; }
+    if (fgSent) {
+        fgSent.textContent = typeof t === 'function' ? t('Fear & Greed data unavailable') : 'Fear & Greed data unavailable';
+        fgSent.className = 'an-card-tag is-neutral';
+    }
+    if (fgBar) fgBar.style.width = '0%';
+    if (fgCard) fgCard.classList.add('is-error');
+}
+function clearFearGreedError() {
+    document.getElementById('market-fg-card')?.classList.remove('is-error');
+}
+const USDT_TRC20 = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
+let _statsOverviewRows = null;
+let _statsOverviewAt = 0;
+let _statsOverviewDays = 0;
+async function getStatsOverview(days = 7) {
+    if (_statsOverviewRows && Date.now() - _statsOverviewAt < 60000 && _statsOverviewDays === days) {
+        return _statsOverviewRows;
+    }
+    const stats = await scanGet('/stats/overview', { days }).catch(() => null);
+    const rows = Array.isArray(stats?.data) ? stats.data.slice().reverse() : null;
+    _statsOverviewRows = rows;
+    _statsOverviewAt = Date.now();
+    _statsOverviewDays = days;
+    return rows;
+}
+function formatUsdCompact(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return '—';
+    if (v >= 1e12) return `$${(v / 1e12).toFixed(2)}T`;
+    if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
+    if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
+    if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
+    return `$${v.toFixed(0)}`;
+}
+function formatChartCompact(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return '—';
+    if (v >= 1e12) return `${(v / 1e12).toFixed(2)}T`;
+    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
+    return String(Math.round(v));
+}
+function applyChartUnavailable(host) {
+    if (!host) return;
+    const msg = typeof t === 'function' ? t('Chart unavailable') : 'Chart unavailable';
+    host.classList.remove('an-chart-host');
+    host.innerHTML = `<div class="an-chart-empty">${msg}</div>`;
+}
+function chartDayLabel(row) {
+    const raw = row?.dateDayStr || row?.label || '';
+    if (raw.length >= 10) return raw.slice(5);
+    return raw || '—';
+}
+function ensureAnChartTooltip(host) {
+    host.classList.add('an-chart-host');
+    let tip = host.querySelector('.an-chart-tooltip');
+    if (!tip) {
+        tip = document.createElement('div');
+        tip.className = 'an-chart-tooltip';
+        tip.setAttribute('role', 'status');
+        host.appendChild(tip);
+    }
+    return tip;
+}
+function hideAnChartTooltip(host) {
+    const tip = host?.querySelector('.an-chart-tooltip');
+    if (tip) {
+        tip.style.opacity = '0';
+        tip.style.pointerEvents = 'none';
+    }
+}
+function showAnChartTooltip(host, html, x, y) {
+    const tip = ensureAnChartTooltip(host);
+    tip.innerHTML = html;
+    tip.style.opacity = '1';
+    tip.classList.toggle('is-mobile', isAnChartMobile());
+    if (isAnChartMobile()) {
+        tip.style.left = '50%';
+        tip.style.top = 'auto';
+        tip.style.bottom = '10px';
+        tip.style.transform = 'translateX(-50%)';
+        tip.style.right = 'auto';
+        return;
+    }
+    const pad = 10;
+    const rect = host.getBoundingClientRect();
+    const tipW = tip.offsetWidth || 120;
+    const tipH = tip.offsetHeight || 48;
+    let left = x + pad;
+    let top = y - tipH - pad;
+    if (left + tipW > rect.width - pad) left = x - tipW - pad;
+    if (top < pad) top = y + pad;
+    tip.style.left = `${Math.max(pad, left)}px`;
+    tip.style.top = `${Math.max(pad, top)}px`;
+    tip.style.bottom = 'auto';
+    tip.style.transform = 'none';
+}
+function isAnChartMobile() {
+    return window.matchMedia('(max-width: 767px)').matches;
+}
+function anChartProfile(kind) {
+    const mobile = isAnChartMobile();
+    if (kind === 'dual') {
+        return {
+            mobile,
+            height: mobile ? 232 : 200,
+            margin: mobile
+                ? { top: 10, right: 6, bottom: 34, left: 34 }
+                : { top: 14, right: 44, bottom: 28, left: 44 },
+            yTicks: mobile ? 3 : 4,
+            xPadding: mobile ? 0.35 : 0.45,
+        };
+    }
+    return {
+        mobile,
+        height: mobile ? 216 : 190,
+        margin: mobile
+            ? { top: 10, right: 6, bottom: 34, left: 34 }
+            : { top: 14, right: 14, bottom: 28, left: 48 },
+        yTicks: mobile ? 3 : 4,
+        xPadding: mobile ? 0.35 : 0.45,
+    };
+}
+function anXTickValues(labels, mobile) {
+    if (!mobile || labels.length <= 4) return labels;
+    if (labels.length <= 6) {
+        return labels.filter((_, i) => i === 0 || i === labels.length - 1 || i % 2 === 0);
+    }
+    const mid = Math.floor(labels.length / 2);
+    return [labels[0], labels[mid], labels[labels.length - 1]];
+}
+function applyAnXAxis(axisG, xScale, labels, mobile) {
+    const ticks = anXTickValues(labels, mobile);
+    axisG.call(d3.axisBottom(xScale).tickValues(ticks).tickSize(0).tickPadding(mobile ? 10 : 8));
+}
+function formatChartUsdAxis(n) {
+    if (isAnChartMobile()) {
+        const v = Number(n);
+        if (!Number.isFinite(v)) return '—';
+        if (v >= 1) return `$${v.toFixed(2)}`;
+        return `$${v.toFixed(3)}`;
+    }
+    return formatChartUsd(n);
+}
+function formatChartCompactAxis(n) {
+    if (!isAnChartMobile()) return formatChartCompact(n);
+    const v = Number(n);
+    if (!Number.isFinite(v)) return '—';
+    if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(0)}M`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
+    return String(Math.round(v));
+}
+const _anChartData = { stats: null, trx: null };
+let _anChartResizeTimer = null;
+let _anChartResizeBound = false;
+function repaintAnChartsFromCache() {
+    if (!isAnalyticsTabActive()) return;
+    const res = document.getElementById('an-resource-chart');
+    const usdt = document.getElementById('an-usdt-chart');
+    const trx = document.getElementById('an-trx-chart');
+    if (_anChartData.stats?.length) {
+        if (res) renderResourceUsageChart(res, _anChartData.stats);
+        if (usdt) renderUsdtActivityChart(usdt, _anChartData.stats);
+    }
+    if (_anChartData.trx?.length && trx) renderTrxPriceChart(trx, _anChartData.trx);
+}
+function bindAnChartResize() {
+    if (_anChartResizeBound) return;
+    _anChartResizeBound = true;
+    const onResize = () => {
+        clearTimeout(_anChartResizeTimer);
+        _anChartResizeTimer = setTimeout(repaintAnChartsFromCache, 180);
+    };
+    window.addEventListener('resize', onResize, { passive: true });
+    window.addEventListener('orientationchange', onResize, { passive: true });
+}
+function attachPlotHover(plot, onMove, onLeave) {
+    plot.on('mousemove', onMove).on('mouseleave', onLeave);
+    plot.on('touchstart', (ev) => { ev.preventDefault(); onMove(ev.touches[0]); }, { passive: false });
+    plot.on('touchmove', (ev) => { ev.preventDefault(); onMove(ev.touches[0]); }, { passive: false });
+    plot.on('touchend', onLeave);
+}
+function formatChartUsd(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return '—';
+    if (v >= 1) return `$${v.toFixed(3)}`;
+    return `$${v.toFixed(4)}`;
+}
+function nearestChartIndex(data, clientX, plotLeft, plotWidth) {
+    if (!data.length || plotWidth <= 0) return 0;
+    const t = Math.max(0, Math.min(1, (clientX - plotLeft) / plotWidth));
+    return Math.round(t * (data.length - 1));
+}
+function anChartDims(host, height, margin) {
+    const mobile = isAnChartMobile();
+    const width = Math.max(host.clientWidth || 0, mobile ? 0 : 280);
+    const m = margin || { top: 14, right: 14, bottom: 28, left: 48 };
+    return {
+        width,
+        height,
+        margin: m,
+        w: width - m.left - m.right,
+        h: height - m.top - m.bottom,
+    };
+}
+function appendAnChartGradient(svg, id, color) {
+    const defs = svg.select('defs').empty() ? svg.append('defs') : svg.select('defs');
+    const grad = defs.append('linearGradient')
+        .attr('id', id)
+        .attr('x1', '0%').attr('y1', '0%')
+        .attr('x2', '0%').attr('y2', '100%');
+    grad.append('stop').attr('offset', '0%').attr('stop-color', color).attr('stop-opacity', 0.34);
+    grad.append('stop').attr('offset', '100%').attr('stop-color', color).attr('stop-opacity', 0);
+    return `url(#${id})`;
+}
+function attachSeriesChartHover(host, plot, data, x, y, tooltipHtml, activeDot, plotW) {
+    const onMove = (ev) => {
+        const [mx] = d3.pointer(ev, plot.node());
+        const idx = nearestChartIndex(data, mx, 0, plotW);
+        const row = data[idx];
+        if (!row) return;
+        activeDot
+            .attr('cx', x(row.label))
+            .attr('cy', y(row.value))
+            .classed('is-visible', true);
+        const box = host.getBoundingClientRect();
+        showAnChartTooltip(host, tooltipHtml(row), ev.clientX - box.left, ev.clientY - box.top);
+    };
+    const onLeave = () => {
+        activeDot.classed('is-visible', false);
+        hideAnChartTooltip(host);
+    };
+    attachPlotHover(plot, onMove, onLeave);
+}
+function renderAnAreaSeriesChart(host, rows, cfg) {
+    if (!host || typeof d3 === 'undefined' || !rows?.length) {
+        applyChartUnavailable(host);
+        return;
+    }
+    host.innerHTML = '';
+    host.classList.remove('an-chart--bars');
+    host.classList.add('an-chart--line');
+    const profile = anChartProfile('series');
+    host.classList.toggle('an-chart--mobile', profile.mobile);
+    const height = cfg.height || profile.height;
+    const dims = anChartDims(host, height, cfg.margin || profile.margin);
+    const { width, margin, w, h } = dims;
+    const labels = rows.map(r => cfg.mapRow(r).label);
+    const data = rows.map(cfg.mapRow);
+    const values = data.map(d => d.value);
+    const yMax = d3.max(values) || 1;
+    let yMin = 0;
+    let y0 = 0;
+    if (cfg.yBaseline === 'auto') {
+        yMin = d3.min(values) ?? 0;
+        const pad = (yMax - yMin) * 0.14 || 0.001;
+        yMin -= pad;
+        y0 = yMin;
+    }
+    const y = d3.scaleLinear().domain([yMin, yMax * 1.02]).nice().range([h, 0]);
+    const svg = d3.select(host).append('svg')
+        .attr('viewBox', `0 0 ${width} ${height}`)
+        .attr('width', '100%')
+        .attr('height', height)
+        .attr('class', 'an-chart-svg');
+    const gradFill = appendAnChartGradient(svg, `an-grad-${cfg.series}`, cfg.color);
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+    const x = d3.scalePoint().domain(labels).range([0, w]).padding(profile.xPadding);
+    g.append('g').attr('class', 'an-chart-grid')
+        .call(d3.axisLeft(y).ticks(profile.yTicks).tickSize(-w).tickFormat(''));
+    const xAxis = g.append('g').attr('class', 'an-chart-axis an-chart-axis--x')
+        .attr('transform', `translate(0,${h})`);
+    applyAnXAxis(xAxis, x, labels, profile.mobile);
+    g.append('g').attr('class', 'an-chart-axis an-chart-axis--y')
+        .call(d3.axisLeft(y).ticks(profile.yTicks).tickFormat(cfg.formatY === formatChartUsd ? formatChartUsdAxis : formatChartCompactAxis).tickSize(0).tickPadding(profile.mobile ? 4 : 6));
+    const area = d3.area()
+        .x(d => x(d.label))
+        .y0(y(y0))
+        .y1(d => y(d.value))
+        .curve(d3.curveMonotoneX);
+    const line = d3.line()
+        .x(d => x(d.label))
+        .y(d => y(d.value))
+        .curve(d3.curveMonotoneX);
+    g.append('path').datum(data)
+        .attr('class', `an-chart-area an-chart-area--${cfg.series}`)
+        .attr('fill', gradFill)
+        .attr('d', area);
+    g.append('path').datum(data)
+        .attr('class', `an-chart-line an-chart-line--${cfg.series}`)
+        .attr('d', line);
+    g.selectAll(`.an-chart-dot--${cfg.series}`).data(data).join('circle')
+        .attr('class', `an-chart-dot an-chart-dot--${cfg.series}`)
+        .attr('cx', d => x(d.label))
+        .attr('cy', d => y(d.value))
+        .attr('r', 3.5);
+    const activeDot = g.append('circle')
+        .attr('class', `an-chart-dot-active an-chart-dot-active--${cfg.series}`)
+        .attr('r', 5);
+    const plot = g.append('rect').attr('class', 'an-chart-overlay').attr('width', w).attr('height', h);
+    attachSeriesChartHover(host, plot, data, x, y, cfg.tooltipHtml, activeDot, w);
+}
+function renderDualAxisLineChart(host, rows, leftKey, rightKey, leftClass, rightClass) {
+    if (!host || typeof d3 === 'undefined' || !rows?.length) {
+        applyChartUnavailable(host);
+        return;
+    }
+    host.innerHTML = '';
+    host.classList.add('an-chart--line');
+    const profile = anChartProfile('dual');
+    host.classList.toggle('an-chart--mobile', profile.mobile);
+    const height = profile.height;
+    const dims = anChartDims(host, height, profile.margin);
+    const { width, margin, w, h } = dims;
+    const energyLbl = typeof t === 'function' ? t('Energy (network)') : 'Energy (network)';
+    const bwLbl = typeof t === 'function' ? t('Bandwidth (network)') : 'Bandwidth (network)';
+    const data = rows.map(r => ({
+        label: chartDayLabel(r),
+        fullDate: r.dateDayStr || r.label || '',
+        left: Number(r[leftKey]) || 0,
+        right: Number(r[rightKey]) || 0,
+    }));
+    const svg = d3.select(host).append('svg')
+        .attr('viewBox', `0 0 ${width} ${height}`)
+        .attr('width', '100%')
+        .attr('height', height)
+        .attr('class', 'an-chart-svg');
+    const gradEnergy = appendAnChartGradient(svg, 'an-grad-energy', '#38bdf8');
+    const gradBw = appendAnChartGradient(svg, 'an-grad-bw', '#4ade80');
+    const labels = data.map(d => d.label);
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+    const x = d3.scalePoint().domain(labels).range([0, w]).padding(profile.xPadding);
+    const yL = d3.scaleLinear().domain([0, d3.max(data, d => d.left) || 1]).nice().range([h, 0]);
+    const yR = d3.scaleLinear().domain([0, d3.max(data, d => d.right) || 1]).nice().range([h, 0]);
+    g.append('g').attr('class', 'an-chart-grid').call(d3.axisLeft(yL).ticks(profile.yTicks).tickSize(-w).tickFormat(''));
+    const xAxis = g.append('g').attr('class', 'an-chart-axis an-chart-axis--x')
+        .attr('transform', `translate(0,${h})`);
+    applyAnXAxis(xAxis, x, labels, profile.mobile);
+    g.append('g').attr('class', 'an-chart-axis an-chart-axis--y')
+        .call(d3.axisLeft(yL).ticks(profile.yTicks).tickFormat(formatChartCompactAxis).tickSize(0).tickPadding(profile.mobile ? 4 : 6));
+    if (!profile.mobile) {
+        g.append('g').attr('class', 'an-chart-axis an-chart-axis--y-right')
+            .attr('transform', `translate(${w},0)`)
+            .call(d3.axisRight(yR).ticks(profile.yTicks).tickFormat(formatChartCompactAxis).tickSize(0).tickPadding(6));
+    }
+    const areaL = d3.area().x(d => x(d.label)).y0(yL(0)).y1(d => yL(d.left)).curve(d3.curveMonotoneX);
+    const areaR = d3.area().x(d => x(d.label)).y0(yR(0)).y1(d => yR(d.right)).curve(d3.curveMonotoneX);
+    const lineL = d3.line().x(d => x(d.label)).y(d => yL(d.left)).curve(d3.curveMonotoneX);
+    const lineR = d3.line().x(d => x(d.label)).y(d => yR(d.right)).curve(d3.curveMonotoneX);
+    g.append('path').datum(data).attr('class', 'an-chart-area an-chart-area--energy').attr('fill', gradEnergy).attr('d', areaL);
+    g.append('path').datum(data).attr('class', 'an-chart-area an-chart-area--bw').attr('fill', gradBw).attr('d', areaR);
+    g.append('path').datum(data).attr('class', `an-chart-line ${leftClass}`).attr('d', lineL);
+    g.append('path').datum(data).attr('class', `an-chart-line ${rightClass}`).attr('d', lineR);
+    const dotsL = g.selectAll('.an-chart-dot--energy').data(data).join('circle')
+        .attr('class', 'an-chart-dot an-chart-dot--energy')
+        .attr('cx', d => x(d.label)).attr('cy', d => yL(d.left)).attr('r', 3.5);
+    const dotsR = g.selectAll('.an-chart-dot--bw').data(data).join('circle')
+        .attr('class', 'an-chart-dot an-chart-dot--bw')
+        .attr('cx', d => x(d.label)).attr('cy', d => yR(d.right)).attr('r', 3.5);
+    const focusL = g.append('circle').attr('class', 'an-chart-dot-active an-chart-dot-active--energy').attr('r', 5);
+    const focusR = g.append('circle').attr('class', 'an-chart-dot-active an-chart-dot-active--bw').attr('r', 5);
+    const plot = g.append('rect').attr('class', 'an-chart-overlay').attr('width', w).attr('height', h);
+    const onMove = (ev) => {
+        const [mx] = d3.pointer(ev, plot.node());
+        const idx = nearestChartIndex(data, mx, 0, w);
+        const row = data[idx];
+        if (!row) return;
+        focusL.attr('cx', x(row.label)).attr('cy', yL(row.left)).classed('is-visible', true);
+        focusR.attr('cx', x(row.label)).attr('cy', yR(row.right)).classed('is-visible', true);
+        dotsL.classed('is-dim', (d, i) => i !== idx);
+        dotsR.classed('is-dim', (d, i) => i !== idx);
+        const box = host.getBoundingClientRect();
+        showAnChartTooltip(host,
+            `<strong>${row.fullDate || row.label}</strong>`
+            + `<span class="an-chart-tip-row an-chart-tip-row--energy">${energyLbl}: ${formatChartCompact(row.left)}</span>`
+            + `<span class="an-chart-tip-row an-chart-tip-row--bw">${bwLbl}: ${formatChartCompact(row.right)}</span>`,
+            ev.clientX - box.left, ev.clientY - box.top);
+    };
+    const onLeave = () => {
+        focusL.classed('is-visible', false);
+        focusR.classed('is-visible', false);
+        dotsL.classed('is-dim', false);
+        dotsR.classed('is-dim', false);
+        hideAnChartTooltip(host);
+    };
+    attachPlotHover(plot, onMove, onLeave);
+}
+function renderResourceUsageChart(host, rows) {
+    renderDualAxisLineChart(host, rows, 'energy_usage', 'net_usage', 'an-chart-line--energy', 'an-chart-line--bw');
+}
+function renderUsdtActivityChart(host, rows) {
+    const txLbl = typeof t === 'function' ? t('USDT transactions (24h)') : 'USDT transactions (24h)';
+    renderAnAreaSeriesChart(host, rows, {
+        series: 'usdt',
+        color: '#38bdf8',
+        yBaseline: 'zero',
+        mapRow: (r) => ({
+            label: chartDayLabel(r),
+            fullDate: r.dateDayStr || '',
+            value: Number(r.usdt_transaction) || 0,
+        }),
+        formatY: formatChartCompact,
+        tooltipHtml: (d) => `<strong>${d.fullDate || d.label}</strong><span>${txLbl}: ${fmtNum(d.value)}</span>`,
+    });
+}
+function renderTrxPriceChart(host, rows) {
+    const priceLbl = typeof t === 'function' ? t('TRX Price') : 'TRX Price';
+    renderAnAreaSeriesChart(host, rows, {
+        series: 'trx',
+        color: '#4ade80',
+        yBaseline: 'auto',
+        mapRow: (r) => ({
+            label: r.label,
+            fullDate: r.fullDate || r.label,
+            value: Number(r.price) || 0,
+        }),
+        formatY: formatChartUsd,
+        tooltipHtml: (d) => `<strong>${d.fullDate || d.label}</strong><span>${priceLbl}: ${formatChartUsd(d.value)}</span>`,
+    });
+}
+let _trxPriceHistory = null;
+let _trxPriceHistoryAt = 0;
+function bucketTrxPricesByDay(prices) {
+    if (!Array.isArray(prices) || !prices.length) return null;
+    const byDay = new Map();
+    for (const row of prices) {
+        const ts = Number(row?.[0]);
+        const price = Number(row?.[1]);
+        if (!Number.isFinite(ts) || !Number.isFinite(price)) continue;
+        const fullDate = new Date(ts).toISOString().slice(0, 10);
+        byDay.set(fullDate, { ts, price, label: fullDate.slice(5), fullDate });
+    }
+    return Array.from(byDay.values()).sort((a, b) => a.ts - b.ts);
+}
+async function fetchTrxPriceFromCoingecko(url) {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return bucketTrxPricesByDay(d?.prices);
+}
+async function fetchTrxPriceFromBinance() {
+    const r = await fetch('https://api.binance.com/api/v3/klines?symbol=TRXUSDT&interval=1d&limit=7', { cache: 'no-store' });
+    if (!r.ok) return null;
+    const rows = await r.json();
+    if (!Array.isArray(rows) || !rows.length) return null;
+    return rows.map((row) => {
+        const ts = Number(row[0]);
+        const price = Number(row[4]);
+        if (!Number.isFinite(ts) || !Number.isFinite(price)) return null;
+        const fullDate = new Date(ts).toISOString().slice(0, 10);
+        return { ts, price, label: fullDate.slice(5), fullDate };
+    }).filter(Boolean).sort((a, b) => a.ts - b.ts);
+}
+async function fetchTrxPriceHistory() {
+    if (_trxPriceHistory && Date.now() - _trxPriceHistoryAt < CACHE_TTL.trxChart) return _trxPriceHistory;
+    const urls = [];
+    if (typeof useApiProxy === 'function' && useApiProxy() && typeof window.tronsecProxyUrl === 'function') {
+        urls.push(window.tronsecProxyUrl('/cg/coins/tron/market_chart', { vs_currency: 'usd', days: '7' }));
+    }
+    urls.push('https://api.coingecko.com/api/v3/coins/tron/market_chart?vs_currency=usd&days=7');
+    for (const url of urls) {
+        try {
+            const bucketed = await fetchTrxPriceFromCoingecko(url);
+            if (bucketed?.length) {
+                _trxPriceHistory = bucketed;
+                _trxPriceHistoryAt = Date.now();
+                return bucketed;
+            }
+        } catch (_) {}
+    }
+    try {
+        const binance = await fetchTrxPriceFromBinance();
+        if (binance?.length) {
+            _trxPriceHistory = binance;
+            _trxPriceHistoryAt = Date.now();
+            return binance;
+        }
+    } catch (_) {}
+    return null;
+}
+async function fetchTrxPriceChart(force) {
+    const host = document.getElementById('an-trx-chart');
+    if (!host) return;
+    if (force) host.innerHTML = '<div class="an-chart-skeleton" aria-hidden="true"></div>';
+    try {
+        const rows = await fetchTrxPriceHistory();
+        if (rows?.length) {
+            _anChartData.trx = rows;
+            renderTrxPriceChart(host, rows);
+        } else applyChartUnavailable(host);
+        cacheBust('trxChart');
+    } catch (_) {
+        applyChartUnavailable(host);
+        cacheBust('trxChart');
+    }
+}
+async function fetchResourceCharts(force) {
+    const resHost = document.getElementById('an-resource-chart');
+    const usdtHost = document.getElementById('an-usdt-chart');
+    if (!resHost && !usdtHost) return;
+    if (force) {
+        if (resHost) resHost.innerHTML = '<div class="an-chart-skeleton" aria-hidden="true"></div>';
+        if (usdtHost) usdtHost.innerHTML = '<div class="an-chart-skeleton" aria-hidden="true"></div>';
+    }
+    try {
+        const rows = await getStatsOverview(7);
+        if (rows?.length) {
+            _anChartData.stats = rows;
+            if (resHost) renderResourceUsageChart(resHost, rows);
+            if (usdtHost) renderUsdtActivityChart(usdtHost, rows);
+        } else {
+            applyChartUnavailable(resHost);
+            applyChartUnavailable(usdtHost);
+        }
+        cacheBust('resourceChart');
+    } catch (_) {
+        applyChartUnavailable(resHost);
+        applyChartUnavailable(usdtHost);
+        cacheBust('resourceChart');
+    }
+}
 async function fetchFearGreedForMarket() {
     const fgVal = document.getElementById('market-fg-value');
     const fgSent = document.getElementById('market-fg-sentiment');
+    clearFearGreedError();
     if (fgVal) { fgVal.className = 'an-card-value'; fgVal.innerHTML = '<span class="sk an-sk-card-value"></span>'; }
     if (fgSent) { fgSent.className = 'an-card-tag'; fgSent.innerHTML = '<span class="sk an-sk-card-tag"></span>'; }
     if (document.getElementById('market-fg-bar')) document.getElementById('market-fg-bar').style.width = '0%';
     try {
         const r = await fetch('https://api.alternative.me/fng/?limit=1');
+        if (!r.ok) throw new Error('fng http ' + r.status);
         const d = await r.json();
-        if (d?.data?.[0]) {
-            document.getElementById('market-fg-value').innerText = d.data[0].value;
-            document.getElementById('market-fg-value').className = 'an-card-value';
-            const marketSentiment = document.getElementById('market-fg-sentiment');
-            marketSentiment.innerText = d.data[0].value_classification;
-            marketSentiment.className = 'an-card-tag ' + fgSentimentClass(d.data[0].value);
-            document.getElementById('market-fg-bar').style.width = d.data[0].value + '%';
+        if (!d?.data?.[0]) throw new Error('fng empty');
+        const row = d.data[0];
+        if (fgVal) {
+            fgVal.innerText = row.value;
+            fgVal.className = 'an-card-value';
         }
+        if (fgSent) {
+            fgSent.innerText = row.value_classification;
+            fgSent.className = 'an-card-tag ' + fgSentimentClass(row.value);
+        }
+        const fgBar = document.getElementById('market-fg-bar');
+        if (fgBar) fgBar.style.width = row.value + '%';
         cacheBust('fgMarket');
     } catch (_) {
+        applyFearGreedUnavailable();
         cacheBust('fgMarket');
     }
 }
@@ -400,19 +954,31 @@ async function fetchTokenActivity() {
     setAnStatLoading('usdt-tx-count');
     setAnStatLoading('transfer-volume-24h');
     try {
-        const [stats, hp] = await Promise.all([
-            scanGet('/stats/overview', { days: 1 }).catch(() => null),
-            scanGet('/homepage', {}).catch(() => null)
+        const [tokenRes] = await Promise.all([
+            scanGet('/token_trc20', { contract: USDT_TRC20, showAll: 1 }).catch(() => null),
+            getStatsOverview(7),
         ]);
-        const row = stats?.data?.[0];
-        if (row) setAnStat('usdt-tx-count', fmtNum(row.usdt_transaction || 0), 'green');
-        const vol = hp?.tron_info?.transfer_amount_24h;
-        if (vol != null) {
-            const v = parseFloat(vol);
-            setAnStat('transfer-volume-24h', v >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : fmtNum(v), 'info');
+        const token = tokenRes?.trc20_tokens?.[0] || tokenRes;
+        if (token?.transfer24h != null) {
+            setAnStat('usdt-tx-count', fmtNum(token.transfer24h), 'green');
+        } else {
+            const rows = await getStatsOverview(7);
+            const latest = rows?.[rows.length - 1];
+            if (latest?.usdt_transaction != null) {
+                setAnStat('usdt-tx-count', fmtNum(latest.usdt_transaction), 'green');
+            } else {
+                setAnStat('usdt-tx-count', '—', 'neutral');
+            }
+        }
+        if (token?.volume24h != null) {
+            setAnStat('transfer-volume-24h', formatUsdCompact(token.volume24h), 'info');
+        } else {
+            setAnStat('transfer-volume-24h', '—', 'neutral');
         }
         cacheBust('token');
     } catch (_) {
+        setAnStat('usdt-tx-count', '—', 'neutral');
+        setAnStat('transfer-volume-24h', '—', 'neutral');
         cacheBust('token');
     }
 }

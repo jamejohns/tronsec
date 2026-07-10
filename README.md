@@ -62,7 +62,7 @@ The **first public GitHub release** was June 2026 — not the start of the proje
 | **Apr 2026** | Terminal UI shell, module routing, Cloudflare Worker proxy (API keys server-side), wallet scanner (portfolio, TRC-20, stake, activity), TronGrid / TronScan client layer |
 | **May 2026** | AML check + flow graph, contract audit heuristics, TX decoder, URL / phishing scanner (heuristics + VirusTotal via worker), scam-report flow, **8-language i18n** |
 | **Jun 2026** | PWA + service worker, vanity generator (local Web Workers), TRC-20 **approvals** monitor, production deploy on tronsec.io, **MIT OSS published** ([v1.0](https://github.com/jamejohns/tronsec/releases/tag/v1.0) → [v1.1](https://github.com/jamejohns/tronsec/releases/tag/v1.1.0)) |
-| **Jul 2026** | Approvals polish, public architecture / security docs, OSS [v1.2.0](https://github.com/jamejohns/tronsec/releases/tag/v1.2.0) |
+| **Jul 2026** | Approvals polish, public architecture / security docs, OSS [v1.2.0](https://github.com/jamejohns/tronsec/releases/tag/v1.2.0); **network analytics charts** (7-day TRX, energy/bandwidth, USDT activity, mobile tooltips) |
 
 Full month-by-month notes: **[CHANGELOG.md#development-history](CHANGELOG.md#development-history)**.
 
@@ -102,7 +102,7 @@ Full diagram: **[ARCHITECTURE.md](ARCHITECTURE.md)**
 | **URL scanner** | Typosquatting, homoglyphs, VirusTotal (via worker) |
 | **Vanity generator** | Base58 patterns in **local Web Workers** — generated keys never leave your browser |
 | **Scam report** | Structured address/domain reports (delivered via worker when configured) |
-| **Network dashboard** | Live TRX price, chain stats, Fear & Greed |
+| **Network dashboard** | Live TRX price, chain stats, Fear & Greed; **7-day charts** for TRX price, energy/bandwidth usage, and USDT transfer activity (D3 area/line, hover & touch tooltips) |
 
 <br>
 
