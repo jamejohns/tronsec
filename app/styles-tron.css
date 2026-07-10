@@ -321,6 +321,7 @@ button svg[data-lucide] { pointer-events: none; }
 .light-theme .aml-block,
 .light-theme .aml-head-card,
 .light-theme .wallet-head-card,
+.light-theme .wallet-next-steps,
 .light-theme .an-card,
 .light-theme .sk-table-wrap,
 .light-theme .sk-token-card,
@@ -2619,7 +2620,7 @@ nav.hidden.md\:flex button[onclick*="openCommandPalette"] {
   margin-bottom: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--panel);
+  background: var(--bg-raised);
   overflow: hidden;
 }
 .wallet-next-steps-head {
@@ -2654,6 +2655,19 @@ nav.hidden.md\:flex button[onclick*="openCommandPalette"] {
 .wallet-next-step.is-primary { background: rgba(255,255,255,.02); }
 .wallet-next-step.is-red.is-primary { background: var(--red-soft); }
 .wallet-next-step.is-amber.is-primary { background: var(--amber-soft); }
+.light-theme .wallet-next-step.is-primary { background: rgba(0,0,0,.025); }
+.light-theme .wallet-next-step.is-red.is-primary { background: var(--red-soft); }
+.light-theme .wallet-next-step.is-amber.is-primary { background: var(--amber-soft); }
+.light-theme .wallet-go-btn--red {
+  color: var(--red);
+  border-color: rgba(220,38,38,.3);
+  background: var(--red-soft);
+}
+.light-theme .wallet-go-btn--amber {
+  color: var(--amber);
+  border-color: rgba(217,119,6,.3);
+  background: var(--amber-soft);
+}
 .wallet-next-step-body { flex: 1; min-width: 0; }
 .wallet-next-step-title {
   font-size: 13px;

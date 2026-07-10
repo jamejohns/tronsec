@@ -1260,6 +1260,18 @@ function renderWallet() {
   });
 }
 
+function getWalletApprovalsSeed(addr) {
+  if (!addr) return null;
+  if (walletData?.addr === addr && Array.isArray(walletData.onChainApprovals)) {
+    return walletData.onChainApprovals;
+  }
+  const cached = readWalletSessionCache(addr);
+  if (cached?.addr === addr && Array.isArray(cached.onChainApprovals)) {
+    return restoreWalletApprovals(cached.onChainApprovals);
+  }
+  return null;
+}
+
 function resetWalletScanCache() {
   walletScanGen++;
   if (walletData?.addr) clearWalletSessionCache(walletData.addr);
@@ -1272,4 +1284,5 @@ function resetWalletScanCache() {
   walletFromCache = false;
   window._walletLastReport = null;
   setWalletScanLocked(false);
+  if (typeof clearScanApiCache === 'function') clearScanApiCache();
 }

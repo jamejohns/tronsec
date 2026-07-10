@@ -82,6 +82,7 @@ function purgeTabNow(tabId, section) {
     if (tabId === 'contract-scan' && typeof resetContractScanCache === 'function') resetContractScanCache();
     if (tabId === 'scanner' && typeof resetWalletScanCache === 'function') resetWalletScanCache();
     if (tabId === 'approvals' && typeof resetApprovalsScanCache === 'function') resetApprovalsScanCache();
+    if (tabId === 'aml-check' && typeof resetAmlScanCache === 'function') resetAmlScanCache();
     if (tabId === 'vanity' && typeof resetVanityGen === 'function') resetVanityGen();
     if (typeof syncModuleNavState === 'function') syncModuleNavState(tabId);
 }
@@ -853,8 +854,40 @@ async function fetchTrxPriceFromBinance() {
         return { ts, price, label: fullDate.slice(5), fullDate };
     }).filter(Boolean).sort((a, b) => a.ts - b.ts);
 }
+async function fetchTrxPriceFromCmc() {
+    if (typeof useApiProxy !== 'function' || !useApiProxy() || typeof window.tronsecProxyUrl !== 'function') return null;
+    try {
+        const r = await fetch(window.tronsecProxyUrl('/cmc/v2/cryptocurrency/ohlcv/historical', {
+            id: '1958',
+            time_period: 'daily',
+            count: '7',
+            convert: 'USD',
+        }), { cache: 'no-store' });
+        if (!r.ok) return null;
+        const d = await r.json();
+        const quotes = d?.data?.quotes;
+        if (!Array.isArray(quotes) || !quotes.length) return null;
+        return quotes.map((q) => {
+            const close = Number(q?.quote?.USD?.close);
+            const ts = Date.parse(q?.time_close || q?.quote?.USD?.timestamp || q?.time_open || '');
+            if (!Number.isFinite(close) || !Number.isFinite(ts)) return null;
+            const fullDate = new Date(ts).toISOString().slice(0, 10);
+            return { ts, price: close, label: fullDate.slice(5), fullDate };
+        }).filter(Boolean).sort((a, b) => a.ts - b.ts);
+    } catch (_) {
+        return null;
+    }
+}
 async function fetchTrxPriceHistory() {
     if (_trxPriceHistory && Date.now() - _trxPriceHistoryAt < CACHE_TTL.trxChart) return _trxPriceHistory;
+    try {
+        const cmc = await fetchTrxPriceFromCmc();
+        if (cmc?.length) {
+            _trxPriceHistory = cmc;
+            _trxPriceHistoryAt = Date.now();
+            return cmc;
+        }
+    } catch (_) {}
     const urls = [];
     if (typeof useApiProxy === 'function' && useApiProxy() && typeof window.tronsecProxyUrl === 'function') {
         urls.push(window.tronsecProxyUrl('/cg/coins/tron/market_chart', { vs_currency: 'usd', days: '7' }));

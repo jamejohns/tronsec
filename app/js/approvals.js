@@ -10,6 +10,56 @@ const approvalsEmpty = document.getElementById('approvals-empty');
 let approvalsList = [];
 let approvalsScanBusy = false;
 let approvalsScanGen = 0;
+let approvalsLastAddr = '';
+
+const APPROVALS_CACHE_TTL = 12 * 60 * 1000;
+
+function approvalsCacheStorageKey(addr) {
+  return `tronsec_approvals_scan:${addr}`;
+}
+
+function serializeApprovalsList(list) {
+  return (list || []).map(a => ({
+    ...a,
+    amount: a.amount != null ? String(a.amount) : '0',
+  }));
+}
+
+function restoreApprovalsList(list) {
+  return (list || []).map(a => {
+    let amount = BigInt(0);
+    try { amount = BigInt(String(a.amount || 0)); } catch (_) {}
+    return { ...a, amount };
+  });
+}
+
+function readApprovalsSessionCache(addr) {
+  try {
+    const raw = sessionStorage.getItem(approvalsCacheStorageKey(addr));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.ts || parsed.addr !== addr || Date.now() - parsed.ts > APPROVALS_CACHE_TTL) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeApprovalsSessionCache(addr, list) {
+  if (!addr) return;
+  try {
+    sessionStorage.setItem(approvalsCacheStorageKey(addr), JSON.stringify({
+      addr,
+      list: serializeApprovalsList(list),
+      ts: Date.now(),
+    }));
+  } catch (_) {}
+}
+
+function clearApprovalsSessionCache(addr) {
+  if (!addr) return;
+  try { sessionStorage.removeItem(approvalsCacheStorageKey(addr)); } catch (_) {}
+}
 
 function setApprovalsScanLocked(locked) {
   approvalsScanBusy = locked;
@@ -62,12 +112,29 @@ async function mergeApprovalCandidates(scanItems, txItems) {
   return Array.from(map.values());
 }
 
-async function approvalsScan() {
+
+async function approvalsScan(opts = {}) {
   if (approvalsScanBusy) return;
+  const force = opts.force === true;
   const addr = approvalsInput.value.trim();
   setError(approvalsErr, '');
   if (!addr) { flashInput(approvalsInput); showToast(t('Enter a TRON address')); return; }
   if (!isValidTron(addr)) { flashInput(approvalsInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
+
+  approvalsLastAddr = addr;
+
+  if (!force) {
+    const cached = readApprovalsSessionCache(addr);
+    if (cached) {
+      if (approvalsEmpty) approvalsEmpty.style.display = 'none';
+      approvalsList = restoreApprovalsList(cached.list);
+      renderApprovals();
+      showToast(t('Loaded from session cache'));
+      return;
+    }
+  } else {
+    clearApprovalsSessionCache(addr);
+  }
 
   const gen = ++approvalsScanGen;
   setApprovalsScanLocked(true);
@@ -90,6 +157,7 @@ async function approvalsScan() {
     approvalsList = await enrichApprovalsOnChain(addr, merged);
     if (gen !== approvalsScanGen) return;
     renderApprovals();
+    writeApprovalsSessionCache(addr, approvalsList);
   } catch (e) {
     if (gen !== approvalsScanGen) return;
     approvalsRes.innerHTML = '';
@@ -190,6 +258,10 @@ function renderApprovals() {
 
 function resetApprovalsScanCache() {
   approvalsScanGen++;
+  const addr = approvalsInput?.value?.trim() || approvalsLastAddr;
+  if (addr) clearApprovalsSessionCache(addr);
+  approvalsLastAddr = '';
   approvalsList = [];
   setApprovalsScanLocked(false);
+  if (typeof clearScanApiCache === 'function') clearScanApiCache();
 }

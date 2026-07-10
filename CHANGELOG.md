@@ -54,7 +54,11 @@ GitHub release tags begin at **v1.0.0** (June 2026). The product itself shipped 
 
 ### Changed
 - Analytics tab layout: section labels, USDT activity block spacing, mobile full-bleed charts and bottom tooltip bar
+- **TRX price chart** — CoinMarketCap OHLCV via worker first; CoinGecko fallback
 - Wallet scanner: mobile activity meta truncation; approvals stat opens Approvals module
+- **Recommended next steps** — light-theme panel and red/amber row styling
+- **Approvals** — session cache (~12 min); always runs full on-chain enrichment (no wallet-scan shortcut)
+- TronScan `scanGet` in-memory cache with in-flight dedupe (reduces duplicate API calls)
 - i18n strings for chart labels, wallet risk/export, and next-step CTAs (8 locales)
 
 ### Fixed
