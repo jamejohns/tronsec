@@ -37,7 +37,8 @@ GitHub release tags begin at **v1.0.0** (June 2026). The product itself shipped 
 ### July 2026 — OSS documentation wave
 
 - **2026-07-04** — **[v1.2.0]** — approvals UX defaults, `ARCHITECTURE.md` / `SECURITY.md` / `ROADMAP.md`, README aligned with live 9-module app
-- **2026-07-10** — **Network analytics charts** — interactive 7-day TRX price, energy/bandwidth, and USDT activity (D3 area/line); Fear & Greed error state; USDT 24h volume from TronScan; mobile chart layout and touch tooltips
+- **2026-07-10** — **Network analytics charts** — interactive 7-day TRX, energy/bandwidth, USDT activity; mobile chart layout
+- **2026-07-10** — **Wallet scanner** — session cache, on-chain approvals, risk score 0–100, PDF/summary, next-step links to Approvals/AML
 
 ---
 
@@ -48,10 +49,13 @@ GitHub release tags begin at **v1.0.0** (June 2026). The product itself shipped 
 - Chart hover / touch tooltips with active point markers; gradient area fills; chart resize repaint from cached data
 - Fear & Greed index error card when `alternative.me` is unavailable
 - USDT 24h transfer volume tile sourced from TronScan `/token_trc20` (not TRX homepage stats)
+- **Wallet scanner** — session cache (~12 min), on-chain TRC-20 approval count, composite risk score (0–100), PDF/summary export
+- **Recommended next steps** — one-click jump to Approvals or AML with address prefilled and scan auto-started
 
 ### Changed
 - Analytics tab layout: section labels, USDT activity block spacing, mobile full-bleed charts and bottom tooltip bar
-- i18n strings for chart labels, unavailable states, and USDT/TRX series (8 locales)
+- Wallet scanner: mobile activity meta truncation; approvals stat opens Approvals module
+- i18n strings for chart labels, wallet risk/export, and next-step CTAs (8 locales)
 
 ### Fixed
 - Localized analytics HTML: restored missing chart containers in non-EN locales

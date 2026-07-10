@@ -1107,3 +1107,9 @@ async function amlScan() {
   });
 }
 
+window.tronsecAmlPdf = {
+  AmlPdfWriter,
+  AML_PDF,
+  amlPdfStatusColor,
+};
+
