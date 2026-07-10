@@ -62,7 +62,7 @@ The **first public GitHub release** was June 2026 — not the start of the proje
 | **Apr 2026** | Terminal UI shell, module routing, Cloudflare Worker proxy (API keys server-side), wallet scanner (portfolio, TRC-20, stake, activity), TronGrid / TronScan client layer |
 | **May 2026** | AML check + flow graph, contract audit heuristics, TX decoder, URL / phishing scanner (heuristics + VirusTotal via worker), scam-report flow, **8-language i18n** |
 | **Jun 2026** | PWA + service worker, vanity generator (local Web Workers), TRC-20 **approvals** monitor, production deploy on tronsec.io, **MIT OSS published** ([v1.0](https://github.com/jamejohns/tronsec/releases/tag/v1.0) → [v1.1](https://github.com/jamejohns/tronsec/releases/tag/v1.1.0)) |
-| **Jul 2026** | Approvals polish, public architecture / security docs, OSS [v1.2.0](https://github.com/jamejohns/tronsec/releases/tag/v1.2.0); **network analytics charts** (7-day TRX, energy/bandwidth, USDT activity, mobile tooltips) |
+| **Jul 2026** | Approvals polish, public architecture / security docs, OSS [v1.2.0](https://github.com/jamejohns/tronsec/releases/tag/v1.2.0); **network analytics charts**; **wallet scanner** risk score, on-chain approvals, session cache, PDF export |
 
 Full month-by-month notes: **[CHANGELOG.md#development-history](CHANGELOG.md#development-history)**.
 
@@ -94,7 +94,7 @@ Full diagram: **[ARCHITECTURE.md](ARCHITECTURE.md)**
 
 | Module | What it does |
 |:--|:--|
-| **Wallet scanner** | Portfolio USD, TRC-20 holdings, stake, bandwidth & energy, security flags, activity feed |
+| **Wallet scanner** | Portfolio USD, TRC-20 holdings, stake, bandwidth & energy, security flags, activity feed; **risk score 0–100**, on-chain approval count, session cache, PDF/summary export; links to Approvals / AML |
 | **Approvals** | Lists active TRC-20 allowances, flags unlimited grants and risky spenders |
 | **AML check** | On-chain heuristics, counterparty exposure, token flows, PDF export |
 | **Contract audit** | Privileged functions, proxy patterns, TRON-specific bytecode signals |

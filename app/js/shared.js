@@ -161,6 +161,26 @@ function openWalletScan(addr) {
   }, 0);
 }
 
+function openApprovalsScan(addr, { autoRun = true } = {}) {
+  if (!addr) return;
+  switchTab('approvals');
+  setTimeout(() => {
+    const input = document.getElementById('approvals-input');
+    if (input) input.value = addr;
+    if (autoRun && typeof approvalsScan === 'function') approvalsScan();
+  }, 0);
+}
+
+function openAmlScan(addr, { autoRun = true } = {}) {
+  if (!addr) return;
+  switchTab('aml-check');
+  setTimeout(() => {
+    const input = document.getElementById('aml-input');
+    if (input) input.value = addr;
+    if (autoRun && typeof amlScan === 'function') amlScan();
+  }, 0);
+}
+
 const _contractProbeCache = new Map();
 
 async function probeTronContract(addr) {
@@ -506,6 +526,25 @@ async function enrichApprovalsOnChain(owner, entries, concurrency = 6) {
     return (b.date || 0) - (a.date || 0);
   });
   return active;
+}
+
+async function mergeApprovalEntries(scanItems, txItems) {
+  const map = new Map();
+  for (const item of [...(scanItems || []), ...(txItems || [])]) {
+    const { tokenAddr, spender } = await resolveApprovalAddresses(item);
+    if (!tokenAddr || !spender || !isValidTron(tokenAddr) || !isValidTron(spender)) continue;
+    const key = `${tokenAddr}_${spender}`;
+    if (!map.has(key)) map.set(key, { ...item, tokenAddr, spender });
+  }
+  return Array.from(map.values());
+}
+
+async function fetchActiveOnChainApprovals(addr, trc20TxList, nativeTxList, scanRaw) {
+  const scanList = scanRaw != null ? scanRaw : await fetchTronScanApprovalList(addr).catch(() => []);
+  const scanCandidates = (scanList || []).map(normalizeTronScanApprovalItem).filter(i => i.tokenAddr && i.spender);
+  const txCandidates = collectApprovalCandidates(trc20TxList || [], nativeTxList || []);
+  const merged = await mergeApprovalEntries(scanCandidates, txCandidates);
+  return enrichApprovalsOnChain(addr, merged);
 }
 
 function fmtTokenAmt(raw, decimals = 6) {
@@ -1434,6 +1473,7 @@ const IC = {
   arrowUp: "M12 19V5M5 12l7-7 7 7",
   activity: "M22 12h-4l-3 9L9 3l-3 9H2",
   download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3",
+  refresh: "M23 4v6h-6 M1 20v-6h6 M3.51 9a9 9 0 0 1 14.13-3.36L23 10M1 14l5.36 4.36A9 9 0 0 0 20.49 15",
 };
 
 function badge(cls, text) {

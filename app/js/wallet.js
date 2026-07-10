@@ -15,6 +15,303 @@ let txShowCount = 10;
 let loadMoreBusy = false;
 let walletScanBusy = false;
 let walletScanGen = 0;
+let walletFromCache = false;
+
+const WALLET_CACHE_TTL = 12 * 60 * 1000;
+
+function walletCacheStorageKey(addr) {
+  return `tronsec_wallet_scan:${addr}`;
+}
+
+function readWalletSessionCache(addr) {
+  try {
+    const raw = sessionStorage.getItem(walletCacheStorageKey(addr));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.ts || parsed.addr !== addr || Date.now() - parsed.ts > WALLET_CACHE_TTL) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeWalletSessionCache(snapshot) {
+  if (!snapshot?.addr) return;
+  try {
+    sessionStorage.setItem(walletCacheStorageKey(snapshot.addr), JSON.stringify({ ...snapshot, ts: Date.now() }));
+  } catch (_) {}
+}
+
+function clearWalletSessionCache(addr) {
+  if (!addr) return;
+  try { sessionStorage.removeItem(walletCacheStorageKey(addr)); } catch (_) {}
+}
+
+function serializeWalletApprovals(list) {
+  return (list || []).map(a => ({
+    ...a,
+    amount: a.amount != null ? String(a.amount) : '0',
+  }));
+}
+
+function restoreWalletApprovals(list) {
+  return (list || []).map(a => {
+    let amount = BigInt(0);
+    try { amount = BigInt(String(a.amount || 0)); } catch (_) {}
+    return { ...a, amount };
+  });
+}
+
+function restoreWalletFromCache(cached) {
+  walletData = {
+    acc: cached.acc,
+    trc20: cached.trc20 || [],
+    addr: cached.addr,
+    scanProfile: cached.scanProfile || {},
+    secAcc: cached.secAcc || null,
+    tags: cached.tags || [],
+    approvalCount: cached.approvalCount || 0,
+    onChainApprovals: restoreWalletApprovals(cached.onChainApprovals),
+    riskReport: cached.riskReport || null,
+  };
+  walletTxs = cached.walletTxs || [];
+  walletHasMore = !!cached.walletHasMore;
+  walletOldestTs = cached.walletOldestTs || 0;
+  txShowCount = cached.txShowCount || 10;
+  walletFromCache = true;
+  window._walletLastReport = buildWalletReportSnapshot();
+}
+
+function buildWalletReportSnapshot() {
+  if (!walletData) return null;
+  const { acc, trc20, addr, scanProfile, secAcc, tags, approvalCount, onChainApprovals, riskReport } = walletData;
+  const trxBal = (acc?.balance || 0) / 1_000_000;
+  const tokenUsd = t => (t.priceInUsd > 0) ? t.balance * t.priceInUsd : null;
+  const trc20UsdTotal = (trc20 || []).reduce((sum, t) => sum + (tokenUsd(t) || 0), 0);
+  const totalPortfolioUsd = (TRX_PRICE != null ? trxBal * TRX_PRICE : 0) + trc20UsdTotal;
+  const createdTs = acc?.create_time || scanProfile?.date_created || scanProfile?.createTime;
+  return {
+    addr,
+    scannedAt: Date.now(),
+    acc,
+    trc20,
+    scanProfile,
+    secAcc,
+    tags,
+    approvalCount,
+    onChainApprovals: onChainApprovals || [],
+    riskReport,
+    walletTxs,
+    trxBal,
+    totalPortfolioUsd,
+    txCount: Math.max(walletTxs.length, Number(scanProfile?.totalTransactionCount ?? scanProfile?.transactions ?? 0) || 0),
+    createdTs,
+    ageDays: createdTs ? Math.round((Date.now() - createdTs) / 86400000) : null,
+  };
+}
+
+function computeWalletRisk(ctx) {
+  const {
+    security, heuristics, onChainApprovals, ageDays, txCount, isFlagged,
+  } = ctx;
+  let score = 0;
+  const scoreFactors = [];
+  const hardFlags = (security?.flags || []).filter(f => /blacklist|fraud|scam|phish|sanction|malicious|hack|exploit/i.test(f));
+
+  if (txCount > 0 || heuristics.length) {
+    if (ageDays !== null) {
+      if (ageDays < 7) { score += 10; scoreFactors.push({ label: 'Account age under 7 days', pts: 10 }); }
+      else if (ageDays < 30) { score += 5; scoreFactors.push({ label: 'Account age under 30 days', pts: 5 }); }
+    } else if (txCount > 0) {
+      score += 5;
+      scoreFactors.push({ label: 'Account creation date unknown', pts: 5 });
+    }
+  }
+
+  for (const h of heuristics) {
+    if (/sweep/i.test(h)) { score += 12; scoreFactors.push({ label: h, pts: 12 }); }
+    else if (/dormant|inactive/i.test(h)) { score += 5; scoreFactors.push({ label: h, pts: 5 }); }
+    else { score += 6; scoreFactors.push({ label: h, pts: 6 }); }
+  }
+
+  const approvals = onChainApprovals || [];
+  if (approvals.length > 0) {
+    const pts = Math.min(20, approvals.length * 2);
+    score += pts;
+    scoreFactors.push({ label: `${approvals.length} active on-chain approval${approvals.length > 1 ? 's' : ''}`, pts });
+  }
+
+  let unlimited = 0;
+  let elevated = 0;
+  for (const a of approvals) {
+    const risk = getApprovalRisk(a.amount, a.decimals);
+    if (risk === 'critical') unlimited += 1;
+    else if (risk === 'high' || risk === 'warn') elevated += 1;
+  }
+  if (unlimited > 0) {
+    score += unlimited * 18;
+    scoreFactors.push({ label: `${unlimited} unlimited allowance${unlimited > 1 ? 's' : ''}`, pts: unlimited * 18, tier: 'hard' });
+  }
+  if (elevated > 0) {
+    score += elevated * 8;
+    scoreFactors.push({ label: `${elevated} elevated allowance${elevated > 1 ? 's' : ''}`, pts: elevated * 8 });
+  }
+
+  if (typeof amlAddHardSignals === 'function') {
+    score += amlAddHardSignals(hardFlags, scoreFactors);
+  } else {
+    for (const label of hardFlags) {
+      score += 40;
+      scoreFactors.unshift({ label, pts: 40, tier: 'hard' });
+    }
+  }
+
+  score = Math.max(0, score);
+  const finalScore = Math.min(100, Math.round(score));
+  const hasHardSignals = hardFlags.length > 0 || unlimited > 0;
+  let status;
+  let statusLabel;
+  if (isFlagged || (hasHardSignals && finalScore >= 70)) {
+    status = 'flagged';
+    statusLabel = 'Flagged';
+  } else if (txCount === 0 && !heuristics.length) {
+    status = 'insufficient';
+    statusLabel = 'Insufficient data';
+  } else if (finalScore >= 40) {
+    status = 'unusual';
+    statusLabel = 'Elevated risk';
+  } else if (finalScore >= 15) {
+    status = 'unusual';
+    statusLabel = 'Review recommended';
+  } else {
+    status = 'normal';
+    statusLabel = 'Low risk';
+  }
+
+  return {
+    finalScore,
+    status,
+    statusLabel,
+    isFlagged: isFlagged || hasHardSignals,
+    hasHardSignals,
+    scoreFactors,
+    hardFlags,
+    unlimitedCount: unlimited,
+    approvalCount: approvals.length,
+  };
+}
+
+function walletBuildSummaryText(report) {
+  if (!report) return '';
+  const r = report.riskReport || {};
+  const lines = [
+    'TRONSEC — Wallet scan summary',
+    `Address: ${report.addr}`,
+    `Scanned: ${new Date(report.scannedAt).toISOString()}`,
+    `Risk score: ${r.finalScore ?? '—'}/100 — ${t(r.statusLabel || 'Unknown')}`,
+    `Portfolio (est.): $${(report.totalPortfolioUsd || 0).toFixed(2)} · ${report.trxBal?.toFixed(2) || '0'} TRX`,
+    `Transactions: ${report.txCount}`,
+    `Active on-chain approvals: ${report.approvalCount}`,
+  ];
+  if (r.unlimitedCount > 0) lines.push(`Unlimited allowances: ${r.unlimitedCount}`);
+  if (r.hardFlags?.length) lines.push(`Security flags: ${r.hardFlags.map(f => t(f)).join('; ')}`);
+  if (r.scoreFactors?.length) {
+    lines.push('Signals:');
+    r.scoreFactors.slice(0, 8).forEach(f => lines.push(`  ${t(f.label)} (${f.pts > 0 ? '+' : ''}${f.pts})`));
+  }
+  lines.push('', t('This report summarizes public on-chain data and security heuristics for a TRON wallet. It is not financial or legal advice.'));
+  return lines.join('\n');
+}
+
+function walletExportPdf(report) {
+  const api = window.tronsecAmlPdf;
+  if (!report || !api?.AmlPdfWriter) {
+    showToast(t('PDF export failed'));
+    return;
+  }
+  const btn = document.getElementById('wallet-export-pdf-btn');
+  if (btn) btn.classList.add('is-busy');
+  try {
+    const { AmlPdfWriter, AML_PDF, amlPdfStatusColor } = api;
+    const reportId = `WLT-${Date.now().toString(36).toUpperCase()}`;
+    const pdf = new AmlPdfWriter(reportId);
+    const m = pdf.margin;
+    const r = report.riskReport || {};
+    const scoreColor = amlPdfStatusColor(r.status, r.isFlagged);
+    const top = pdf.H - m;
+
+    pdf.text(m, top - 16, 'TRONSEC', 22, 'sans', AML_PDF.text, true);
+    pdf.text(m, top - 30, t('WALLET SCAN REPORT').toUpperCase(), 9, 'mono', AML_PDF.text4, true);
+    const stamp = new Date(report.scannedAt).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    pdf.textRight(pdf.W - m, top - 16, stamp, 7.5, 'mono', AML_PDF.text4);
+    pdf.textRight(pdf.W - m, top - 28, reportId, 7.5, 'mono', AML_PDF.text4);
+    pdf.strokeLine(top - 40, AML_PDF.line);
+
+    const cardY = top - 118;
+    const cardH = 72;
+    pdf.fillRect(m, cardY, 4, cardH, scoreColor);
+    pdf.panel(m + 4, cardY, pdf.W - m * 2 - 4, cardH, AML_PDF.panel, AML_PDF.line);
+    pdf.text(m + 18, cardY + 54, String(r.finalScore ?? '—'), 28, 'mono', scoreColor, true);
+    pdf.text(m + 46, cardY + 54, '/100', 11, 'mono', AML_PDF.text3);
+    pdf.text(m + 18, cardY + 36, t(r.statusLabel || 'Unknown'), 11, 'sans', scoreColor, true);
+    pdf.text(m + 18, cardY + 22, t('Wallet risk signal'), 8, 'sans', AML_PDF.text4);
+    pdf.text(m + 18, cardY + 10, t('On-chain profile + security heuristics'), 7, 'mono', AML_PDF.text4);
+    pdf.text(m + 200, cardY + 62, t('SUBJECT ADDRESS'), 7, 'mono', AML_PDF.text4, true);
+    pdf.wrapText(report.addr, pdf.W - m * 2 - 212, 8.5, 'mono').forEach((line, i) => {
+      pdf.text(m + 200, cardY + 48 - i * 12, line, 8.5, 'mono', AML_PDF.text2);
+    });
+    pdf.cursorY = cardY - 22;
+
+    if (r.hardFlags?.length) {
+      pdf.section(t('Security flags'));
+      r.hardFlags.forEach(flag => pdf.bullet(t(flag), AML_PDF.red));
+    }
+    if (r.scoreFactors?.length) {
+      pdf.section(t('Signal breakdown'));
+      r.scoreFactors.forEach(f => {
+        const lines = pdf.wrapText(t(f.label), pdf.W - m * 2 - 70, 8.5, 'sans');
+        pdf.need(lines.length * 12 + 4);
+        lines.forEach((line, i) => {
+          pdf.text(m, pdf.cursorY, line, 8.5, 'sans', AML_PDF.text2);
+          if (i === 0) {
+            const ptsColor = f.pts < 0 ? AML_PDF.green : f.pts >= 15 ? AML_PDF.red : AML_PDF.amber;
+            pdf.textRight(pdf.W - m, pdf.cursorY, `${f.pts > 0 ? '+' : ''}${f.pts}`, 8.5, 'mono', ptsColor, true);
+          }
+          pdf.cursorY -= 12;
+        });
+        pdf.cursorY -= 2;
+      });
+    }
+
+    pdf.section(t('On-chain summary'));
+    pdf.row(t('Estimated portfolio'), report.totalPortfolioUsd > 0 ? `$${report.totalPortfolioUsd.toFixed(2)}` : '—');
+    pdf.row(t('TRX balance'), `${report.trxBal?.toFixed(2) || '0'} TRX`);
+    pdf.row(t('Total transactions'), String(report.txCount));
+    pdf.row(t('Active on-chain approvals'), String(report.approvalCount));
+    if (report.ageDays != null) pdf.row(t('Account age'), `${report.ageDays} days`);
+    if (report.trc20?.length) {
+      pdf.section(t('Token holdings'));
+      report.trc20.slice(0, 8).forEach(tok => {
+        pdf.row(tok.symbol, `${tok.balance.toFixed(4)}${tok.priceInUsd > 0 ? ` · $${(tok.balance * tok.priceInUsd).toFixed(2)}` : ''}`);
+      });
+    }
+
+    pdf.disclaimerBox(t('This report summarizes public on-chain data and security heuristics for a TRON wallet. It is not financial or legal advice.'));
+    const fname = `TRONSEC-Wallet-${report.addr.slice(0, 6)}${report.addr.slice(-4)}-${new Date(report.scannedAt).toISOString().slice(0, 10)}.pdf`;
+    pdf.download(fname);
+    showToast(t('PDF report downloaded'));
+  } catch (_) {
+    showToast(t('PDF export failed'));
+  } finally {
+    if (btn) btn.classList.remove('is-busy');
+  }
+}
+
+function walletCopySummary(report) {
+  const text = walletBuildSummaryText(report);
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => showToast(t('Summary copied'))).catch(() => showToast(t('Copy failed')));
+}
 
 function setWalletScanLocked(locked) {
   walletScanBusy = locked;
@@ -158,8 +455,8 @@ function buildActivityItem(tx, addr) {
 
   const hashBtn = walletTxHashBtn(txHash);
   const metaHtml = hashBtn
-    ? `<span>${esc(meta)}</span><span class="wallet-activity-hash">${hashBtn}</span>`
-    : esc(meta);
+    ? `<span class="wallet-activity-route">${esc(meta)}</span><span class="wallet-activity-hash">${hashBtn}</span>`
+    : `<span class="wallet-activity-route">${esc(meta)}</span>`;
 
   return `<div class="wallet-activity-item">
     <div class="wallet-activity-icon ${iconCls}">${icSVG(iconPath, 14)}</div>
@@ -188,6 +485,100 @@ function walletActionBtn({ id, label, icon, href, variant }) {
   const aria = ` aria-label="${lbl}"`;
   if (href) return `<a class="${cls}" id="${id}" href="${esc(href)}" target="_blank" rel="noopener"${aria}>${inner}</a>`;
   return `<button type="button" class="${cls}" id="${id}"${aria}>${inner}</button>`;
+}
+
+function walletGoBtn({ id, label, go, tone }) {
+  const cls = `wallet-action-btn wallet-go-btn${tone ? ` wallet-go-btn--${tone}` : ''}`;
+  const lbl = esc(t(label));
+  return `<button type="button" class="${cls}" id="${id}" data-wallet-go="${esc(go)}" aria-label="${lbl}">${lbl} ${icSVG(IC.link, 12)}</button>`;
+}
+
+function buildWalletNextSteps({ addr, riskReport, approvalCount, unlimitedCount, security }) {
+  const steps = [];
+  const score = riskReport?.finalScore ?? 0;
+
+  if (unlimitedCount > 0) {
+    steps.push({
+      tone: 'red',
+      title: unlimitedCount > 1
+        ? t('{count} unlimited allowances detected', { count: unlimitedCount })
+        : t('1 unlimited allowance detected'),
+      desc: t('Spenders can drain approved tokens at any time. Open Approvals to review and revoke.'),
+      go: 'approvals',
+      label: 'Review approvals',
+      primary: true,
+    });
+  } else if (approvalCount > 0) {
+    steps.push({
+      tone: 'amber',
+      title: approvalCount > 1
+        ? t('{count} active on-chain approvals', { count: approvalCount })
+        : t('1 active on-chain approval'),
+      desc: t('Check who can move tokens from this wallet and revoke unused spenders.'),
+      go: 'approvals',
+      label: 'Open Approvals',
+      primary: true,
+    });
+  }
+
+  if (security?.level === 'bad' || riskReport?.hardFlags?.length) {
+    steps.push({
+      tone: 'red',
+      title: t('Security flags on this address'),
+      desc: t('Run a full AML check for counterparty exposure and transaction patterns.'),
+      go: 'aml',
+      label: 'Run AML check',
+      primary: !steps.length,
+    });
+  } else if (score >= 40) {
+    steps.push({
+      tone: 'amber',
+      title: t('Elevated wallet risk ({score}/100)', { score }),
+      desc: t('AML screening adds peer graph, concentration, and deeper transaction analysis.'),
+      go: 'aml',
+      label: 'Run AML check',
+      primary: !steps.length,
+    });
+  } else if (score >= 15 && approvalCount === 0) {
+    steps.push({
+      tone: 'amber',
+      title: t('Patterns worth a second look'),
+      desc: t('Optional: run AML for a fuller risk picture on this address.'),
+      go: 'aml',
+      label: 'Run AML check',
+      primary: false,
+    });
+  }
+
+  if (!steps.length) return '';
+
+  const rows = steps.map((step, i) => `
+    <div class="wallet-next-step is-${step.tone}${step.primary ? ' is-primary' : ''}">
+      <div class="wallet-next-step-body">
+        <div class="wallet-next-step-title">${esc(step.title)}</div>
+        <div class="wallet-next-step-desc">${esc(step.desc)}</div>
+      </div>
+      ${walletGoBtn({ id: `wallet-go-${step.go}-${i}`, label: step.label, go: step.go, tone: step.tone })}
+    </div>`).join('');
+
+  return `<div class="wallet-next-steps">
+    <div class="wallet-next-steps-head">
+      <span class="wallet-next-steps-title">${t('Recommended next steps')}</span>
+      <span class="wallet-next-steps-hint">${t('Opens the module and runs the scan for this address')}</span>
+    </div>
+    <div class="wallet-next-steps-list">${rows}</div>
+  </div>`;
+}
+
+function bindWalletGoButtons(root, addr) {
+  (root || document).querySelectorAll('[data-wallet-go]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      const go = btn.getAttribute('data-wallet-go');
+      if (go === 'approvals') openApprovalsScan(addr);
+      else if (go === 'aml') openAmlScan(addr);
+    });
+  });
 }
 
 function qrRoundRect(ctx, x, y, w, h, r) {
@@ -392,14 +783,29 @@ function kvRow(label, valueHtml, last) {
   </div>`;
 }
 
-async function walletScan() {
+async function walletScan(opts = {}) {
   if (walletScanBusy) return;
+  const force = opts.force === true;
   const addr = walletInput.value.trim();
   setError(walletErr, '');
   if (!addr) { flashInput(walletInput); showToast(t('Enter a TRON address')); return; }
   if (!isValidTron(addr)) { flashInput(walletInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
 
+  if (!force) {
+    const cached = readWalletSessionCache(addr);
+    if (cached) {
+      if (walletEmpty) walletEmpty.style.display = 'none';
+      restoreWalletFromCache(cached);
+      renderWallet();
+      showToast(t('Loaded from session cache'));
+      return;
+    }
+  } else {
+    clearWalletSessionCache(addr);
+  }
+
   const gen = ++walletScanGen;
+  walletFromCache = false;
   setWalletScanLocked(true);
   if (walletEmpty) walletEmpty.style.display = 'none';
   walletRes.innerHTML = SK.wallet();
@@ -409,7 +815,7 @@ async function walletScan() {
   txShowCount = 10;
 
   try {
-    const [accRes, txRes, trc20TxRes, tokenRes, scanAcc, secAcc, tagAcc] = await Promise.all([
+    const [accRes, txRes, trc20TxRes, tokenRes, scanAcc, secAcc, tagAcc, scanApprovalRaw] = await Promise.all([
       gridGet(`/v1/accounts/${addr}`).catch(() => ({ data: [] })),
       gridGet(`/v1/accounts/${addr}/transactions`, { limit: 50, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
       gridGet(`/v1/accounts/${addr}/transactions/trc20`, { limit: 100, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
@@ -417,6 +823,7 @@ async function walletScan() {
       scanGet('/account', { address: addr }).catch(() => null),
       scanGet('/security/account/data', { address: addr }).catch(() => null),
       scanGet('/account/tag', { address: addr }).catch(() => null),
+      fetchTronScanApprovalList(addr).catch(() => []),
     ]);
     if (gen !== walletScanGen) return;
 
@@ -451,7 +858,9 @@ async function walletScan() {
     walletHasMore = nativeTxs.length === 50;
     if (nativeTxs.length) walletOldestTs = nativeTxs[nativeTxs.length - 1].block_timestamp || 0;
 
-    const approvalCount = countDistinctApprovals(trc20List, nativeTxs);
+    const onChainApprovals = await fetchActiveOnChainApprovals(addr, trc20List, nativeTxs, scanApprovalRaw);
+    if (gen !== walletScanGen) return;
+    const approvalCount = onChainApprovals.length;
     const MAX_U256 = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
     const normTrc20 = trc20List.filter(t => {
       if (t.type === 'Approval' || t.event_type === 'Approval') return false;
@@ -502,7 +911,52 @@ async function walletScan() {
     await ensureTrxPrice();
     if (gen !== walletScanGen) return;
     const tags = parseAccountTags(tagAcc);
-    walletData = { acc, trc20, addr, scanProfile, secAcc, tags, approvalCount };
+
+    const heuristics = [];
+    if (acc._inactive) heuristics.push(t('Unactivated TRX account record'));
+    if (walletTxs.length >= 10) {
+      const transfers = walletTxs.filter(tx => tx.raw_data?.contract?.[0]?.type === 'TransferContract');
+      if (transfers.length >= 5) {
+        const uniq = new Set(transfers.map(tx => tx.raw_data?.contract?.[0]?.parameter?.value?.to_address)).size;
+        if (uniq === 1) heuristics.push(t('Recent TRX sweep pattern detected'));
+      }
+    }
+    const bwUsedPreview = acc.free_net_usage ?? acc.account_resource?.net_usage ?? scanProfile.freeNetUsed ?? 0;
+    if (bwUsedPreview === 0 && (acc.balance || 0) < 1_000_000) heuristics.push(t('Dormant / low-activity account'));
+
+    const security = buildWalletSecurity(secAcc, tags, heuristics);
+    const createdTs = acc.create_time || scanProfile.date_created || scanProfile.createTime;
+    const ageDays = createdTs ? Math.round((Date.now() - createdTs) / 86400000) : null;
+    const txCountPreview = Math.max(
+      walletTxs.length,
+      Number(scanProfile.totalTransactionCount ?? scanProfile.transactions ?? scanProfile.transaction_count) || 0
+    );
+    const riskReport = computeWalletRisk({
+      security,
+      heuristics,
+      onChainApprovals,
+      ageDays,
+      txCount: txCountPreview,
+      isFlagged: security.level === 'bad',
+    });
+
+    walletData = { acc, trc20, addr, scanProfile, secAcc, tags, approvalCount, onChainApprovals, riskReport };
+    window._walletLastReport = buildWalletReportSnapshot();
+    writeWalletSessionCache({
+      addr,
+      acc,
+      trc20,
+      scanProfile,
+      secAcc,
+      tags,
+      approvalCount,
+      onChainApprovals: serializeWalletApprovals(onChainApprovals),
+      riskReport,
+      walletTxs,
+      walletHasMore,
+      walletOldestTs,
+      txShowCount,
+    });
     renderWallet();
   } catch (e) {
     if (gen !== walletScanGen) return;
@@ -546,7 +1000,7 @@ async function loadMoreTxs() {
 }
 
 function renderWallet() {
-  const { acc, trc20, addr, scanProfile, secAcc, tags, approvalCount } = walletData;
+  const { acc, trc20, addr, scanProfile, secAcc, tags, approvalCount, onChainApprovals, riskReport: storedRisk } = walletData;
   const res = acc.account_resource || {};
   const bwUsed = acc.free_net_usage ?? res.net_usage ?? scanProfile.freeNetUsed ?? 0;
   const bwTotal = acc.free_net_limit ?? res.free_net_limit ?? scanProfile.freeNetLimit ?? 1500;
@@ -590,11 +1044,26 @@ function renderWallet() {
   if (bwUsed === 0 && (acc.balance || 0) < 1_000_000) heuristics.push(t('Dormant / low-activity account'));
 
   const security = buildWalletSecurity(secAcc, tags, heuristics);
+  const riskReport = storedRisk || computeWalletRisk({
+    security,
+    heuristics,
+    onChainApprovals: onChainApprovals || [],
+    ageDays,
+    txCount,
+    isFlagged: security.level === 'bad',
+  });
+  const unlimitedCount = riskReport.unlimitedCount || 0;
   const alertsHtml = security.level === 'bad'
-    ? alertBox('red', esc(t(security.flags[0] || 'Address flagged by security checks')))
-    : security.level === 'warn' && heuristics.length
-      ? alertBox('amber', esc(heuristics[0]))
-      : '';
+    ? alertBox('red', `${esc(t(security.flags[0] || 'Address flagged by security checks'))} <button type="button" class="a-link wallet-inline-cta" data-wallet-go="aml">${t('Run AML check')} →</button>`)
+    : unlimitedCount > 0
+      ? alertBox('red', `${esc(unlimitedCount > 1 ? t('{count} unlimited allowances — revoke in Approvals first', { count: unlimitedCount }) : t('1 unlimited allowance — revoke in Approvals first'))} <button type="button" class="a-link wallet-inline-cta" data-wallet-go="approvals">${t('Open Approvals')} →</button>`)
+      : approvalCount > 0
+        ? alertBox('amber', `${esc(approvalCount > 1 ? t('{count} active approvals on-chain', { count: approvalCount }) : t('1 active approval on-chain'))} <button type="button" class="a-link wallet-inline-cta" data-wallet-go="approvals">${t('Review in Approvals')} →</button>`)
+        : security.level === 'warn' && heuristics.length
+          ? alertBox('amber', esc(heuristics[0]))
+          : '';
+
+  const nextStepsHtml = buildWalletNextSteps({ addr, riskReport, approvalCount, unlimitedCount, security });
 
   const showTxs = txs.slice(0, txShowCount);
   const allTxShown = txShowCount >= txs.length && !walletHasMore;
@@ -605,7 +1074,7 @@ function renderWallet() {
     addressName ? walletTag(addressName, 'name') : '',
     isMultisig ? walletTag(t('multisig'), 'warn') : '',
     votePower > 0 ? walletTag(`${fmtNum(votePower)} votes · ${votes.length} SR${votes.length !== 1 ? 's' : ''}`) : '',
-    approvalCount > 0 ? walletTag(t('{count} distinct approvals', { count: approvalCount }), 'warn') : '',
+    approvalCount > 0 ? walletTag(t('{count} on-chain approvals', { count: approvalCount }), unlimitedCount > 0 ? 'bad' : 'warn') : '',
     ...tags.slice(0, 4).map(t => walletTag(t, /scam|fraud|phish|black/i.test(t) ? 'bad' : '')),
   ].filter(Boolean).join('');
 
@@ -613,9 +1082,10 @@ function renderWallet() {
     kvRow('TronScan security', secAcc ? (security.level === 'clean' ? badge('b-green', 'Clean') : security.level === 'warn' ? badge('b-amber', 'Review') : badge('b-red', 'Flagged')) : badge('b-ghost', 'Unavailable')),
     kvRow(tt('blacklist'), secAcc?.is_black_list ? badge('b-red', 'Listed') : badge('b-green', 'Not listed')),
     kvRow('Fraud transactions', secAcc?.has_fraud_transaction ? badge('b-red', 'Detected') : badge('b-green', 'None')),
+    kvRow(tt('riskScore'), riskReport ? `<span class="mono">${riskReport.finalScore}</span><span class="aml-score-unit">/100</span> · ${esc(t(riskReport.statusLabel))}` : '—'),
     kvRow(tt('approvals'), approvalCount > 0
-      ? `<span class="mono">${approvalCount}</span> · <button type="button" class="a-link wallet-approvals-link">${t('Check approvals')}</button>`
-      : `<span class="mono">0</span>`),
+      ? `<span class="mono">${approvalCount}</span>${unlimitedCount > 0 ? ` · <span class="wallet-tag is-bad" style="display:inline-flex;padding:1px 6px;font-size:10px">${unlimitedCount} ${t('unlimited')}</span>` : ''} · <button type="button" class="a-link wallet-inline-cta" data-wallet-go="approvals">${t('Open Approvals')} →</button>`
+      : `<span class="mono">0</span> · <span class="kv-muted">${t('verified on-chain')}</span>`),
     kvRow(tt('heuristics'), heuristics.length ? esc(heuristics[0]) : `<span class="kv-muted">${t('No patterns')}</span>`),
     kvRow('Public tags', tags.length ? esc(tags.slice(0, 3).join(' · ')) : `<span class="kv-muted">${t('None')}</span>`, true),
   ].join('');
@@ -655,6 +1125,15 @@ function renderWallet() {
         ? `<div class="wallet-token-footer"><span>Token holdings</span><strong>$${trc20UsdTotal.toFixed(2)}</strong></div>`
         : '');
 
+  const riskStatHtml = typeof amlRiskStat === 'function'
+    ? amlRiskStat(riskReport.status, riskReport.statusLabel, riskReport.finalScore, riskReport.isFlagged, riskReport.hasHardSignals)
+        .replace(t('Composite risk signal'), t('Wallet risk signal'))
+        .replace(t('Activity risk signal'), t('Wallet risk signal'))
+    : '';
+  const signalsHtml = typeof amlSignalsPanel === 'function' && riskReport.scoreFactors?.length
+    ? amlSignalsPanel(riskReport.scoreFactors, riskReport.finalScore, riskReport.status)
+    : '';
+
   const activityHtml = txs.length === 0
     ? `<div class="wallet-empty-block">${t('No recent transactions')}</div>`
     : showTxs.map(tx => buildActivityItem(tx, addr)).join('');
@@ -667,13 +1146,30 @@ function renderWallet() {
         <div class="wallet-head-top">
           <div class="wallet-head-addr">${esc(addr)}</div>
           <div class="wallet-head-actions">
+            ${walletActionBtn({ id: 'wallet-export-pdf-btn', label: 'Export PDF', icon: IC.download })}
+            ${walletActionBtn({ id: 'wallet-copy-summary-btn', label: 'Copy summary', icon: IC.copy })}
+            ${walletActionBtn({ id: 'wallet-refresh-btn', label: 'Refresh scan', icon: IC.refresh })}
             ${walletActionBtn({ id: 'copy-addr-btn', label: 'Copy', icon: IC.copy })}
             ${walletActionBtn({ id: 'qr-addr-btn', label: 'QR code', icon: IC.qr })}
             ${walletActionBtn({ id: 'tronscan-addr-btn', label: 'TronScan', icon: IC.external, href: `https://tronscan.org/#/address/${addr}`, variant: 'ext' })}
           </div>
         </div>
-        <div class="wallet-head-tags">${headTags}</div>
+        <div class="wallet-head-tags">${headTags}${walletFromCache ? walletTag(t('session cache'), 'name') : ''}</div>
       </div>
+
+      ${riskStatHtml ? `<div class="wallet-risk-grid an-stat-grid an-stat-grid--2">${riskStatHtml}
+        ${approvalCount > 0
+          ? `<button type="button" class="an-stat wallet-approvals-stat is-clickable" data-wallet-go="approvals">`
+          : `<div class="an-stat wallet-approvals-stat">`}
+          <div class="an-stat-label">${t('Active on-chain approvals')}</div>
+          <div class="an-stat-value ${approvalCount > 0 ? (unlimitedCount > 0 ? 'is-red' : 'is-amber') : 'is-green'}">${approvalCount}</div>
+          <div class="an-stat-sub">${approvalCount > 0 ? `${t('Tap to review')} →` : t('verified on-chain')}</div>
+        ${approvalCount > 0 ? '</button>' : '</div>'}
+      </div>` : ''}
+
+      ${nextStepsHtml}
+
+      ${signalsHtml ? `<div class="wallet-signals-wrap">${signalsHtml}</div>` : ''}
 
       <div class="wallet-hero-grid">
         <div class="wallet-portfolio-card">
@@ -725,6 +1221,14 @@ function renderWallet() {
       </div>` : ''}
     </div>`;
 
+  document.getElementById('wallet-export-pdf-btn')?.addEventListener('click', () => {
+    walletExportPdf(window._walletLastReport || buildWalletReportSnapshot());
+  });
+  document.getElementById('wallet-copy-summary-btn')?.addEventListener('click', () => {
+    walletCopySummary(window._walletLastReport || buildWalletReportSnapshot());
+  });
+  document.getElementById('wallet-refresh-btn')?.addEventListener('click', () => walletScan({ force: true }));
+
   document.getElementById('copy-addr-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(addr).then(() => {
       const btn = document.getElementById('copy-addr-btn');
@@ -739,11 +1243,7 @@ function renderWallet() {
 
   document.getElementById('qr-addr-btn')?.addEventListener('click', () => openWalletQr(addr));
 
-  document.querySelector('.wallet-approvals-link')?.addEventListener('click', () => {
-    const inp = document.getElementById('approvals-input');
-    if (inp) inp.value = addr;
-    switchTab('approvals');
-  });
+  bindWalletGoButtons(walletRes, addr);
 
   walletRes.querySelectorAll('.wallet-contract-scan-btn').forEach(btn => {
     btn.addEventListener('click', e => {
@@ -762,11 +1262,14 @@ function renderWallet() {
 
 function resetWalletScanCache() {
   walletScanGen++;
+  if (walletData?.addr) clearWalletSessionCache(walletData.addr);
   walletData = null;
   walletTxs = [];
   walletHasMore = false;
   walletOldestTs = 0;
   txShowCount = 10;
   loadMoreBusy = false;
+  walletFromCache = false;
+  window._walletLastReport = null;
   setWalletScanLocked(false);
 }
