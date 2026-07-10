@@ -161,23 +161,23 @@ function openWalletScan(addr) {
   }, 0);
 }
 
-function openApprovalsScan(addr, { autoRun = true } = {}) {
+function openApprovalsScan(addr, { autoRun = true, force = false } = {}) {
   if (!addr) return;
   switchTab('approvals');
   setTimeout(() => {
     const input = document.getElementById('approvals-input');
     if (input) input.value = addr;
-    if (autoRun && typeof approvalsScan === 'function') approvalsScan();
+    if (autoRun && typeof approvalsScan === 'function') approvalsScan({ force });
   }, 0);
 }
 
-function openAmlScan(addr, { autoRun = true } = {}) {
+function openAmlScan(addr, { autoRun = true, force = false } = {}) {
   if (!addr) return;
   switchTab('aml-check');
   setTimeout(() => {
     const input = document.getElementById('aml-input');
     if (input) input.value = addr;
-    if (autoRun && typeof amlScan === 'function') amlScan();
+    if (autoRun && typeof amlScan === 'function') amlScan({ force });
   }, 0);
 }
 
@@ -617,9 +617,27 @@ async function gridPost(path, body) {
   return res.json();
 }
 
-// -- Tronscan API rate limiter --
+// -- Tronscan API rate limiter + in-memory response cache --
 const _scanQueue = [];
 let _scanBusy = false;
+const _scanApiCache = new Map();
+const _scanInflightByKey = new Map();
+const SCAN_API_CACHE_DEFAULT_TTL = 8 * 60 * 1000;
+
+function scanApiCacheTtl(urlStr) {
+  if (urlStr.includes('/security/')) return 15 * 60 * 1000;
+  if (urlStr.includes('/account/tag')) return 15 * 60 * 1000;
+  if (urlStr.includes('/account/approve/')) return 5 * 60 * 1000;
+  if (urlStr.includes('/account/tokens')) return 10 * 60 * 1000;
+  if (urlStr.includes('/contract')) return 10 * 60 * 1000;
+  return SCAN_API_CACHE_DEFAULT_TTL;
+}
+
+function clearScanApiCache() {
+  _scanApiCache.clear();
+  _scanInflightByKey.clear();
+}
+
 async function _scanNext() {
   if (_scanBusy || _scanQueue.length === 0) return;
   _scanBusy = true;
@@ -652,10 +670,26 @@ function _enqueueScan(url, headers) {
   });
 }
 
-async function scanGet(path, params={}) {
+async function scanGet(path, params = {}, opts = {}) {
   const url = new URL(scanRequestUrl(path, params));
   const headers = withProxyHeaders(upstreamHeaders('scan'));
-  return _enqueueScan(url, headers);
+  const key = url.toString();
+  if (!opts.bypassCache) {
+    const hit = _scanApiCache.get(key);
+    if (hit && Date.now() - hit.ts < hit.ttl) return hit.data;
+    const pending = _scanInflightByKey.get(key);
+    if (pending) return pending;
+  }
+  const flight = _enqueueScan(url, headers).then((data) => {
+    if (!opts.bypassCache) {
+      _scanApiCache.set(key, { data, ts: Date.now(), ttl: scanApiCacheTtl(key) });
+    }
+    return data;
+  }).finally(() => {
+    _scanInflightByKey.delete(key);
+  });
+  if (!opts.bypassCache) _scanInflightByKey.set(key, flight);
+  return flight;
 }
 
 /** TronScan may return frozen as { total, balances: [] } instead of an array. */

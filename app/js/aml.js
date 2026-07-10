@@ -4,10 +4,54 @@ const amlErr   = document.getElementById('aml-err');
 const amlRes   = document.getElementById('aml-result');
 const amlEmpty = document.getElementById('aml-empty');
 
+let amlLastAddr = '';
+
 const AML_DISCLAIMER = 'This report is a risk analysis based on the latest 400 on-chain transactions and public security tags. It is not a legal or compliance determination.';
 
+const AML_CACHE_TTL = 12 * 60 * 1000;
+
+function amlCacheStorageKey(addr) {
+  return `tronsec_aml_scan:${addr}`;
+}
+
+function readAmlSessionCache(addr) {
+  try {
+    const raw = sessionStorage.getItem(amlCacheStorageKey(addr));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.ts || parsed.addr !== addr || Date.now() - parsed.ts > AML_CACHE_TTL) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeAmlSessionCache(snapshot) {
+  if (!snapshot?.addr) return;
+  try {
+    sessionStorage.setItem(amlCacheStorageKey(snapshot.addr), JSON.stringify({ ...snapshot, ts: Date.now() }));
+  } catch (_) {}
+}
+
+function clearAmlSessionCache(addr) {
+  if (!addr) return;
+  try { sessionStorage.removeItem(amlCacheStorageKey(addr)); } catch (_) {}
+}
+
+function restoreAmlFromCache(cached) {
+  amlEmpty.style.display = 'none';
+  amlRes.innerHTML = cached.html;
+  window._amlLastReport = cached.report || null;
+  bindAmlActions(cached.addr);
+  if (cached.graphPayload) {
+    const { addr, topPeers, peerFlags, directTransfers, txCount } = cached.graphPayload;
+    renderAMLGraph('aml-graph-container', addr, topPeers, peerFlags, directTransfers, txCount);
+  }
+  showToast(t('Loaded from session cache'));
+}
+
 if (amlInput) amlInput.addEventListener('keydown', e => { if (e.key==='Enter') amlScan(); });
-if (amlBtn) amlBtn.addEventListener('click', amlScan);
+if (amlBtn) amlBtn.addEventListener('click', () => amlScan());
 
 function amlAddrLink(addr, label) {
   const text = esc(label || addrLabel(addr));
@@ -634,11 +678,24 @@ function getTRC20Recipient(tx) {
   return null;
 }
 
-async function amlScan() {
+async function amlScan(opts = {}) {
+  const force = opts.force === true;
   const addr = amlInput.value.trim();
   setError(amlErr, '');
   if (!addr) { flashInput(amlInput); showToast('Enter a TRON address'); return; }
   if (!isValidTron(addr)) { flashInput(amlInput); showToast('Invalid TRON address — must start with T, 34 chars.'); return; }
+
+  amlLastAddr = addr;
+
+  if (!force) {
+    const cached = readAmlSessionCache(addr);
+    if (cached) {
+      restoreAmlFromCache(cached);
+      return;
+    }
+  } else {
+    clearAmlSessionCache(addr);
+  }
 
   spinBtn(amlBtn, true);
   amlEmpty.style.display = 'none';
@@ -1091,6 +1148,11 @@ async function amlScan() {
 
     bindAmlActions(addr);
 
+    const graphPayload = topPeers.length > 0
+      ? { addr, topPeers, peerFlags: [...peerFlags], directTransfers, txCount }
+      : null;
+    writeAmlSessionCache({ addr, html: amlRes.innerHTML, report: window._amlLastReport, graphPayload });
+
 
     if (topPeers.length > 0) {
       renderAMLGraph('aml-graph-container', addr, topPeers, peerFlags, directTransfers, txCount);
@@ -1112,4 +1174,13 @@ window.tronsecAmlPdf = {
   AML_PDF,
   amlPdfStatusColor,
 };
+
+function resetAmlScanCache() {
+  const addr = amlInput?.value?.trim() || amlLastAddr;
+  if (addr) clearAmlSessionCache(addr);
+  amlLastAddr = '';
+  window._amlLastReport = null;
+  spinBtn(amlBtn, false);
+  if (typeof clearScanApiCache === 'function') clearScanApiCache();
+}
 
