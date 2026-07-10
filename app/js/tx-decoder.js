@@ -367,6 +367,138 @@ function isTronScanRiskyTx(scanInfo) {
   return v === true || v === 1 || v === '1';
 }
 
+// -- Dust / address-poisoning heuristics --------------------------------
+const DUST_TRX_SUN = 1_000_000; // <= 1 TRX
+
+function isMicroTrxSun(sun) {
+  const n = Number(sun) || 0;
+  return n > 0 && n <= DUST_TRX_SUN;
+}
+
+function isMicroTokenTransfer(tr) {
+  if (!tr) return false;
+  if (OFFICIAL_TOKEN_ADDRS.has(tr.contract_address)) return false;
+  const dec = Number(tr.decimals ?? 6);
+  let raw = 0n;
+  try { raw = BigInt(tr.amount_str ?? tr.amount ?? 0); } catch (_) { return false; }
+  if (raw <= 0n) return false;
+  const unit = 10n ** BigInt(Math.max(0, dec));
+  return raw <= unit;
+}
+
+function tronAddrPoisonMatch(a, b) {
+  if (!a || !b || a === '—' || b === '—' || a === b) return false;
+  if (!isValidTron(a) || !isValidTron(b)) return false;
+  return a.slice(0, 4) === b.slice(0, 4) && a.slice(-4) === b.slice(-4);
+}
+
+const _dustSenderCache = {};
+async function fetchDustSenderProfile(address) {
+  if (!address || !isValidTron(address)) return null;
+  if (Object.prototype.hasOwnProperty.call(_dustSenderCache, address)) return _dustSenderCache[address];
+  try {
+    const res = await scanGet('/account', { address });
+    const d = res?.data ?? res ?? {};
+    const profile = {
+      out: Number(d.transactions_out ?? 0),
+      inn: Number(d.transactions_in ?? 0),
+      balance: Number(d.balance ?? 0),
+    };
+    _dustSenderCache[address] = profile;
+    return profile;
+  } catch (_) {
+    _dustSenderCache[address] = null;
+    return null;
+  }
+}
+
+function isDustBotProfile(profile) {
+  if (!profile) return false;
+  return profile.out >= 80 && profile.out > profile.inn * 4 && profile.balance < DUST_TRX_SUN * 10;
+}
+
+async function collectDustSignals(ctx) {
+  const { cType, cVal, scanInfo, mergedTransfers, fromAddr, toAddr } = ctx;
+  const alerts = [];
+  let summaryRiskBump = null;
+  let summaryDesc = '';
+
+  const trxSun = cType === 'TransferContract' ? (cVal.amount || 0) : 0;
+  const isMicroTrx = cType === 'TransferContract' && isMicroTrxSun(trxSun);
+  const microTokenTransfers = (mergedTransfers || []).filter(isMicroTokenTransfer);
+  const trc10Micro = cType === 'TransferAssetContract' && isMicroTokenTransfer(
+    trc10TransferFromScan(scanInfo, cVal)
+  );
+  const hasDustAmount = isMicroTrx || microTokenTransfers.length > 0 || trc10Micro;
+
+  if (tronAddrPoisonMatch(fromAddr, toAddr)) {
+    alerts.push({
+      lvl: 'red',
+      msg: t('Address poisoning pattern — sender resembles recipient (matching prefix and suffix). Verify the full base58 address before sending funds.'),
+    });
+    summaryRiskBump = 'high';
+  }
+
+  if (isMicroTrx) {
+    alerts.push({
+      lvl: 'amber',
+      msg: t('Micro TRX transfer ({amount} TRX) — typical dust/spam probe. Do not treat as payment and never copy an address from history without verifying every character.', {
+        amount: (trxSun / 1_000_000).toFixed(6),
+      }),
+    });
+    summaryDesc = t('Possible dust attack — micro-transfer designed to pollute your transaction history.');
+    summaryRiskBump = summaryRiskBump || 'med';
+  }
+
+  if (microTokenTransfers.length > 0) {
+    const sym = microTokenTransfers[0].symbol || 'token';
+    alerts.push({
+      lvl: 'amber',
+      msg: t('Micro {symbol} transfer — suspicious dust amount on a non-official token. Verify the contract/asset ID before interacting.', { symbol: sym }),
+    });
+    summaryRiskBump = summaryRiskBump || 'med';
+  } else if (trc10Micro) {
+    const ti = scanInfo?.contractData?.tokenInfo;
+    const sym = ti?.tokenAbbr || ti?.tokenName || t('TRC10 token');
+    alerts.push({
+      lvl: 'amber',
+      msg: t('Micro {symbol} transfer — suspicious dust amount on a non-official token. Verify the contract/asset ID before interacting.', { symbol: sym }),
+    });
+    summaryRiskBump = summaryRiskBump || 'med';
+  }
+
+  if (hasDustAmount || isTronScanRiskyTx(scanInfo)) {
+    const sender = isValidTron(fromAddr) ? fromAddr : null;
+    if (sender) {
+      const profile = await fetchDustSenderProfile(sender);
+      if (isDustBotProfile(profile)) {
+        alerts.push({
+          lvl: 'amber',
+          msg: t('High-volume dust sender — mass outbound micro-transfers ({out} sent / {in} received). Likely spam probe or address-poisoning setup.', {
+            out: profile.out,
+            in: profile.inn,
+          }),
+        });
+        summaryRiskBump = summaryRiskBump || 'med';
+      }
+    }
+  }
+
+  return { alerts, summaryRiskBump, summaryDesc };
+}
+
+function bumpSummaryRisk(current, bump) {
+  const rank = { low: 0, med: 1, high: 2 };
+  if (!bump || rank[bump] == null) return current;
+  const cur = rank[current] ?? 0;
+  const next = rank[bump] ?? 0;
+  if (next > cur) {
+    if (bump === 'high') return 'high';
+    if (bump === 'med' && current !== 'high') return 'med';
+  }
+  return current;
+}
+
 function trc10TransferFromScan(scanInfo, cVal) {
   const cd = scanInfo?.contractData;
   if (!cd && !cVal?.amount) return null;
@@ -948,8 +1080,14 @@ async function txDecode() {
     if (!success) {
       riskAlerts.push({ lvl: 'amber', msg: t('This transaction <strong>failed</strong> on-chain. No state changes were applied, but the fee was still consumed.') });
     }
-    // mint + transferOwnership in same tx = rug setup
-    // TRX transfer to a contract (not a wallet)
+
+    // Dust / address-poisoning heuristics
+    const dust = await collectDustSignals({
+      cType, cVal, scanInfo, mergedTransfers, fromAddr, toAddr,
+    });
+    riskAlerts.push(...dust.alerts);
+    summaryRisk = bumpSummaryRisk(summaryRisk, dust.summaryRiskBump);
+    if (dust.summaryDesc && !summaryDesc) summaryDesc = dust.summaryDesc;
 
     const transfersHtml = renderTrc20TransfersHtml(mergedTransfers);
 
