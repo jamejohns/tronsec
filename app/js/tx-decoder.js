@@ -8,18 +8,37 @@ const txErr    = document.getElementById('tx-err');
 const txRes    = document.getElementById('tx-result');
 const txEmpty  = document.getElementById('tx-empty');
 
-txInput.addEventListener('keydown', e => { if (e.key === 'Enter') txDecode(); });
-txBtn.addEventListener('click', txDecode);
+let txLastHash = '';
+let txFromCache = false;
 
-function txActionBtn({ id, label, icon, href, variant }) {
-  const cls = `wallet-action-btn${variant ? ` wallet-action-btn--${variant}` : ''}`;
-  const inner = `${icSVG(icon, 14)}<span>${esc(t(label))}</span>`;
-  if (href) return `<a class="${cls}" id="${id}" href="${esc(href)}" target="_blank" rel="noopener">${inner}</a>`;
-  return `<button type="button" class="${cls}" id="${id}">${inner}</button>`;
+const TX_CACHE_TTL = 12 * 60 * 1000;
+
+function readTxSessionCache(hash) {
+  return readSessionCache('tx', hash, {
+    ttl: TX_CACHE_TTL,
+    validate: (p) => p.hash === hash,
+    allowHtml: true,
+  });
+}
+
+function writeTxSessionCache(snapshot) {
+  if (!snapshot?.hash) return;
+  writeSessionCache('tx', snapshot.hash, { hash: snapshot.hash, html: snapshot.html });
+}
+
+function clearTxSessionCache(hash) {
+  clearSessionCache('tx', hash);
+}
+
+txInput.addEventListener('keydown', e => { if (e.key === 'Enter') txDecode(); });
+txBtn.addEventListener('click', () => txDecode());
+
+function txActionBtn(opts) {
+  return scanActionBtn(opts);
 }
 
 function txBlock(titleHtml, bodyHtml, meta = '') {
-  const metaHtml = meta ? `<span class="aml-block-meta">${t(meta)}</span>` : '';
+  const metaHtml = scanBlockMeta(meta);
   const title = /<[^>]+>/.test(titleHtml) ? titleHtml : esc(t(titleHtml));
   return `<div class="aml-block">
     <div class="aml-block-head">
@@ -41,22 +60,24 @@ function txKvRow(label, valueHtml, last) {
   </div>`;
 }
 
-function txHeadCard(titleHtml, hash, tagsHtml) {
-  return `<div class="aml-head-card tx-head-card">
-    <div class="wallet-head-top">
-      <div style="flex:1;min-width:0">
-        <div class="tx-head-title">${titleHtml}</div>
-      </div>
-      <div class="wallet-head-actions">
-        ${txActionBtn({ id: 'tx-copy-btn', label: 'Copy', icon: IC.copy })}
-        ${txActionBtn({ id: 'tx-tronscan-btn', label: 'TronScan', icon: IC.external, href: `https://tronscan.org/#/transaction/${hash}`, variant: 'ext' })}
-      </div>
-    </div>
-    ${tagsHtml ? `<div class="wallet-head-tags">${tagsHtml}</div>` : ''}
-  </div>`;
+function txHeadCard(titleHtml, hash, tagsHtml, fromCache = false) {
+  const cacheTag = fromCache ? walletTag(t('session cache'), 'name') : '';
+  return scanHeadCard({
+    leadHtml: `<div style="flex:1;min-width:0">
+      <div class="tx-head-title">${titleHtml}</div>
+      <div class="wallet-head-addr tx-head-hash">${esc(hash)}</div>
+    </div>`,
+    actionsHtml: `
+      ${scanActionBtn({ id: 'tx-refresh-btn', label: 'Refresh scan', icon: IC.refresh })}
+      ${scanActionBtn({ id: 'tx-copy-btn', label: 'Copy', icon: IC.copy })}
+      ${scanActionBtn({ id: 'tx-tronscan-btn', label: 'TronScan', icon: IC.external, href: `https://tronscan.org/#/transaction/${hash}`, variant: 'ext' })}
+    `,
+    tagsHtml: `${tagsHtml || ''}${cacheTag}`,
+  });
 }
 
 function bindTxActions(hash) {
+  document.getElementById('tx-refresh-btn')?.addEventListener('click', () => txDecode({ force: true }));
   document.getElementById('tx-copy-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(hash).then(() => {
       const btn = document.getElementById('tx-copy-btn');
@@ -89,7 +110,7 @@ function txRiskClass(risk) {
 function txSignalRow(alert) {
   const tier = alert.lvl === 'red' ? 'is-high' : 'is-med';
   const flagBadge = alert.lvl === 'red' ? badge('b-red', t('Critical')) : badge('b-amber', t('Warning'));
-  return `<div class="tx-signal ${tier}">
+  return `<div class="tx-signal risk-row ${tier}">
     <div class="tx-signal-body">${alert.msg}</div>
     <div class="tx-signal-badge">${flagBadge}</div>
   </div>`;
@@ -713,21 +734,49 @@ async function fetchTokenDecimals(contractAddress) {
 }
 
 // -- Main decode function ----------------------------------------------
-async function txDecode() {
+async function txDecode(opts = {}) {
+  const force = opts.force === true;
   const hash = txInput.value.trim();
   setError(txErr, '');
 
-  if (!hash) { flashInput(txInput); showToast('Enter a TX hash or hex data'); return; }
+  if (!hash) { flashInput(txInput); showToast(t('Enter a TX hash or hex data')); return; }
   if (!/^[0-9a-fA-F]{64}$/.test(hash)) {
     flashInput(txInput);
-    showToast('Invalid TX hash — must be 64 hex characters.');
+    showToast(t('Invalid TX hash — must be 64 hex characters.'));
     return;
   }
 
-  txRes.innerHTML = '';
-  txEmpty.style.display = 'none';
-  spinBtn(txBtn, true);
-  txRes.innerHTML = SK.txDecoder();
+  txLastHash = hash;
+
+  if (!force) {
+    const cached = readTxSessionCache(hash);
+    if (cached?.html) {
+      txFromCache = true;
+      txRes.innerHTML = cached.html;
+      hideScanEmpty(txEmpty, { instant: true });
+      bindTxActions(hash);
+      txRes.querySelectorAll('.tx-scan-contract-btn, .wallet-contract-scan-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+          e.preventDefault();
+          openAddressScan(btn.getAttribute('data-addr'));
+        });
+      });
+      showToast(t('Loaded from session cache'));
+      return;
+    }
+  } else {
+    clearTxSessionCache(hash);
+  }
+
+  txFromCache = false;
+  beginScanUI({
+    emptyEl: txEmpty,
+    resultEl: txRes,
+    errEl: txErr,
+    btn: txBtn,
+    input: txInput,
+    skeletonHtml: SK.txDecoder(),
+  });
 
   try {
     // Fetch TX info + receipt + TronScan enrichment in parallel
@@ -738,8 +787,13 @@ async function txDecode() {
     ]);
 
     if (!txData || !txData.txID) {
-      txRes.innerHTML = ''; setError(txErr, t('Transaction not found. Check the hash and try again.'));
-      spinBtn(txBtn, false);
+      failScanUI({
+        resultEl: txRes,
+        errEl: txErr,
+        msg: t('Transaction not found. Check the hash and try again.'),
+        btn: txBtn,
+        input: txInput,
+      });
       return;
     }
 
@@ -1134,7 +1188,7 @@ async function txDecode() {
     }
 
     const signalsHtml = riskAlerts.length
-      ? txBlock('Risk signals', `<div class="tx-signals aml-block-body--flush">${riskAlerts.map(txSignalRow).join('')}</div>`, `${riskAlerts.length} total`)
+      ? txBlock(t('Risk signals'), `<div class="tx-signals aml-block-body--flush">${riskAlerts.map(txSignalRow).join('')}</div>`, { key: '{count} total', vars: { count: riskAlerts.length } })
       : '';
 
     const whatRows = details.map((d, i) =>
@@ -1145,23 +1199,23 @@ async function txDecode() {
     if (summaryTitleHtml) whatSummaryParts.push(`<div class="tx-summary-title">${summaryTitleHtml}</div>`);
     if (summaryDesc) whatSummaryParts.push(`<div class="tx-summary-desc">${esc(summaryDesc)}</div>`);
 
-    const whatHtml = txBlock('What happened', `
+    const whatHtml = txBlock(t('What happened'), `
       ${whatSummaryParts.length ? `<div class="tx-summary">${whatSummaryParts.join('')}</div>` : ''}
       ${whatRows ? `<div class="aml-kv-list aml-block-body--flush">${whatRows}</div>` : ''}
     `);
 
     const chainRows = [
       txKvRow(tt('block'), `<span class="mono">${esc(String(blockNum))}</span>`),
-      txKvRow('Time', `<span class="mono">${timestamp ? esc(new Date(timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })) : '—'}</span>`),
+      txKvRow(t('Time'), `<span class="mono">${timestamp ? esc(new Date(timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })) : '—'}</span>`),
       txKvRow(tt('fee'), `<span class="mono is-blue">${fee} TRX</span>`),
       energyUsed ? txKvRow(`${tt('energy')} · ${esc(t('used'))}`, `<span class="mono is-amber">${fmtNum(energyUsed)}</span>`) : '',
       netUsed ? txKvRow(`${tt('bandwidth')} · ${esc(t('used'))}`, `<span class="mono">${fmtNum(netUsed)}</span>`) : '',
       txKvRow(tt('smartContract'), `<span class="mono">${esc(cType)}</span>`, true),
     ].filter(Boolean).join('');
 
-    const chainHtml = txPanel('On-chain details', chainRows);
+    const chainHtml = txPanel(t('On-chain details'), chainRows);
 
-    const rawHtml = (cType === 'TriggerSmartContract' && cVal.data) ? txBlock('Raw call data', `
+    const rawHtml = (cType === 'TriggerSmartContract' && cVal.data) ? txBlock(t('Raw call data'), `
       <div class="tx-raw-data">
         <span class="tx-raw-sel">${esc(cVal.data.slice(0, 8))}</span>${esc(cVal.data.slice(8))}
         <div class="tx-raw-note">${t('Highlighted = 4-byte function {selector} · remainder = {abi}-encoded parameters', { selector: tt('selector'), abi: tt('abi') })}</div>
@@ -1172,8 +1226,8 @@ async function txDecode() {
 
     txRes.innerHTML = `
       <div class="tx-scan">
-        ${txHeadCard(headTitleHtml, hash, headTags)}
-        <div class="an-stat-grid an-stat-grid--4 tx-hero-grid">${heroHtml}</div>
+        ${txHeadCard(headTitleHtml, hash, headTags, txFromCache)}
+        <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">${heroHtml}</div>
         <div class="tx-assessment">${assessmentHtml}</div>
         ${transfersHtml}
         ${signalsHtml}
@@ -1185,6 +1239,8 @@ async function txDecode() {
 
     bindTxActions(hash);
 
+    writeTxSessionCache({ hash, html: txRes.innerHTML });
+
 
     txRes.querySelectorAll('.tx-scan-contract-btn, .wallet-contract-scan-btn').forEach(btn => {
       btn.addEventListener('click', e => {
@@ -1194,8 +1250,15 @@ async function txDecode() {
     });
 
   } catch (e) {
-    txRes.innerHTML = ''; setError(txErr, userFriendlyFetchError(e));
+    failScanUI({
+      resultEl: txRes,
+      errEl: txErr,
+      msg: userFriendlyFetchError(e),
+      btn: txBtn,
+      input: txInput,
+    });
+    return;
   }
 
-  spinBtn(txBtn, false);
+  endScanUI({ btn: txBtn, input: txInput });
 }

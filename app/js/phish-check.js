@@ -19,8 +19,31 @@ const phishErr   = document.getElementById('phish-err');
 const phishRes   = document.getElementById('phish-result');
 const phishEmpty = document.getElementById('phish-empty');
 
+let phishLastUrl = '';
+let phishFromCache = false;
+
+const PHISH_CACHE_TTL = 12 * 60 * 1000;
+
+function readPhishSessionCache(url) {
+  return readSessionCache('phish', url, {
+    ttl: PHISH_CACHE_TTL,
+    validate: (p) => p.url === url && (p.payload || p.html),
+    allowHtml: true,
+  });
+}
+
+function writePhishSessionCache(snapshot) {
+  if (!snapshot?.url) return;
+  const { html, ...rest } = snapshot;
+  writeSessionCache('phish', snapshot.url, rest);
+}
+
+function clearPhishSessionCache(url) {
+  clearSessionCache('phish', url);
+}
+
 phishInput.addEventListener('keydown', e => { if (e.key === 'Enter') phishCheck(); });
-phishBtn.addEventListener('click', phishCheck);
+phishBtn.addEventListener('click', () => phishCheck());
 
 (function () {
   const u = new URLSearchParams(location.search).get('url');
@@ -283,15 +306,8 @@ function maxRisk(flags) {
 
 function phIcon(d, size) { return icSVG(d, size || 13); }
 
-function phishActionBtn({ id, label, icon, href, variant }) {
-  const cls = `wallet-action-btn${variant ? ` wallet-action-btn--${variant}` : ''}`;
-  const inner = `${icSVG(icon, 14)}<span>${esc(t(label))}</span>`;
-  if (href) return `<a class="${cls}" id="${id}" href="${esc(href)}" target="_blank" rel="noopener">${inner}</a>`;
-  return `<button type="button" class="${cls}" id="${id}">${inner}</button>`;
-}
-
 function phishBlock(titleHtml, bodyHtml, meta = '') {
-  const metaHtml = meta ? `<span class="aml-block-meta">${t(meta)}</span>` : '';
+  const metaHtml = scanBlockMeta(meta);
   const title = /<[^>]+>/.test(titleHtml) ? titleHtml : esc(t(titleHtml));
   return `<div class="aml-block">
     <div class="aml-block-head">
@@ -319,20 +335,21 @@ function phishVerdictClass(cls) {
   return 'is-green';
 }
 
-function phishHeadCard(url, hostname, tagsHtml) {
-  return `<div class="aml-head-card phish-head-card">
-    <div class="wallet-head-top">
-      <div class="wallet-head-addr phish-head-url">${esc(url)}</div>
-      <div class="wallet-head-actions">
-        ${phishActionBtn({ id: 'phish-copy-url-btn', label: 'Copy', icon: IC.copy })}
-        ${phishActionBtn({ id: 'phish-open-url-btn', label: 'Open', icon: IC.external, href: url, variant: 'ext' })}
-      </div>
-    </div>
-    ${tagsHtml ? `<div class="wallet-head-tags">${tagsHtml}</div>` : ''}
-  </div>`;
+function phishHeadCard(url, hostname, tagsHtml, fromCache = false) {
+  const cacheTag = fromCache ? walletTag(t('session cache'), 'name') : '';
+  return scanHeadCard({
+    leadHtml: `<div class="wallet-head-addr phish-head-url">${esc(url)}</div>`,
+    actionsHtml: `
+      ${scanActionBtn({ id: 'phish-refresh-btn', label: 'Refresh scan', icon: IC.refresh })}
+      ${scanActionBtn({ id: 'phish-copy-url-btn', label: 'Copy', icon: IC.copy })}
+      ${scanActionBtn({ id: 'phish-open-url-btn', label: 'Open', icon: IC.external, href: url, variant: 'ext' })}
+    `,
+    tagsHtml: `${tagsHtml || ''}${cacheTag}`,
+  });
 }
 
 function bindPhishActions(url) {
+  document.getElementById('phish-refresh-btn')?.addEventListener('click', () => phishCheck({ force: true }));
   document.getElementById('phish-copy-url-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(url).then(() => {
       const btn = document.getElementById('phish-copy-url-btn');
@@ -363,7 +380,7 @@ function phishFlagRows(flags) {
   return `<div class="phish-flags">${flags.map(f => {
     const tier = f.risk === 'high' ? 'is-high' : f.risk === 'med' ? 'is-med' : 'is-low';
     const flagBadge = f.risk === 'high' ? badge('b-red', t('High')) : f.risk === 'med' ? badge('b-amber', t('Medium')) : badge('b-ghost', t('Low'));
-    return `<div class="phish-flag ${tier}">
+    return `<div class="phish-flag risk-row ${tier}">
       <div class="phish-flag-body">
         <div class="phish-flag-reason">${esc(t(f.reason, f.reasonVars))}</div>
       </div>
@@ -384,9 +401,12 @@ function mmStatusBadge(mmStatus) {
 function overallVerdict(vtResult, hFlags) {
   const vtHit = vtResult.status === 'phishing';
   const vtSus = vtResult.status === 'suspicious';
+  const vtErr = vtResult.status === 'error';
   const hRisk = maxRisk(hFlags);
 
   const big = (d) => icSVG(d, 22);
+  if (vtErr && hRisk === 'high') return { cls: 'red',   icon: big('M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01'), label: 'High-risk indicators' };
+  if (vtErr)             return { cls: 'amber', icon: big('M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01'), label: 'Scan incomplete — engine error' };
   if (vtHit)             return { cls: 'red',   icon: big('M22 12c0 5.523-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2s10 4.477 10 10zM15 9l-6 6m0-6l6 6'), label: 'Confirmed phishing' };
   if (vtSus && hRisk === 'high') return { cls: 'red',   icon: big('M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zM12 9v4M12 17h.01'), label: 'High-risk — multiple sources flagged' };
   if (vtSus || hRisk === 'high') return { cls: 'red',   icon: big('M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01'), label: 'High-risk indicators' };
@@ -403,6 +423,84 @@ function vtStatusBadge(status) {
     case 'error':      return `<span class="badge b-amber">${phIcon('M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01')} ${t('Error')}</span>`;
     default:           return `<span class="badge b-ghost">? ${esc(status)}</span>`;
   }
+}
+
+function renderPhishScanFromPayload(parsed, vtResult, hFlags, mmStatus, fromCache = false) {
+  if (!parsed?.href) return false;
+  phishFromCache = fromCache;
+  phishLastUrl = parsed.href;
+  hideScanEmpty(phishEmpty, { instant: true });
+  setError(phishErr, '');
+
+  const verdict = overallVerdict(vtResult, hFlags);
+  if (vtResult.status === 'error' && !hFlags.length) {
+    setError(phishErr, t('VirusTotal scan failed. Results may be incomplete.'));
+  }
+  const vCls = phishVerdictClass(verdict.cls);
+  const stats = vtResult.stats || {};
+  const mal = stats.malicious || 0;
+  const sus = stats.suspicious || 0;
+  const hrm = stats.harmless || 0;
+  const total = vtResult.total || 0;
+  const heurCount = hFlags.filter(f => f.source !== 'metamask').length;
+  const vtScanLink = `https://www.virustotal.com/gui/url/${btoa(parsed.href).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_')}`;
+
+  const headTags = [
+    vtStatusBadge(vtResult.status),
+    verdict.cls === 'red' ? badge('b-red', t('High risk')) :
+    verdict.cls === 'amber' ? badge('b-amber', t('Review')) : badge('b-green', t('Clean')),
+  ].join('');
+
+  const heroHtml = `
+    ${phishHeroStat('Verdict', `<span class="phish-verdict-inline">${verdict.icon}<span>${esc(t(verdict.label))}</span></span>`, vtResult.detail ? esc(vtResult.detail).slice(0, 80) : '', vCls)}
+    ${phishHeroStat('Malicious', String(mal), total ? t('{total} engines', { total }) : t('scan engines'), mal > 0 ? 'is-red' : 'is-neutral')}
+    ${phishHeroStat('Suspicious', String(sus), hrm ? t('{count} clean', { count: hrm }) : '', sus > 0 ? 'is-amber' : 'is-neutral')}
+    ${phishHeroStat('Pattern flags', String(hFlags.length), heurCount ? t('{count} heuristic', { count: heurCount }) : t('none detected'), hFlags.length ? 'is-amber' : 'is-green')}`;
+
+  let assessmentHtml;
+  if (verdict.cls === 'red') {
+    assessmentHtml = amlAlertInline('red', t('High risk — do not connect a wallet or enter credentials on this site.'));
+  } else if (vtResult.status === 'error') {
+    assessmentHtml = amlAlertInline('amber', t('VirusTotal scan failed. Heuristic checks only — verify manually.'));
+  } else if (verdict.cls === 'amber') {
+    assessmentHtml = amlAlertInline('amber', t('Review recommended — suspicious patterns detected. Verify the domain before interacting.'));
+  } else {
+    assessmentHtml = amlAlertInline('green', t('No threats detected — no major flags from scan engines or pattern checks.'));
+  }
+
+  const sourcesHtml = phishPanel(t('Sources checked'), `
+    ${phishKvRow(tt('scanEngines'), vtStatusBadge(vtResult.status))}
+    ${phishKvRow(tt('communityBlocklist'), mmStatusBadge(mmStatus))}
+    ${phishKvRow(tt('heuristics'), `<span class="badge ${heurCount ? 'b-amber' : 'b-green'}">${t(heurCount === 1 ? '{count} flag' : '{count} flags', { count: heurCount })}</span>`, true)}
+  `);
+
+  const domainHtml = phishPanel(t('Domain info'), `
+    ${phishKvRow(t('Domain'), `<span class="mono">${esc(parsed.hostname)}</span>`)}
+    ${phishKvRow(t('Protocol'), parsed.href.startsWith('https') ? '<span class="is-green">HTTPS</span>' : '<span class="is-red">HTTP</span>')}
+    ${phishKvRow(t('TLD'), `.${esc(getTld(parsed.hostname))}${SUSPICIOUS_TLDS.has(getTld(parsed.hostname)) ? ` <span class="badge b-amber">${t('risky')}</span>` : ''}`)}
+    ${phishKvRow(t('Subdomains'), (() => { const c = parsed.full.split('.').length - 2; return c === 0 ? t('None') : t(c === 1 ? '{count} level' : '{count} levels', { count: c }); })())}
+    ${phishKvRow(t('Domain length'), t('{length} chars', { length: parsed.hostname.length }))}
+    ${phishKvRow(t('Full report'), `<a class="a-link a-link-inline" href="${esc(vtScanLink)}" target="_blank" rel="noopener"><span>${t('View scan report')}</span>${icSVG(IC.link, 9)}</a>`, true)}
+  `);
+
+  phishRes.innerHTML = `
+    <div class="phish-scan">
+      ${phishHeadCard(parsed.href, parsed.hostname, headTags, fromCache)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">${heroHtml}</div>
+      <div class="phish-assessment">${assessmentHtml}</div>
+      <div class="aml-grid-2">
+        ${phishBlock(t('Pattern flags'), phishFlagRows(hFlags), { key: '{count} total', vars: { count: hFlags.length } })}
+        ${sourcesHtml}
+      </div>
+      ${domainHtml}
+      ${verdict.cls !== 'green' ? amlAlertInline('red', `<strong>${t('Safety reminder:')}</strong> ${t('Never enter your seed phrase, private key, or approve wallet connections on unfamiliar sites.')}`) : ''}
+      <p class="aml-disclaimer">${t('Automated URL screening — always verify official domains manually before signing transactions.')}</p>
+    </div>`;
+
+  bindPhishActions(parsed.href);
+  if (typeof syncModuleNavState === 'function') syncModuleNavState('scan-url');
+  if (window.lucide) lucide.createIcons();
+  return true;
 }
 
 // -- VT stats bar (legacy inline helper removed; hero grid used instead) --
@@ -425,36 +523,65 @@ function parseDomain(raw) {
   } catch(_) { return null; }
 }
 
-async function phishCheck() {
+async function phishCheck(opts = {}) {
+  const force = opts.force === true;
   const raw = phishInput.value.trim();
   setError(phishErr, '');
 
-  if (!raw) { flashInput(phishInput); showToast('Enter a URL'); return; }
+  if (!raw) { flashInput(phishInput); showToast(t('Enter a URL')); return; }
 
   if (!window.tronsecVtConfigured()) {
-    setError(phishErr, 'Phishing scan requires TRONSEC_PROXY.base (Cloudflare Worker with VIRUSTOTAL_API_KEY).');
-    showToast('Configure Cloudflare Worker proxy — see workers/tronsec-api-proxy/README.md');
+    setError(phishErr, t('Phishing scan requires TRONSEC_PROXY.base (Cloudflare Worker with VIRUSTOTAL_API_KEY).'));
+    showToast(t('Configure Cloudflare Worker proxy — see workers/tronsec-api-proxy/README.md'));
     return;
   }
 
   const parsed = parseDomain(raw);
   if (!parsed) {
     flashInput(phishInput);
-    showToast('Enter a valid website URL (e.g. https://example.com).');
+    showToast(t('Enter a valid website URL (e.g. https://example.com).'));
     return;
   }
 
+  phishLastUrl = parsed.href;
+
+  if (!force) {
+    const cached = readPhishSessionCache(parsed.href);
+    if (cached?.payload) {
+      const p = cached.payload;
+      if (renderPhishScanFromPayload(p.parsed, p.vtResult, p.hFlags, p.mmStatus, true)) {
+        showToast(t('Loaded from session cache'));
+        return;
+      }
+    }
+    if (cached?.html) {
+      phishFromCache = true;
+      hideScanEmpty(phishEmpty, { instant: true });
+      phishRes.innerHTML = cached.html;
+      bindPhishActions(parsed.href);
+      showToast(t('Loaded from session cache'));
+      return;
+    }
+  } else {
+    clearPhishSessionCache(parsed.href);
+  }
+
+  phishFromCache = false;
+  lockScanInput(phishInput, true);
+  hideScanEmpty(phishEmpty);
+  spinBtn(phishBtn, true);
+  if (phishBtn) phishBtn.setAttribute('aria-busy', 'true');
+
   requireCaptcha(async () => {
-    phishEmpty.style.display = 'none';
+    setError(phishErr, '');
     phishRes.innerHTML = SK.phishCheck();
-    spinBtn(phishBtn, true);
 
     const steps = [
-      'Loading blocklists?',
-      'Waiting for scan engines?',
-      'Engines scanning (this takes ~10s)?',
-      'Still scanning?',
-      'Almost done?',
+      t('Loading blocklists…'),
+      t('Waiting for scan engines…'),
+      t('Engines scanning (this takes ~10s)…'),
+      t('Still scanning…'),
+      t('Almost done…'),
     ];
     let stepIdx = 0;
 
@@ -482,67 +609,16 @@ async function phishCheck() {
       return 'clean';
     })();
 
-    const verdict = overallVerdict(vtResult, hFlags);
-    const vCls = phishVerdictClass(verdict.cls);
-    const stats = vtResult.stats || {};
-    const mal = stats.malicious || 0;
-    const sus = stats.suspicious || 0;
-    const hrm = stats.harmless || 0;
-    const total = vtResult.total || 0;
-    const heurCount = hFlags.filter(f => f.source !== 'metamask').length;
-    const vtScanLink = `https://www.virustotal.com/gui/url/${btoa(parsed.href).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_')}`;
-
-    const headTags = [
-      vtStatusBadge(vtResult.status),
-      verdict.cls === 'red' ? badge('b-red', t('High risk')) :
-      verdict.cls === 'amber' ? badge('b-amber', t('Review')) : badge('b-green', t('Clean')),
-    ].join('');
-
-    const heroHtml = `
-      ${phishHeroStat('Verdict', `<span class="phish-verdict-inline">${verdict.icon}<span>${esc(t(verdict.label))}</span></span>`, vtResult.detail ? esc(vtResult.detail).slice(0, 80) : '', vCls)}
-      ${phishHeroStat('Malicious', String(mal), total ? t('{total} engines', { total }) : t('scan engines'), mal > 0 ? 'is-red' : 'is-neutral')}
-      ${phishHeroStat('Suspicious', String(sus), hrm ? t('{count} clean', { count: hrm }) : '', sus > 0 ? 'is-amber' : 'is-neutral')}
-      ${phishHeroStat('Pattern flags', String(hFlags.length), heurCount ? t('{count} heuristic', { count: heurCount }) : t('none detected'), hFlags.length ? 'is-amber' : 'is-green')}`;
-
-    let assessmentHtml;
-    if (verdict.cls === 'red') {
-      assessmentHtml = amlAlertInline('red', t('High risk — do not connect a wallet or enter credentials on this site.'));
-    } else if (verdict.cls === 'amber') {
-      assessmentHtml = amlAlertInline('amber', t('Review recommended — suspicious patterns detected. Verify the domain before interacting.'));
-    } else {
-      assessmentHtml = amlAlertInline('green', t('No threats detected — no major flags from scan engines or pattern checks.'));
+    renderPhishScanFromPayload(parsed, vtResult, hFlags, mmStatus, false);
+    writePhishSessionCache({
+      url: parsed.href,
+      payload: { parsed, vtResult, hFlags, mmStatus },
+    });
+    endScanUI({ btn: phishBtn, input: phishInput });
+  }, () => {
+    endScanUI({ btn: phishBtn, input: phishInput });
+    if (!phishRes.innerHTML.trim() && !phishErr?.innerHTML?.trim()) {
+      showScanEmpty(phishEmpty);
     }
-
-    const sourcesHtml = phishPanel('Sources checked', `
-      ${phishKvRow(tt('scanEngines'), vtStatusBadge(vtResult.status))}
-      ${phishKvRow(tt('communityBlocklist'), mmStatusBadge(mmStatus))}
-      ${phishKvRow(tt('heuristics'), `<span class="badge ${heurCount ? 'b-amber' : 'b-green'}">${t(heurCount === 1 ? '{count} flag' : '{count} flags', { count: heurCount })}</span>`, true)}
-    `);
-
-    const domainHtml = phishPanel('Domain info', `
-      ${phishKvRow('Domain', `<span class="mono">${esc(parsed.hostname)}</span>`)}
-      ${phishKvRow('Protocol', parsed.href.startsWith('https') ? '<span class="is-green">HTTPS</span>' : '<span class="is-red">HTTP</span>')}
-      ${phishKvRow('TLD', `.${esc(getTld(parsed.hostname))}${SUSPICIOUS_TLDS.has(getTld(parsed.hostname)) ? ` <span class="badge b-amber">${t('risky')}</span>` : ''}`)}
-      ${phishKvRow('Subdomains', (() => { const c = parsed.full.split('.').length - 2; return c === 0 ? t('None') : t(c === 1 ? '{count} level' : '{count} levels', { count: c }); })())}
-      ${phishKvRow('Domain length', t('{length} chars', { length: parsed.hostname.length }))}
-      ${phishKvRow('Full report', `<a class="a-link a-link-inline" href="${esc(vtScanLink)}" target="_blank" rel="noopener"><span>${t('View scan report')}</span>${icSVG(IC.link, 9)}</a>`, true)}
-    `);
-
-    phishRes.innerHTML = `
-      <div class="phish-scan">
-        ${phishHeadCard(parsed.href, parsed.hostname, headTags)}
-        <div class="an-stat-grid an-stat-grid--4 phish-hero-grid">${heroHtml}</div>
-        <div class="phish-assessment">${assessmentHtml}</div>
-        <div class="aml-grid-2">
-          ${phishBlock('Pattern flags', phishFlagRows(hFlags), `${hFlags.length} total`)}
-          ${sourcesHtml}
-        </div>
-        ${domainHtml}
-        ${verdict.cls !== 'green' ? amlAlertInline('red', `<strong>${t('Safety reminder:')}</strong> ${t('Never enter your seed phrase, private key, or approve wallet connections on unfamiliar sites.')}`) : ''}
-        <p class="aml-disclaimer">${t('Automated URL screening — always verify official domains manually before signing transactions.')}</p>
-      </div>`;
-
-    bindPhishActions(parsed.href);
-    spinBtn(phishBtn, false);
   });
 }

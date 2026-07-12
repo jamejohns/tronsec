@@ -28,10 +28,11 @@ window.tronsecShieldMarkSvg = function tronsecShieldMarkSvg(size, className) {
 
 const RISK_SHIELD_PATH = 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z';
 
+/** Align with ctrRiskClass / amlRiskClass / wallet risk labels (red ≥70, amber ≥20). */
 function riskShieldTier(score, flagged) {
   const risk = flagged ? Math.max(score, 70) : score;
-  if (risk >= 50) return 'high';
-  if (risk >= 25) return 'med';
+  if (risk >= 70) return 'high';
+  if (risk >= 20) return 'med';
   return 'low';
 }
 
@@ -113,6 +114,56 @@ function upstreamHeaders(kind) {
 // ==================================
 const isValidTron = a => /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test((a||'').trim());
 const sameTronAddr = (a, b) => !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
+
+function permKeyWeight(key) {
+  return Number(key?.weight) || 0;
+}
+
+function isExternalPermKey(address, selfAddr) {
+  return address && !sameTronAddr(address, selfAddr);
+}
+
+function externalCanActAlone(key, threshold) {
+  return permKeyWeight(key) >= (Number(threshold) || 1);
+}
+
+function classifyPermissionKeys(keys, selfAddr, threshold, signerMeta = {}) {
+  const external = (keys || []).filter(k => isExternalPermKey(k.address, selfAddr));
+  const soloExternal = external.filter(k => externalCanActAlone(k, threshold));
+  const contractExternal = external.filter(k => signerMeta[k.address]?.isContract);
+  const coSigners = external.filter(k =>
+    !signerMeta[k.address]?.isContract && !externalCanActAlone(k, threshold),
+  );
+  const riskyAddresses = new Set([
+    ...soloExternal.map(k => k.address),
+    ...contractExternal.map(k => k.address),
+  ]);
+  return { external, soloExternal, contractExternal, coSigners, riskyAddresses };
+}
+
+function summarizeWalletPermissionLayout(addr, owner, actives, witness) {
+  const activeList = Array.isArray(actives) ? actives : (actives ? [actives] : []);
+  const blocks = [owner, ...activeList, witness].filter(Boolean);
+  const riskyExternal = new Set();
+  const coSigners = new Set();
+  let multisigGroups = 0;
+  blocks.forEach(b => {
+    const threshold = b.threshold || 1;
+    const keys = b.keys || [];
+    if (keys.length > 1 || threshold > 1) multisigGroups++;
+    const cls = classifyPermissionKeys(keys, addr, threshold, {});
+    cls.riskyAddresses.forEach(a => riskyExternal.add(a));
+    cls.coSigners.forEach(k => coSigners.add(k.address));
+  });
+  return {
+    isMultisig: multisigGroups > 0,
+    multisigGroups,
+    hasRiskyExternal: riskyExternal.size > 0,
+    riskyExternalCount: riskyExternal.size,
+    coSignerCount: coSigners.size,
+  };
+}
+
 const isTronHexAddr = s => /^0?x?41[0-9a-f]{40}$/i.test(String(s || ''));
 const addrLookupKey = a => {
   const s = String(a || '').trim();
@@ -181,20 +232,115 @@ function openAmlScan(addr, { autoRun = true, force = false } = {}) {
   }, 0);
 }
 
+function openPermissionsScan(addr, { autoRun = true, force = false } = {}) {
+  if (!addr) return;
+  switchTab('permissions');
+  setTimeout(() => {
+    const input = document.getElementById('permissions-input');
+    if (input) input.value = addr;
+    if (autoRun && typeof permissionsScan === 'function') permissionsScan({ force });
+  }, 0);
+}
+
 const _contractProbeCache = new Map();
 
 async function probeTronContract(addr) {
   if (!addr || !isValidTron(addr)) return false;
   if (_contractProbeCache.has(addr)) return _contractProbeCache.get(addr);
+
+  let ok = false;
   try {
     const contractData = await gridPost('/wallet/getcontract', { value: addr, visible: true });
-    const ok = !!(contractData && !contractData.Error && (contractData.bytecode || contractData.abi));
-    _contractProbeCache.set(addr, ok);
-    return ok;
-  } catch (_) {
-    _contractProbeCache.set(addr, false);
-    return false;
+    const abiEntries = contractData?.abi?.entrys || contractData?.abi?.entries;
+    ok = !!(contractData && !contractData.Error && (contractData.bytecode || (abiEntries && abiEntries.length)));
+  } catch (_) {}
+
+  if (!ok) {
+    try {
+      const info = await gridPost('/wallet/getcontractinfo', { value: addr, visible: true });
+      ok = !!(info && !info.Error && (info.contract_address || info.name));
+    } catch (_) {}
   }
+
+  if (!ok) {
+    try {
+      const wrap = await scanGet('/contract', { contract: addr });
+      const meta = wrap?.data?.[0];
+      ok = !!(meta && (meta.bytecode || meta.contract_type != null || meta.verify_status != null));
+    } catch (_) {}
+  }
+
+  _contractProbeCache.set(addr, ok);
+  return ok;
+}
+
+async function fetchTronContractLabel(addr) {
+  try {
+    const wrap = await scanGet('/contract', { contract: addr });
+    const meta = wrap?.data?.[0] || {};
+    return meta.tag1 || meta.name || meta.project_name || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+async function renderContractScanRedirect(addr, opts = {}) {
+  const idPrefix = opts.idPrefix || 'contract-redirect';
+  const wrapperClass = opts.wrapperClass || 'aml-scan';
+  const hintText = opts.hintText || t('AML screening scores wallet addresses and their transaction patterns. For tokens and smart contracts, use Contract Scan to review bytecode, permissions, and upgrade risks.');
+  const contractLabel = await fetchTronContractLabel(addr);
+  const contractIcon = icSVG('M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M10 13h4 M10 17h7', 26);
+  const labelHtml = contractLabel
+    ? `<span class="contract-redirect-name">${esc(contractLabel)}</span>`
+    : '';
+
+  return `<div class="${wrapperClass}">
+    <div class="contract-redirect-card">
+      <div class="contract-redirect-glow" aria-hidden="true"></div>
+      <div class="contract-redirect-inner">
+        <div class="contract-redirect-meta">
+          ${walletTag(t('Smart contract'), 'info')}
+          ${labelHtml}
+        </div>
+        <div class="contract-redirect-body">
+          <div class="contract-redirect-icon">${contractIcon}</div>
+          <p class="contract-redirect-title">${esc(t('This is a contract, not a wallet'))}</p>
+          <p class="contract-redirect-hint">${esc(hintText)}</p>
+        </div>
+        <div class="contract-redirect-addr">
+          <span class="contract-redirect-addr-text">${esc(addr)}</span>
+        </div>
+        <div class="contract-redirect-actions">
+          <button type="button" class="contract-redirect-btn contract-redirect-btn--primary" id="${idPrefix}-contract-scan-btn" aria-label="${esc(t('Open in Contract Scan'))}">
+            ${icSVG(IC.external, 16)}<span>${esc(t('Open in Contract Scan'))}</span>
+          </button>
+          <button type="button" class="contract-redirect-btn contract-redirect-btn--ghost" id="${idPrefix}-copy-addr-btn" aria-label="${esc(t('Copy'))}">
+            ${icSVG(IC.copy, 16)}<span>${esc(t('Copy'))}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    ${opts.disclaimerHtml || ''}
+  </div>`;
+}
+
+function bindContractScanRedirect(addr, idPrefix = 'contract-redirect') {
+  document.getElementById(`${idPrefix}-contract-scan-btn`)?.addEventListener('click', e => {
+    e.preventDefault();
+    openContractScan(addr);
+  });
+  document.getElementById(`${idPrefix}-copy-addr-btn`)?.addEventListener('click', () => {
+    navigator.clipboard.writeText(addr).then(() => {
+      const btn = document.getElementById(`${idPrefix}-copy-addr-btn`);
+      if (!btn) return;
+      btn.classList.add('is-copied');
+      btn.innerHTML = `${icSVG(IC.check, 16)}<span>${t('Copied')}</span>`;
+      setTimeout(() => {
+        btn.classList.remove('is-copied');
+        btn.innerHTML = `${icSVG(IC.copy, 16)}<span>${t('Copy')}</span>`;
+      }, 2000);
+    });
+  });
 }
 
 async function openAddressScan(addr) {
@@ -463,15 +609,35 @@ function normalizeTronScanApprovalItem(item) {
 
 async function fetchTronScanApprovalList(addr) {
   const all = [];
-  let start = 0;
   const limit = 50;
-  for (let page = 0; page < 12; page++) {
-    const res = await scanGet('/account/approve/list', { address: addr, start, limit, type: 'token' }).catch(() => null);
-    const batch = res?.data || res?.approveList || res?.list || [];
-    if (!Array.isArray(batch) || !batch.length) break;
-    all.push(...batch);
-    if (batch.length < limit) break;
-    start += limit;
+  const maxPages = 12;
+  const pageBatch = GRID_PAGE_BATCH;
+
+  for (let batchStart = 0; batchStart < maxPages; batchStart += pageBatch) {
+    const pageNums = [];
+    for (let p = batchStart; p < Math.min(batchStart + pageBatch, maxPages); p++) pageNums.push(p);
+    const results = await Promise.all(
+      pageNums.map((page) => scanGet('/account/approve/list', {
+        address: addr,
+        start: page * limit,
+        limit,
+        type: 'token',
+      }).catch(() => null)),
+    );
+    let done = false;
+    for (const res of results) {
+      const batch = res?.data || res?.approveList || res?.list || [];
+      if (!Array.isArray(batch) || !batch.length) {
+        done = true;
+        break;
+      }
+      all.push(...batch);
+      if (batch.length < limit) {
+        done = true;
+        break;
+      }
+    }
+    if (done) break;
   }
   return all;
 }
@@ -488,10 +654,12 @@ async function resolveApprovalAddresses(entry) {
   return { tokenAddr, spender };
 }
 
-async function enrichApprovalsOnChain(owner, entries, concurrency = 6) {
+async function enrichApprovalsOnChain(owner, entries, concurrency = GRID_API_MAX_CONCURRENT) {
   const merged = new Map();
-  for (const entry of entries) {
-    const { tokenAddr, spender } = await resolveApprovalAddresses(entry);
+  const resolved = await Promise.all((entries || []).map((entry) => resolveApprovalAddresses(entry)));
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const { tokenAddr, spender } = resolved[i];
     if (!tokenAddr || !spender || !isValidTron(tokenAddr) || !isValidTron(spender)) continue;
     const key = `${tokenAddr}_${spender}`;
     if (!merged.has(key)) {
@@ -529,9 +697,12 @@ async function enrichApprovalsOnChain(owner, entries, concurrency = 6) {
 }
 
 async function mergeApprovalEntries(scanItems, txItems) {
+  const items = [...(scanItems || []), ...(txItems || [])];
+  const resolved = await Promise.all(items.map((item) => resolveApprovalAddresses(item)));
   const map = new Map();
-  for (const item of [...(scanItems || []), ...(txItems || [])]) {
-    const { tokenAddr, spender } = await resolveApprovalAddresses(item);
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const { tokenAddr, spender } = resolved[i];
     if (!tokenAddr || !spender || !isValidTron(tokenAddr) || !isValidTron(spender)) continue;
     const key = `${tokenAddr}_${spender}`;
     if (!map.has(key)) map.set(key, { ...item, tokenAddr, spender });
@@ -583,43 +754,134 @@ function withProxyHeaders(headers) {
   return headers || {};
 }
 
-async function gridGet(path, params={}) {
-  const headers = withProxyHeaders(upstreamHeaders('grid'));
-  const res = await fetch(gridRequestUrl(path, params), {headers});
-  if (!res.ok) {
-    let bodyText = '';
-    try { bodyText = await res.text(); } catch(_) { bodyText = ''; }
-    let json = null;
-    try { json = JSON.parse(bodyText); } catch(_) { json = null; }
-    const msg = json && (json.error || json.message) ? (json.error || json.message) : (bodyText || res.statusText || '');
-    const err = new Error(`TronGrid ${res.status}${msg?': '+msg:''}`);
-    err.status = res.status;
-    err.body = json || bodyText;
-    throw err;
+/** Match TronGrid / TronScan key pool size on the API proxy worker. */
+const API_KEY_POOL_SIZE = 9;
+const SCAN_API_MAX_CONCURRENT = API_KEY_POOL_SIZE;
+const SCAN_API_START_INTERVAL_MS = 20;
+const GRID_API_MAX_CONCURRENT = API_KEY_POOL_SIZE;
+const GRID_API_START_INTERVAL_MS = 20;
+const GRID_PAGE_BATCH = API_KEY_POOL_SIZE;
+
+// -- TronGrid API rate limiter + in-memory response cache --
+const _gridQueue = [];
+let _gridActive = 0;
+let _gridPumpTimer = null;
+const _gridApiCache = new Map();
+const _gridInflightByKey = new Map();
+const GRID_API_CACHE_DEFAULT_TTL = 8 * 60 * 1000;
+
+function gridApiCacheTtl(cacheKey) {
+  if (cacheKey.startsWith('POST:')) {
+    if (cacheKey.includes('/wallet/getcontract')) return 10 * 60 * 1000;
+    if (cacheKey.includes('/wallet/gettransactionbyid')) return 15 * 60 * 1000;
+    if (cacheKey.includes('/wallet/gettransactioninfobyid')) return 15 * 60 * 1000;
+    return 0;
   }
-  return res.json();
+  if (cacheKey.includes('/transactions')) return GRID_API_CACHE_DEFAULT_TTL;
+  if (cacheKey.includes('/v1/accounts/')) return 5 * 60 * 1000;
+  return GRID_API_CACHE_DEFAULT_TTL;
 }
 
-async function gridPost(path, body) {
-  const headers = withProxyHeaders({'Content-Type':'application/json', ...upstreamHeaders('grid')});
-  const res = await fetch(gridRequestUrl(path), {method:'POST', headers, body:JSON.stringify(body)});
-  if (!res.ok) {
-    let bodyText = '';
-    try { bodyText = await res.text(); } catch(_) { bodyText = ''; }
-    let json = null;
-    try { json = JSON.parse(bodyText); } catch(_) { json = null; }
-    const msg = json && (json.error || json.message) ? (json.error || json.message) : (bodyText || res.statusText || '');
-    const err = new Error(`TronGrid ${res.status}${msg?': '+msg:''}`);
-    err.status = res.status;
-    err.body = json || bodyText;
-    throw err;
+function clearGridApiCache() {
+  _gridApiCache.clear();
+  _gridInflightByKey.clear();
+}
+
+function _scheduleGridPump(delay = 0) {
+  if (_gridPumpTimer != null) return;
+  _gridPumpTimer = setTimeout(() => {
+    _gridPumpTimer = null;
+    _gridNext();
+  }, delay);
+}
+
+async function _gridNext() {
+  if (_gridActive >= GRID_API_MAX_CONCURRENT || _gridQueue.length === 0) return;
+  _gridActive++;
+  const { url, init, resolve, reject } = _gridQueue.shift();
+  if (_gridQueue.length && _gridActive < GRID_API_MAX_CONCURRENT) {
+    _scheduleGridPump(GRID_API_START_INTERVAL_MS);
   }
-  return res.json();
+  try {
+    const res = await fetch(url, init);
+    if (!res.ok) {
+      let bodyText = '';
+      try { bodyText = await res.text(); } catch (_) { bodyText = ''; }
+      let json = null;
+      try { json = JSON.parse(bodyText); } catch (_) { json = null; }
+      const msg = json && (json.error || json.message) ? (json.error || json.message) : (bodyText || res.statusText || '');
+      const err = new Error(`TronGrid ${res.status}${msg ? ': ' + msg : ''}`);
+      err.status = res.status;
+      err.body = json || bodyText;
+      reject(err);
+    } else {
+      resolve(await res.json());
+    }
+  } catch (e) { reject(e); }
+  finally {
+    _gridActive--;
+    _scheduleGridPump(_gridQueue.length ? GRID_API_START_INTERVAL_MS : 0);
+  }
+}
+
+function _enqueueGrid(url, init) {
+  return new Promise((resolve, reject) => {
+    _gridQueue.push({ url, init, resolve, reject });
+    _scheduleGridPump();
+  });
+}
+
+async function gridGet(path, params = {}, opts = {}) {
+  const url = gridRequestUrl(path, params);
+  const headers = withProxyHeaders(upstreamHeaders('grid'));
+  const cacheKey = `GET:${url}`;
+  if (!opts.bypassCache) {
+    const hit = _gridApiCache.get(cacheKey);
+    if (hit && Date.now() - hit.ts < hit.ttl) return hit.data;
+    const pending = _gridInflightByKey.get(cacheKey);
+    if (pending) return pending;
+  }
+  const flight = _enqueueGrid(url, { method: 'GET', headers }).then((data) => {
+    if (!opts.bypassCache) {
+      const ttl = gridApiCacheTtl(cacheKey);
+      if (ttl > 0) _gridApiCache.set(cacheKey, { data, ts: Date.now(), ttl });
+    }
+    return data;
+  }).finally(() => {
+    _gridInflightByKey.delete(cacheKey);
+  });
+  if (!opts.bypassCache) _gridInflightByKey.set(cacheKey, flight);
+  return flight;
+}
+
+async function gridPost(path, body, opts = {}) {
+  const url = gridRequestUrl(path);
+  const headers = withProxyHeaders({ 'Content-Type': 'application/json', ...upstreamHeaders('grid') });
+  const bodyStr = JSON.stringify(body);
+  const cacheKey = `POST:${url}:${bodyStr}`;
+  if (!opts.bypassCache) {
+    const hit = _gridApiCache.get(cacheKey);
+    if (hit && Date.now() - hit.ts < hit.ttl) return hit.data;
+    const pending = _gridInflightByKey.get(cacheKey);
+    if (pending) return pending;
+  }
+  const flight = _enqueueGrid(url, { method: 'POST', headers, body: bodyStr }).then((data) => {
+    if (!opts.bypassCache) {
+      const ttl = gridApiCacheTtl(cacheKey);
+      if (ttl > 0) _gridApiCache.set(cacheKey, { data, ts: Date.now(), ttl });
+    }
+    return data;
+  }).finally(() => {
+    _gridInflightByKey.delete(cacheKey);
+  });
+  if (!opts.bypassCache) _gridInflightByKey.set(cacheKey, flight);
+  return flight;
 }
 
 // -- Tronscan API rate limiter + in-memory response cache --
 const _scanQueue = [];
-let _scanBusy = false;
+let _scanActive = 0;
+let _scanPumpTimer = null;
 const _scanApiCache = new Map();
 const _scanInflightByKey = new Map();
 const SCAN_API_CACHE_DEFAULT_TTL = 8 * 60 * 1000;
@@ -638,10 +900,26 @@ function clearScanApiCache() {
   _scanInflightByKey.clear();
 }
 
+function clearApiCaches() {
+  clearGridApiCache();
+  clearScanApiCache();
+}
+
+function _scheduleScanPump(delay = 0) {
+  if (_scanPumpTimer != null) return;
+  _scanPumpTimer = setTimeout(() => {
+    _scanPumpTimer = null;
+    _scanNext();
+  }, delay);
+}
+
 async function _scanNext() {
-  if (_scanBusy || _scanQueue.length === 0) return;
-  _scanBusy = true;
+  if (_scanActive >= SCAN_API_MAX_CONCURRENT || _scanQueue.length === 0) return;
+  _scanActive++;
   const { url, headers, resolve, reject } = _scanQueue.shift();
+  if (_scanQueue.length && _scanActive < SCAN_API_MAX_CONCURRENT) {
+    _scheduleScanPump(SCAN_API_START_INTERVAL_MS);
+  }
   try {
     const res = await fetch(url.toString(), {headers});
     if (!res.ok) {
@@ -659,14 +937,14 @@ async function _scanNext() {
     }
   } catch(e) { reject(e); }
   finally {
-    _scanBusy = false;
-    setTimeout(_scanNext, 250);
+    _scanActive--;
+    _scheduleScanPump(_scanQueue.length ? SCAN_API_START_INTERVAL_MS : 0);
   }
 }
 function _enqueueScan(url, headers) {
   return new Promise((resolve, reject) => {
     _scanQueue.push({ url, headers, resolve, reject });
-    _scanNext();
+    _scheduleScanPump();
   });
 }
 
@@ -753,13 +1031,13 @@ async function fetchTrc20FromTronScan(address) {
     ['/transfer', {address, start:0, limit:200}],
     ['/token_transfers', {address, start:0, limit:200}],
   ];
-  for (const [path, params] of endpoints) {
-    try {
-      const res = await scanGet(path, params);
-      if (!res) continue;
-      const arr = res.token_transfers || res.data || res.transfers || res.transactions || res.txs || (Array.isArray(res) ? res : null) || res.items;
-      if (arr && arr.length) return arr;
-    } catch(_) {}
+  const results = await Promise.all(
+    endpoints.map(([path, params]) => scanGet(path, params).catch(() => null)),
+  );
+  for (const res of results) {
+    if (!res) continue;
+    const arr = res.token_transfers || res.data || res.transfers || res.transactions || res.txs || (Array.isArray(res) ? res : null) || res.items;
+    if (arr && arr.length) return arr;
   }
   return [];
 }
@@ -816,11 +1094,12 @@ async function fetchTronScanNativeTransfers(address, limit = 200) {
     ['/transfer', { address, start: 0, limit }],
     ['/transactions', { address, start: 0, limit }],
   ];
-  for (const [path, params] of endpoints) {
-    try {
-      const rows = scanTransferRows(await scanGet(path, params));
-      if (rows.length) return rows.map(normalizeScanTransferToGridTx);
-    } catch (_) {}
+  const results = await Promise.all(
+    endpoints.map(([path, params]) => scanGet(path, params).catch(() => null)),
+  );
+  for (const res of results) {
+    const rows = scanTransferRows(res);
+    if (rows.length) return rows.map(normalizeScanTransferToGridTx);
   }
   return [];
 }
@@ -838,19 +1117,70 @@ function dedupeTxList(txs) {
   return out;
 }
 
-async function fetchAmlTxHistory(address) {
-  const [page1, page2, trc20Grid] = await Promise.all([
-    gridGet(`/v1/accounts/${address}/transactions`, { limit: 200, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
-    gridGet(`/v1/accounts/${address}/transactions`, { limit: 200, order_by: 'block_timestamp,desc', start: 200 }).catch(() => ({ data: [] })),
-    gridGet(`/v1/accounts/${address}/transactions/trc20`, { limit: 200, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
-  ]);
-  let txs = (page1.data || []).concat(page2.data || []);
-  const gridTrc20 = (trc20Grid.data || [])
+const AML_TX_SAMPLE_LIMIT = 1000;
+const AML_GRID_PAGE_SIZE = 200;
+
+function sortAmlTxHistoryDesc(txs) {
+  return txs.sort((a, b) => (b.block_timestamp || 0) - (a.block_timestamp || 0));
+}
+
+function trimAmlTxHistory(txs) {
+  return sortAmlTxHistoryDesc(txs).slice(0, AML_TX_SAMPLE_LIMIT);
+}
+
+function normalizeAmlGridTrc20Rows(rows) {
+  return (rows || [])
     .filter(t => (t.type || t.event_type || 'Transfer') !== 'Approval')
     .map(normalizeTrc20ToAmlTx)
     .filter(t => t._trc20From || t._trc20To);
-  txs = dedupeTxList(txs.concat(gridTrc20));
-  if (txs.length >= 50) return txs.slice(0, 400);
+}
+
+async function fetchAmlGridTxPages(address, kind) {
+  const path = kind === 'trc20'
+    ? `/v1/accounts/${address}/transactions/trc20`
+    : `/v1/accounts/${address}/transactions`;
+  const maxPages = Math.ceil(AML_TX_SAMPLE_LIMIT / AML_GRID_PAGE_SIZE);
+  const pageBatch = GRID_PAGE_BATCH;
+  const all = [];
+
+  for (let batchStart = 0; batchStart < maxPages; batchStart += pageBatch) {
+    const pageNums = [];
+    for (let p = batchStart; p < Math.min(batchStart + pageBatch, maxPages); p++) pageNums.push(p);
+    const results = await Promise.all(pageNums.map((page) => gridGet(path, {
+      limit: AML_GRID_PAGE_SIZE,
+      order_by: 'block_timestamp,desc',
+      start: page * AML_GRID_PAGE_SIZE,
+    }).catch(() => ({ data: [] }))));
+
+    let done = false;
+    for (const res of results) {
+      const batch = res?.data || [];
+      if (!batch.length) {
+        done = true;
+        break;
+      }
+      all.push(...batch);
+      if (batch.length < AML_GRID_PAGE_SIZE || all.length >= AML_TX_SAMPLE_LIMIT) {
+        done = true;
+        break;
+      }
+    }
+    if (done) break;
+  }
+
+  return all;
+}
+
+async function fetchAmlTxHistory(address) {
+  const nativeRaw = await fetchAmlGridTxPages(address, 'native');
+  let txs = dedupeTxList(nativeRaw);
+
+  if (txs.length < AML_TX_SAMPLE_LIMIT) {
+    const trc20Raw = await fetchAmlGridTxPages(address, 'trc20');
+    txs = dedupeTxList(txs.concat(normalizeAmlGridTrc20Rows(trc20Raw)));
+  }
+
+  if (txs.length >= 50) return trimAmlTxHistory(txs);
 
   const [nativeScan, trc20Raw] = await Promise.all([
     fetchTronScanNativeTransfers(address, 200).catch(() => []),
@@ -861,8 +1191,23 @@ async function fetchAmlTxHistory(address) {
     .map(normalizeScanTrc20TransferToGridTx)
     .filter(t => t._trc20From || t._trc20To);
   txs = dedupeTxList(txs.concat(nativeScan, trc20Scan));
-  txs.sort((a, b) => (b.block_timestamp || 0) - (a.block_timestamp || 0));
-  return txs.slice(0, 400);
+  return trimAmlTxHistory(txs);
+}
+
+function patchAmlModuleCopy() {
+  if (typeof t !== 'function' || typeof AML_TX_SAMPLE_LIMIT !== 'number') return;
+  const count = AML_TX_SAMPLE_LIMIT;
+  const leadKey = 'Behavioral risk screening on the latest {count} transactions — composite score, concentration analysis, counterparty graph, activity patterns, and public security flags for any address.';
+  const lead = document.querySelector('#tab-aml-check .module-desc-lead');
+  if (lead) {
+    lead.setAttribute('data-i18n', leadKey);
+    lead.textContent = t(leadKey, { count });
+  }
+  document.querySelectorAll('#tab-aml-check .module-desc-tag').forEach((tag) => {
+    if (tag.dataset.amlTxSample !== '1') return;
+    tag.dataset.amlTxSample = '1';
+    tag.textContent = t('{count} txs', { count });
+  });
 }
 
 
@@ -1169,7 +1514,7 @@ const SK = {
   analyticsGrid: (n = 3) => Array.from({ length: n }, () => SK.analyticsCell()).join(''),
 
   scanHeadCard: (actionCount = 3) => `
-    <div class="aml-head-card sk-wallet-block">
+    <div class="scan-head-card sk-wallet-block">
       <div class="wallet-head-top">
         ${sk('sk-line-md', '72%')}
         <div class="wallet-head-actions" style="display:flex;gap:6px">
@@ -1282,30 +1627,36 @@ const SK = {
     </div>`,
 
   walletCardSk: (rows = 6, headW = '38%') => `
-    <div class="card">
-      <div class="card-head">${sk('sk-line-xs', headW)}</div>
+    <div class="aml-block wallet-kv-block sk-wallet-block">
+      <div class="aml-block-head">${sk('sk-line-xs', headW)}</div>
+      <div class="aml-block-body aml-block-body--flush">
+        <div class="aml-kv-list">
       ${Array.from({ length: rows }, (_, i) => `
         <div class="kv-row sk-wallet-kv">
           ${sk('sk-line-xs', `${30 + (i % 2) * 6}%`)}
           ${sk('sk-line-xs', `${18 + (i % 3) * 5}%`)}
         </div>`).join('')}
+        </div>
+      </div>
     </div>`,
 
   wallet: () => `
     <div class="wallet-scan">
       ${SK.status('SCANNING WALLET')}
       ${skGap(14)}
-      <div class="wallet-head-card sk-wallet-block">
+      <div class="scan-head-card scan-head-card--featured sk-wallet-block">
         <div class="wallet-head-top">
           ${sk('sk-line-md', '62%')}
-          <div class="wallet-head-actions" style="display:flex;gap:6px">
-            ${sk('sk-line-xs', '58px')}${sk('sk-line-xs', '76px')}${sk('sk-line-xs', '82px')}
+          <div class="wallet-head-actions" style="display:flex;gap:6px;flex-wrap:wrap">
+            ${Array.from({ length: 6 }, () => sk('sk-line-xs', '68px')).join('')}
           </div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px">
           ${Array.from({ length: 4 }, () => sk('sk-line-xs', '72px')).join('')}
         </div>
       </div>
+      ${skGap(10)}
+      <div class="wallet-risk-grid an-stat-grid an-stat-grid--2">${SK.analyticsGrid(2)}</div>
       ${skGap(12)}
       <div class="wallet-hero-grid">
         <div class="wallet-portfolio-card sk-wallet-block">
@@ -1324,12 +1675,12 @@ const SK = {
       </div>
       ${skGap(12)}
       <div>
-        <div class="wallet-section-title">${sk('sk-line-xs', '32%')}</div>
+        <div class="scan-section-title wallet-section-title">${sk('sk-line-xs', '32%')}</div>
         <div class="wallet-token-list">${Array.from({ length: 3 }, () => SK.walletTokenRowSk()).join('')}</div>
       </div>
       ${skGap(12)}
       <div>
-        <div class="wallet-section-title">${sk('sk-line-xs', '36%')}</div>
+        <div class="scan-section-title wallet-section-title">${sk('sk-line-xs', '36%')}</div>
         <div class="wallet-activity">${Array.from({ length: 4 }, () => SK.walletActivityRowSk()).join('')}</div>
       </div>
     </div>`,
@@ -1338,16 +1689,21 @@ const SK = {
     <div class="appr-scan">
       ${SK.status('CHECKING APPROVALS')}
       ${skGap(14)}
-      <div class="an-stat-grid an-stat-grid--2 appr-hero-grid">
-        ${SK.analyticsCell()}${SK.analyticsCell()}
+      ${SK.scanHeadCard(3)}
+      ${skGap(10)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">
+        ${SK.analyticsGrid(4)}
       </div>
+      ${skGap(10)}
+      <div class="appr-assessment">${SK.assessmentSk()}</div>
       ${skGap(12)}
+      <div class="appr-sections">
       <div class="appr-section">
-        <div class="appr-section-head">
+        <div class="appr-section-head scan-section-head">
           ${sk('sk-line-xs', '32%')}
           ${sk('sk-badge')}
         </div>
-        <div class="appr-list">
+        <div class="scan-list appr-list">
           ${Array.from({ length: 4 }, () => `
             <div class="appr-row sk-wallet-block">
               <div class="sk sk-avatar" style="width:38px;height:38px;border-radius:10px"></div>
@@ -1359,6 +1715,21 @@ const SK = {
               ${sk('sk-badge')}
             </div>`).join('')}
         </div>
+      </div>
+      </div>
+    </div>`,
+
+  permissions: () => `
+    <div class="perm-scan">
+      ${SK.status('AUDITING PERMISSIONS')}
+      ${skGap(14)}
+      ${SK.scanHeadCard(3)}
+      ${skGap(10)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">${SK.analyticsGrid(4)}</div>
+      <div class="perm-assessment">${SK.assessmentSk()}</div>
+      ${SK.amlBlockSk('28%', SK.contractRiskRowsSk(3), '12%')}
+      <div class="perm-sections">
+        ${SK.amlBlockSk('30%', '<div class="perm-signer-list">' + Array.from({ length: 2 }, () => '<div class="perm-signer sk-wallet-block" style="min-height:54px"></div>').join('') + '</div>', '18%')}
       </div>
     </div>`,
 
@@ -1383,9 +1754,9 @@ const SK = {
     <div class="contract-scan">
       ${SK.status('AUDITING CONTRACT', 'contract-skel-status')}
       ${skGap(12)}
-      ${SK.scanHeadCard(2)}
+      ${SK.scanHeadCard(3)}
       ${skGap(10)}
-      <div class="an-stat-grid an-stat-grid--4 contract-hero-grid">
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">
         ${SK.analyticsGrid(4)}
       </div>
       ${skGap(10)}
@@ -1409,9 +1780,9 @@ const SK = {
     <div class="aml-scan">
       ${SK.status('RUNNING AML SCREEN', 'aml-skel-status')}
       ${skGap(12)}
-      ${SK.scanHeadCard(3)}
+      ${SK.scanHeadCard(4)}
       ${skGap(10)}
-      <div class="an-stat-grid an-stat-grid--4 aml-hero-grid">
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">
         ${SK.analyticsGrid(4)}
       </div>
       ${skGap(10)}
@@ -1438,9 +1809,9 @@ const SK = {
     <div class="tx-scan">
       ${SK.status('DECODING TRANSACTION', 'tx-skel-status')}
       ${skGap(12)}
-      ${SK.scanHeadCard(2)}
+      ${SK.scanHeadCard(3)}
       ${skGap(10)}
-      <div class="an-stat-grid an-stat-grid--4 tx-hero-grid">
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">
         ${SK.analyticsGrid(4)}
       </div>
       ${skGap(10)}
@@ -1456,22 +1827,13 @@ const SK = {
       ${sk('sk-line-xs', '80%')}
     </div>`,
 
-  scamLookup: () => `
-    ${SK.status('SEARCHING DATABASE')}
-    ${skGap(14)}
-    ${SK.statGrid(3, 150)}
-    ${skGap(12)}
-    ${SK.panel(3, '32%')}
-    ${skGap(12)}
-    ${SK.panel(4, '38%')}`,
-
   phishCheck: () => `
     <div class="phish-scan" id="phish-skel">
       ${SK.status('RUNNING SCAN', 'phish-skel-status')}
       ${skGap(12)}
-      ${SK.scanHeadCard(2)}
+      ${SK.scanHeadCard(3)}
       ${skGap(10)}
-      <div class="an-stat-grid an-stat-grid--4 phish-hero-grid">
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">
         ${SK.analyticsGrid(4)}
       </div>
       ${skGap(10)}
@@ -1485,6 +1847,24 @@ const SK = {
       ${SK.amlBlockSk('28%', SK.amlKvRowsSk(5), '22%')}
       ${skGap(10)}
       ${sk('sk-line-xs', '76%')}
+    </div>`,
+
+  vanity: () => `
+    <div class="vanity-scan-skel">
+      ${SK.status('SEARCHING PATTERN', 'vanity-skel-status')}
+      ${skGap(12)}
+      <div class="vanity-searching-card sk-wallet-block">
+        <div class="wallet-head-top" style="margin-bottom:12px">
+          ${sk('sk-line-sm', '42%')}
+          ${sk('sk-line-xs', '72px')}
+        </div>
+        <div class="sk" style="height:8px;border-radius:999px;width:100%;margin-bottom:14px"></div>
+        <div class="an-stat-grid an-stat-grid--3" style="gap:10px">
+          ${SK.analyticsCell()}${SK.analyticsCell()}${SK.analyticsCell()}
+        </div>
+        ${skGap(10)}
+        ${sk('sk-line-xs', '68%')}
+      </div>
     </div>`,
 };
 
@@ -1514,8 +1894,202 @@ function badge(cls, text) {
   return `<span class="badge ${cls}">${esc(t(text))}</span>`;
 }
 
+function scanActionBtn({ id, label, icon, href, variant }) {
+  const cls = `wallet-action-btn${variant ? ` wallet-action-btn--${variant}` : ''}`;
+  const lbl = esc(t(label));
+  const inner = `${icSVG(icon, 14)}<span>${lbl}</span>`;
+  const aria = ` aria-label="${lbl}"`;
+  if (href) return `<a class="${cls}" id="${id}" href="${esc(href)}" target="_blank" rel="noopener"${aria}>${inner}</a>`;
+  return `<button type="button" class="${cls}" id="${id}"${aria}>${inner}</button>`;
+}
+
+function scanHeadCard({ leadHtml, actionsHtml = '', tagsHtml = '', extraClass = '', variant = '' }) {
+  const cardCls = ['scan-head-card', variant && `scan-head-card--${variant}`, extraClass].filter(Boolean).join(' ');
+  const tagsBlock = tagsHtml ? `<div class="wallet-head-tags">${tagsHtml}</div>` : '';
+  const actionsBlock = actionsHtml ? `<div class="wallet-head-actions">${actionsHtml}</div>` : '';
+  return `<div class="${cardCls}">
+    <div class="wallet-head-top">
+      ${leadHtml}
+      ${actionsBlock}
+    </div>
+    ${tagsBlock}
+  </div>`;
+}
+
+function amlAlertInline(type, html) {
+  return `<div class="aml-alert aml-alert--${type} aml-alert--inline">
+    ${icSVG(IC.alert, 14)}
+    <div class="aml-alert-body">${html}</div>
+  </div>`;
+}
+
 function alertBox(type, html) {
-  return `<div class="alert alert-${type}">${icSVG(IC.alert)}<div>${html}</div></div>`;
+  return amlAlertInline(type, html);
+}
+
+const SCAN_HEAD_OVERFLOW_PRIMARY = 2;
+const _scanHeadOverflowMq = typeof window !== 'undefined'
+  ? window.matchMedia('(max-width: 767px)')
+  : null;
+
+function scanHeadActionButtons(actionsEl) {
+  return [...actionsEl.children].filter(el =>
+    (el.classList.contains('wallet-action-btn') || el.tagName === 'A')
+    && !el.classList.contains('scan-head-overflow-btn')
+    && !el.classList.contains('scan-head-overflow-menu')
+  );
+}
+
+function bindScanHeadOverflow(scope) {
+  const roots = [];
+  if (scope?.classList?.contains('wallet-head-actions')) roots.push(scope);
+  else if (scope?.querySelectorAll) roots.push(...scope.querySelectorAll('.wallet-head-actions'));
+
+  roots.forEach(actionsEl => {
+    if (!actionsEl || actionsEl.dataset.headOverflowInit === '1') return;
+    actionsEl.dataset.headOverflowInit = '1';
+
+    let moreBtn = null;
+    let menu = null;
+
+    const closeMenu = () => {
+      if (!menu || menu.hidden) return;
+      menu.hidden = true;
+      moreBtn?.setAttribute('aria-expanded', 'false');
+      actionsEl.classList.remove('is-overflow-open');
+    };
+
+    const teardownOverflow = () => {
+      closeMenu();
+      if (menu) {
+        [...menu.children].forEach(btn => actionsEl.insertBefore(btn, moreBtn));
+        menu.remove();
+        menu = null;
+      }
+      if (moreBtn) {
+        moreBtn.remove();
+        moreBtn = null;
+      }
+    };
+
+    const layout = () => {
+      teardownOverflow();
+      const buttons = scanHeadActionButtons(actionsEl);
+      if (!_scanHeadOverflowMq?.matches || buttons.length <= 3) return;
+
+      const extra = buttons.slice(SCAN_HEAD_OVERFLOW_PRIMARY);
+      if (!extra.length) return;
+
+      moreBtn = document.createElement('button');
+      moreBtn.type = 'button';
+      moreBtn.className = 'wallet-action-btn scan-head-overflow-btn';
+      moreBtn.setAttribute('aria-expanded', 'false');
+      moreBtn.setAttribute('aria-haspopup', 'true');
+      moreBtn.innerHTML = `${icSVG('M6 12h.01M12 12h.01M18 12h.01', 14)}<span>${esc(t('More'))}</span>`;
+      actionsEl.appendChild(moreBtn);
+
+      menu = document.createElement('div');
+      menu.className = 'scan-head-overflow-menu';
+      menu.setAttribute('role', 'menu');
+      menu.hidden = true;
+      actionsEl.appendChild(menu);
+      extra.forEach(btn => {
+        btn.setAttribute('role', 'menuitem');
+        menu.appendChild(btn);
+      });
+
+      const focusMenuItem = (idx) => {
+        const items = [...menu.querySelectorAll('[role="menuitem"]')];
+        if (!items.length) return;
+        const i = ((idx % items.length) + items.length) % items.length;
+        items[i].focus();
+      };
+
+      const openMenu = () => {
+        if (!menu) return;
+        menu.hidden = false;
+        moreBtn?.setAttribute('aria-expanded', 'true');
+        actionsEl.classList.add('is-overflow-open');
+        focusMenuItem(0);
+      };
+
+      moreBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (menu.hidden) openMenu();
+        else closeMenu();
+      });
+
+      moreBtn.addEventListener('keydown', e => {
+        if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (menu.hidden) openMenu();
+          else focusMenuItem(0);
+        } else if (e.key === 'Escape') {
+          closeMenu();
+        }
+      });
+
+      menu.addEventListener('keydown', e => {
+        const items = [...menu.querySelectorAll('[role="menuitem"]')];
+        const idx = items.indexOf(document.activeElement);
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeMenu();
+          moreBtn?.focus();
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          focusMenuItem(idx + 1);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          focusMenuItem(idx - 1);
+        } else if (e.key === 'Home') {
+          e.preventDefault();
+          focusMenuItem(0);
+        } else if (e.key === 'End') {
+          e.preventDefault();
+          focusMenuItem(items.length - 1);
+        }
+      });
+    };
+
+    layout();
+    _scanHeadOverflowMq?.addEventListener('change', layout);
+    document.addEventListener('click', () => closeMenu());
+  });
+}
+
+function scanKvBlock(title, rowsHtml) {
+  const titleHtml = /<[^>]+>/.test(title) ? title : esc(t(title));
+  return `<div class="aml-block wallet-kv-block">
+    <div class="aml-block-head">
+      <span class="aml-block-title">${titleHtml}</span>
+    </div>
+    <div class="aml-block-body aml-block-body--flush">
+      <div class="aml-kv-list">${rowsHtml}</div>
+    </div>
+  </div>`;
+}
+
+function initModuleDescTags() {
+  document.querySelectorAll('.module-desc-tags').forEach(tags => {
+    const parent = tags.parentElement;
+    if (!parent || parent.querySelector('.module-desc-tags-toggle')) return;
+    const count = tags.querySelectorAll('.module-desc-tag').length;
+    if (!count) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'module-desc-tags-toggle';
+    btn.setAttribute('aria-expanded', 'false');
+    btn.innerHTML = `<span class="module-desc-tags-toggle-label">${esc(t('Module features'))}</span><span class="module-desc-tags-toggle-meta">${count}</span>`;
+    parent.insertBefore(btn, tags);
+
+    btn.addEventListener('click', () => {
+      const open = tags.classList.toggle('is-open');
+      btn.classList.toggle('is-open', open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  });
 }
 
 const MODULE_STATE_ARIA = {
@@ -1524,9 +2098,15 @@ const MODULE_STATE_ARIA = {
   error: 'Last scan failed',
 };
 
+function moduleNavStateLabel(state) {
+  const key = MODULE_STATE_ARIA[state];
+  return key ? t(key) : state;
+}
+
 const MODULE_STATE_TABS = {
   scanner: { result: 'wallet-result', err: 'wallet-err' },
   approvals: { result: 'approvals-result', err: 'approvals-err' },
+  permissions: { result: 'permissions-result', err: 'permissions-err' },
   'aml-check': { result: 'aml-result', err: 'aml-err' },
   'scan-url': { result: 'phish-result', err: 'phish-err' },
   'contract-scan': { result: 'contract-result', err: 'contract-err' },
@@ -1536,13 +2116,37 @@ const MODULE_STATE_TABS = {
 
 function setModuleNavState(tabId, state) {
   if (!MODULE_STATE_TABS[tabId] || !['empty', 'cached', 'error'].includes(state)) return;
-  document.querySelectorAll(`.app-sidebar [data-tab-btn="${tabId}"]`).forEach(btn => {
+  document.querySelectorAll(`[data-tab-btn="${tabId}"], [data-more-tab="${tabId}"]`).forEach(btn => {
+    btn.dataset.moduleState = state;
     const dot = btn.querySelector('.sidebar-nav-state:not(.is-spacer)');
-    if (!dot) return;
-    dot.classList.remove('is-empty', 'is-cached', 'is-error');
-    dot.classList.add(`is-${state}`);
-    dot.dataset.moduleState = state;
-    dot.setAttribute('aria-label', MODULE_STATE_ARIA[state] || state);
+    if (dot) {
+      dot.classList.remove('is-empty', 'is-cached', 'is-error');
+      dot.classList.add(`is-${state}`);
+      dot.dataset.moduleState = state;
+      dot.setAttribute('aria-label', moduleNavStateLabel(state));
+    }
+    if (btn.closest('.mobile-bottom-nav') || btn.classList.contains('mobile-more-item')) {
+      const name = btn.querySelector('span')?.textContent?.trim() || tabId;
+      if (state === 'empty') btn.removeAttribute('aria-label');
+      else btn.setAttribute('aria-label', `${name} — ${moduleNavStateLabel(state)}`);
+    }
+  });
+}
+
+function wireMobileMoreItemStates() {
+  document.querySelectorAll('.mobile-more-item').forEach(item => {
+    if (item.dataset.moreTab) return;
+    const onclick = item.getAttribute('onclick') || '';
+    const m = onclick.match(/switchTab\(["']([^"']+)["']\)/);
+    if (m) item.dataset.moreTab = m[1];
+    if (!item.dataset.moduleState) item.dataset.moduleState = 'empty';
+  });
+}
+
+function syncMobileMoreActiveItem(tabId) {
+  const active = tabId || document.querySelector('.tab-content.active')?.id?.slice(4) || '';
+  document.querySelectorAll('.mobile-more-item[data-more-tab]').forEach(item => {
+    item.classList.toggle('is-more-active', item.dataset.moreTab === active);
   });
 }
 
@@ -1553,24 +2157,38 @@ function syncModuleNavState(tabId) {
   const result = document.getElementById(cfg.result);
   if (err && err.innerHTML.trim()) {
     setModuleNavState(tabId, 'error');
+    syncMoreMenuBadge();
     return;
   }
   if (!result || !result.innerHTML.trim()) {
     setModuleNavState(tabId, 'empty');
+    syncMoreMenuBadge();
     return;
   }
   if (result.querySelector('.sk')) return;
   setModuleNavState(tabId, 'cached');
+  syncMoreMenuBadge();
+}
+
+function refreshModuleNavStateAria() {
+  document.querySelectorAll('.sidebar-nav-state[data-module-state]').forEach(dot => {
+    dot.setAttribute('aria-label', moduleNavStateLabel(dot.dataset.moduleState));
+  });
 }
 
 function injectModuleNavStateDots() {
   Object.keys(MODULE_STATE_TABS).forEach(tabId => {
-    document.querySelectorAll(`.app-sidebar [data-tab-btn="${tabId}"]`).forEach(btn => {
+    document.querySelectorAll(`[data-tab-btn="${tabId}"]`).forEach(btn => {
+      if (btn.getAttribute('data-tab-btn') === 'more') return;
+      if (btn.closest('.mobile-bottom-nav')) {
+        if (!btn.dataset.moduleState) btn.dataset.moduleState = 'empty';
+        return;
+      }
       if (btn.querySelector('.sidebar-nav-state:not(.is-spacer)')) return;
       const dot = document.createElement('span');
       dot.className = 'sidebar-nav-state is-empty';
       dot.setAttribute('role', 'img');
-      dot.setAttribute('aria-label', MODULE_STATE_ARIA.empty);
+      dot.setAttribute('aria-label', moduleNavStateLabel('empty'));
       dot.dataset.moduleState = 'empty';
       const label = btn.querySelector('.module-file');
       if (label) label.insertAdjacentElement('afterend', dot);
@@ -1599,7 +2217,12 @@ function observeModuleResultNodes() {
         node = node.parentNode;
       }
     });
-    touched.forEach(syncModuleNavState);
+    touched.forEach(tabId => {
+      syncModuleNavState(tabId);
+      const cfg = MODULE_STATE_TABS[tabId];
+      const result = cfg && document.getElementById(cfg.result);
+      if (result) bindScanHeadOverflow(result);
+    });
   });
   const opts = { childList: true, subtree: true, characterData: true };
   Object.values(MODULE_STATE_TABS).forEach(cfg => {
@@ -1611,14 +2234,313 @@ function observeModuleResultNodes() {
 }
 
 function initModuleNavStates() {
+  wireMobileMoreItemStates();
   injectModuleNavStateDots();
   observeModuleResultNodes();
+  initA11yShell();
   Object.keys(MODULE_STATE_TABS).forEach(syncModuleNavState);
+  syncMoreMenuBadge();
+  syncMobileMoreActiveItem();
+}
+
+const SCAN_EMPTY_HIDE_MS = 150;
+
+function lockScanInput(input, locked) {
+  if (!input) return;
+  input.disabled = !!locked;
+  if (locked) input.setAttribute('aria-busy', 'true');
+  else input.removeAttribute('aria-busy');
+}
+
+function hideScanEmpty(emptyEl, opts = {}) {
+  if (!emptyEl || emptyEl.style.display === 'none') {
+    opts.onDone?.();
+    return;
+  }
+  const instant = opts.instant === true;
+  const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  if (instant || reduced) {
+    emptyEl.style.display = 'none';
+    emptyEl.classList.remove('is-hiding');
+    opts.onDone?.();
+    return;
+  }
+  emptyEl.classList.add('is-hiding');
+  setTimeout(() => {
+    emptyEl.style.display = 'none';
+    emptyEl.classList.remove('is-hiding');
+    opts.onDone?.();
+  }, SCAN_EMPTY_HIDE_MS);
+}
+
+function showScanEmpty(emptyEl) {
+  if (!emptyEl) return;
+  emptyEl.classList.remove('is-hiding', 'hidden');
+  emptyEl.style.display = '';
+}
+
+const SESSION_CACHE_TTL_MS = 12 * 60 * 1000;
+const SESSION_CACHE_VERSION = 1;
+
+function sessionCacheLang() {
+  if (typeof i18nLang === 'function') return i18nLang();
+  return document.documentElement.getAttribute('lang') || 'en';
+}
+
+function sessionCacheKey(module, id, locale) {
+  const loc = locale != null ? locale : sessionCacheLang();
+  return `tronsec:v${SESSION_CACHE_VERSION}:${module}:${loc}:${id}`;
+}
+
+function legacySessionCacheKey(module, id) {
+  const legacy = {
+    wallet: `tronsec_wallet_scan:${id}`,
+    aml: `tronsec_aml_scan:${id}`,
+    approvals: `tronsec_approvals_scan:${id}`,
+    permissions: `tronsec_permissions_scan:${id}`,
+    contract: `tronsec_contract_scan:${id}`,
+    phish: `tronsec_phish_scan:${id}`,
+    tx: `tronsec_tx_scan:${id}`,
+  };
+  return legacy[module] || null;
+}
+
+function readSessionCache(module, id, options = {}) {
+  const ttl = options.ttl ?? SESSION_CACHE_TTL_MS;
+  const lang = sessionCacheLang();
+  const keys = [sessionCacheKey(module, id, lang)];
+  const legacy = options.legacyKey ? options.legacyKey(id) : legacySessionCacheKey(module, id);
+  if (legacy) keys.push(legacy);
+
+  for (const key of keys) {
+    try {
+      const raw = sessionStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (!parsed?.ts || Date.now() - parsed.ts > ttl) continue;
+      if (options.validate && !options.validate(parsed, id)) continue;
+      if (parsed.html && !options.allowHtml) continue;
+      if (parsed.html && parsed.locale && parsed.locale !== lang && !options.allowStaleHtml) continue;
+      if (options.requirePayload && !parsed.payload && !parsed.report && !parsed.result && !parsed.data && !parsed.list) continue;
+      return parsed;
+    } catch (_) {}
+  }
+  return null;
+}
+
+function writeSessionCache(module, id, snapshot, options = {}) {
+  if (!module || id == null || id === '') return;
+  const lang = sessionCacheLang();
+  const key = sessionCacheKey(module, id, lang);
+  const payload = { ...snapshot, v: SESSION_CACHE_VERSION, locale: lang, ts: Date.now() };
+  try {
+    sessionStorage.setItem(key, JSON.stringify(payload));
+    const legacy = options.legacyKey ? options.legacyKey(id) : legacySessionCacheKey(module, id);
+    if (legacy && legacy !== key) sessionStorage.removeItem(legacy);
+  } catch (_) {}
+}
+
+function clearSessionCache(module, id, options = {}) {
+  if (!module || id == null || id === '') return;
+  const keys = new Set([sessionCacheKey(module, id, sessionCacheLang())]);
+  const legacy = options.legacyKey ? options.legacyKey(id) : legacySessionCacheKey(module, id);
+  if (legacy) keys.add(legacy);
+  keys.forEach((key) => {
+    try { sessionStorage.removeItem(key); } catch (_) {}
+  });
+}
+
+function beginScanUI({ emptyEl, resultEl, errEl, btn, input, skeletonHtml, lockInput = true }) {
+  setError(errEl, '');
+  hideScanEmpty(emptyEl);
+  if (resultEl && skeletonHtml != null) resultEl.innerHTML = skeletonHtml;
+  if (btn) {
+    spinBtn(btn, true);
+    btn.setAttribute('aria-busy', 'true');
+  }
+  if (lockInput) lockScanInput(input, true);
+}
+
+function endScanUI({ btn, input, lockInput = true }) {
+  if (btn) {
+    spinBtn(btn, false);
+    btn.removeAttribute('aria-busy');
+  }
+  if (lockInput) lockScanInput(input, false);
+}
+
+function failScanUI({ resultEl, errEl, msg, btn, input, lockInput = true }) {
+  if (resultEl) resultEl.innerHTML = '';
+  setError(errEl, msg);
+  endScanUI({ btn, input, lockInput });
+}
+
+function animateScore(el, from, to, duration = 600) {
+  if (!el || from === to) return;
+  if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    el.textContent = String(to);
+    return;
+  }
+  const start = performance.now();
+  const tick = (now) => {
+    const p = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = String(Math.round(from + (to - from) * eased));
+    if (p < 1) requestAnimationFrame(tick);
+    else el.textContent = String(to);
+  };
+  requestAnimationFrame(tick);
+}
+
+function mountScanMotion(root, opts = {}) {
+  if (!root) return;
+  if (opts.fromCache) {
+    root.querySelectorAll('[data-score-value]').forEach((el) => {
+      const to = Number(el.dataset.scoreValue);
+      if (Number.isFinite(to)) el.textContent = String(to);
+    });
+    root.querySelectorAll('.aml-risk-meter-fill[data-score-pct]').forEach((el) => {
+      const pct = Number(el.dataset.scorePct);
+      if (Number.isFinite(pct)) el.style.width = `${Math.max(4, pct)}%`;
+    });
+    return;
+  }
+  root.querySelectorAll('[data-score-value]').forEach((el) => {
+    const to = Number(el.dataset.scoreValue);
+    if (!Number.isFinite(to)) return;
+    animateScore(el, 0, to, 600);
+  });
+  root.querySelectorAll('.aml-risk-meter-fill[data-score-pct]').forEach((el) => {
+    const pct = Number(el.dataset.scorePct);
+    if (!Number.isFinite(pct)) return;
+    el.style.width = '4%';
+    requestAnimationFrame(() => {
+      el.classList.add('is-animated');
+      el.style.width = `${Math.max(4, pct)}%`;
+    });
+  });
+}
+
+const MORE_MENU_TABS = ['contract-scan', 'scan-url', 'permissions', 'tx-decoder', 'vanity', 'report'];
+
+function syncMoreMenuBadge() {
+  const moreBtn = document.querySelector('[data-tab-btn="more"]');
+  if (!moreBtn) return;
+  let state = 'empty';
+  for (const tabId of MORE_MENU_TABS) {
+    const cfg = MODULE_STATE_TABS[tabId];
+    if (!cfg) continue;
+    const err = document.getElementById(cfg.err);
+    const result = document.getElementById(cfg.result);
+    if (err?.innerHTML?.trim()) { state = 'error'; break; }
+    if (result?.innerHTML?.trim() && !result.querySelector('.sk')) state = 'cached';
+  }
+  moreBtn.dataset.moduleState = state;
+  const name = moreBtn.querySelector('span')?.textContent?.trim() || 'More';
+  if (state === 'empty') moreBtn.removeAttribute('aria-label');
+  else moreBtn.setAttribute('aria-label', `${name} — ${moduleNavStateLabel(state)}`);
+}
+
+function trapFocus(container, opts = {}) {
+  if (!container) return () => {};
+  const prev = document.activeElement;
+  const sel = opts.selector || 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+  const getFocusable = () => [...container.querySelectorAll(sel)].filter(el =>
+    !el.disabled && el.offsetParent !== null && !el.hidden && el.getAttribute('aria-hidden') !== 'true'
+  );
+
+  const onKey = (e) => {
+    if (e.key === 'Escape' && typeof opts.onEscape === 'function') {
+      e.preventDefault();
+      opts.onEscape();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const nodes = getFocusable();
+    if (!nodes.length) return;
+    const first = nodes[0];
+    const last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  document.addEventListener('keydown', onKey);
+  const nodes = getFocusable();
+  (opts.initialFocus || nodes[0] || container)?.focus?.();
+
+  return () => {
+    document.removeEventListener('keydown', onKey);
+    if (prev && typeof prev.focus === 'function') prev.focus();
+  };
+}
+
+function navigateToTab(tabId, opts = {}) {
+  if (typeof switchTab === 'function') switchTab(tabId, opts);
+  const prefill = opts.prefill;
+  const selector = opts.prefillSelector || TAB_PREFILL?.[tabId]?.inputId;
+  if (!prefill || !selector) return;
+  const apply = () => {
+    const inp = document.getElementById(selector);
+    if (!inp) return;
+    let val = prefill;
+    if (tabId === 'scan-url' && val && !/^https?:\/\//i.test(val)) val = 'https://' + val;
+    inp.value = val;
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    if (opts.autoScan) inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  };
+  apply();
+  requestAnimationFrame(apply);
+}
+
+function initA11yShell() {
+  document.querySelectorAll('[data-tab-btn]').forEach(btn => {
+    const tabId = btn.getAttribute('data-tab-btn');
+    if (!tabId || tabId === 'more') return;
+    btn.setAttribute('role', 'tab');
+    btn.id = btn.id || `tabbtn-${tabId}`;
+    btn.setAttribute('aria-controls', `tab-${tabId}`);
+    btn.setAttribute('aria-selected', btn.classList.contains('tab-nav-active') ? 'true' : 'false');
+  });
+  document.querySelectorAll('.tab-content').forEach(panel => {
+    const tabId = panel.id?.replace(/^tab-/, '');
+    if (!tabId) return;
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', `tabbtn-${tabId}`);
+    panel.setAttribute('tabindex', '-1');
+  });
+  Object.values(MODULE_STATE_TABS).forEach(cfg => {
+    const result = document.getElementById(cfg.result);
+    const err = document.getElementById(cfg.err);
+    if (result && !result.getAttribute('aria-live')) {
+      result.setAttribute('aria-live', 'polite');
+      result.setAttribute('aria-relevant', 'additions');
+    }
+    if (err && !err.getAttribute('role')) err.setAttribute('role', 'alert');
+  });
+  const menu = document.getElementById('mobile-more-menu');
+  if (menu) {
+    menu.setAttribute('role', 'dialog');
+    menu.setAttribute('aria-modal', 'true');
+    menu.setAttribute('aria-label', t('More tools'));
+  }
 }
 
 function setError(el, msg) {
+  if (!el) return;
   el.innerHTML = msg ? alertBox('red', esc(msg)) : '';
-  if (el && el.id) {
+  const panel = el.closest('.module-panel') || el.closest('.vanity-panel') || el.closest('.report-panel');
+  const empty = panel?.querySelector('[id$="-empty"]');
+  const result = panel?.querySelector('[id$="-result"]');
+  if (empty) {
+    if (msg) empty.style.display = 'none';
+    else if (!result?.innerHTML?.trim()) empty.style.display = '';
+  }
+  if (el.id) {
     for (const [tabId, cfg] of Object.entries(MODULE_STATE_TABS)) {
       if (cfg.err === el.id) {
         syncModuleNavState(tabId);
@@ -1730,6 +2652,22 @@ function kvLabel(label) {
   return esc(t(s));
 }
 
+function i18nFactorLabel(f) {
+  if (!f || f.label == null) return '';
+  return t(f.label, f.labelVars || undefined);
+}
+
+/** Block meta: i18n key, `{ key, vars }`, or pre-rendered count string (`12 total`). */
+function scanBlockMeta(meta) {
+  if (!meta) return '';
+  if (typeof meta === 'object' && meta != null && 'key' in meta) {
+    return `<span class="aml-block-meta">${esc(t(meta.key, meta.vars))}</span>`;
+  }
+  const s = String(meta);
+  if (/^\d/.test(s.trim())) return `<span class="aml-block-meta">${esc(s)}</span>`;
+  return `<span class="aml-block-meta">${esc(t(s))}</span>`;
+}
+
 function tt(key, fallback) {
   const g = GLOSSARY[key];
   if (!g) return esc(t(fallback || key));
@@ -1812,19 +2750,22 @@ function setupTermTooltips() {
     if (termNodeFromTarget(e.target)) return;
     hideTermTip();
   });
-  // touch support
-  document.addEventListener('touchstart', e => {
-    const t = termNodeFromTarget(e.target);
-    if (!t) { hideTermTip(); return; }
-    e.preventDefault();
-    const shown = t.dataset.tipShown;
-    hideTermTip();
-    t.dataset.tipShown = '';
-    if (!shown) {
-      showTermTip(t.dataset.term, t);
-      t.dataset.tipShown = '1';
+  // touch support — tap to toggle, no scroll blocking
+  document.addEventListener('click', e => {
+    if (!window.matchMedia('(hover: none)').matches) return;
+    const node = termNodeFromTarget(e.target);
+    if (!node) {
+      if (!e.target.closest?.('.term-tip')) hideTermTip();
+      return;
     }
-  }, { passive: false });
+    const shown = node.dataset.tipShown;
+    hideTermTip();
+    node.dataset.tipShown = '';
+    if (!shown) {
+      showTermTip(node.dataset.term, node);
+      node.dataset.tipShown = '1';
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {

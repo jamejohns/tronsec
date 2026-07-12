@@ -4,7 +4,7 @@
   if (localStorage.getItem('TRONSEC_tour_done')) return;
   if (localStorage.getItem('TRONSEC_tour_hidden')) return;
 
-  const steps = [
+  const allSteps = [
     {
       title: 'Welcome to TRONSEC',
       text: 'Read-only security terminal for TRON. Scan wallets, audit contracts, decode transactions, and check URLs before you sign anything — no wallet connection required.',
@@ -30,8 +30,15 @@
       nav: 'approvals',
     },
     {
+      title: 'Permission auditor',
+      text: 'Review owner and active permission keys, multisig thresholds, external controllers, and allowed on-chain operations for any TRON address.',
+      tab: 'permissions',
+      nav: 'permissions',
+      moreNav: true,
+    },
+    {
       title: 'AML check',
-      text: 'Behavioral risk screening on the latest 400 transactions — composite score, concentration, counterparty graph, and security flags.',
+      text: 'Behavioral risk screening on the latest {count} transactions — composite score, concentration, counterparty graph, and security flags.',
       tab: 'aml-check',
       nav: 'aml-check',
     },
@@ -40,12 +47,21 @@
       text: 'Screen phishing links with multi-engine reputation checks, then audit smart contract ABIs for mint, pause, blacklist, and ownership risks.',
       tab: 'scan-url',
       nav: 'scan-url',
+      moreNav: true,
     },
     {
       title: 'TX decoder',
       text: 'Paste a transaction ID to decode TRC-20 transfers, token approvals, contract calls, fees, and automated risk heuristics.',
       tab: 'tx-decoder',
       nav: 'tx-decoder',
+      moreNav: true,
+    },
+    {
+      title: 'Mobile navigation',
+      text: 'On mobile, Scanner, Approvals, AML, and Stats are one tap away in the bottom bar. Open More for contract scan, URL scanner, permissions, and other tools.',
+      tab: 'scanner',
+      nav: 'scanner',
+      mobileOnly: true,
     },
     {
       title: 'You\'re all set',
@@ -54,6 +70,17 @@
       nav: null,
     },
   ];
+
+  function isTourMobile() {
+    return window.matchMedia('(max-width: 767px)').matches;
+  }
+
+  function activeSteps() {
+    const mobile = isTourMobile();
+    return allSteps.filter(s => (mobile || !s.mobileOnly) && (!mobile || !s.desktopOnly));
+  }
+
+  let steps = activeSteps();
 
   let currentStep = 0;
   let destroyed = false;
@@ -71,9 +98,10 @@
     document.querySelectorAll('.tour-nav-hl').forEach(el => el.classList.remove('tour-nav-hl'));
   }
 
-  function applyHL(navId) {
+  function applyHL(navId, step) {
     if (!navId) return;
-    document.querySelectorAll(`[data-tab-btn="${navId}"]`).forEach(el => {
+    const target = (isTourMobile() && step?.moreNav) ? 'more' : navId;
+    document.querySelectorAll(`[data-tab-btn="${target}"]`).forEach(el => {
       el.classList.add('tour-nav-hl');
     });
   }
@@ -101,7 +129,7 @@
       </div>
       <div class="tour-body">
         <div class="tour-title">${esc(t(step.title))}</div>
-        <p class="tour-text">${esc(t(step.text))}</p>
+        <p class="tour-text">${esc(t(step.text, step.text && step.text.includes('{count}') && typeof AML_TX_SAMPLE_LIMIT === 'number' ? { count: AML_TX_SAMPLE_LIMIT } : undefined))}</p>
       </div>
       <div class="tour-foot">
         <button type="button" class="tour-btn tour-btn--ghost" data-a="skip">${t('[ SKIP ]')}</button>
@@ -141,7 +169,7 @@
     }
 
     render();
-    applyHL(step.nav);
+    applyHL(step.nav, step);
     resetAutoHide();
   }
 
@@ -176,6 +204,7 @@
   }
 
   function start() {
+    steps = activeSteps();
     card = document.createElement('div');
     card.id = 'tour-card';
     card.className = 'tour-card';

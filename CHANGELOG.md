@@ -34,51 +34,39 @@ GitHub release tags begin at **v1.0.0** (June 2026). The product itself shipped 
 - **2026-06-17** — first public GitHub export **[v1.0.0]**
 - **2026-06-29** — **[v1.1.0]** (vanity module, PWA, AML / wallet edge-case fixes)
 
-### July 2026 — OSS documentation wave
+### July 2026 — analytics, permissions, AML v2
 
-- **2026-07-04** — **[v1.2.0]** — approvals UX defaults, `ARCHITECTURE.md` / `SECURITY.md` / `ROADMAP.md`, README aligned with live 9-module app
 - **2026-07-10** — **Network analytics charts** — interactive 7-day TRX, energy/bandwidth, USDT activity; mobile chart layout
 - **2026-07-10** — **Wallet scanner** — session cache, on-chain approvals, risk score 0–100, PDF/summary, next-step links to Approvals/AML
+- **2026-07-12** — **[v1.2.0]** — **Permission auditor**, AML v2 lite, approvals UI refresh, risk-shield color alignment
 
 ---
 
 ## [Unreleased]
 
 ### Added
-- **Network dashboard charts** — 7-day TRX price (CoinGecko via worker → direct → Binance fallback), dual-axis energy/bandwidth usage, USDT transfer count trend
-- Chart hover / touch tooltips with active point markers; gradient area fills; chart resize repaint from cached data
-- Fear & Greed index error card when `alternative.me` is unavailable
-- USDT 24h transfer volume tile sourced from TronScan `/token_trc20` (not TRX homepage stats)
-- **Wallet scanner** — session cache (~12 min), on-chain TRC-20 approval count, composite risk score (0–100), PDF/summary export
-- **Recommended next steps** — one-click jump to Approvals or AML with address prefilled and scan auto-started
+- **Wallet scanner** — smart contract detection (not only token contracts) with redirect callout to Contract Scan
+- **Command palette** — file-style module labels (`scanner.sh`, `vanity.gen`, …), open animation, keyboard hint styling
 
 ### Changed
-- Analytics tab layout: section labels, USDT activity block spacing, mobile full-bleed charts and bottom tooltip bar
-- **TRX price chart** — CoinMarketCap OHLCV via worker first; CoinGecko fallback
-- Wallet scanner: mobile activity meta truncation; approvals stat opens Approvals module
-- **Recommended next steps** — light-theme panel and red/amber row styling
-- **Approvals** — session cache (~12 min); always runs full on-chain enrichment (no wallet-scan shortcut)
-- TronScan `scanGet` in-memory cache with in-flight dedupe (reduces duplicate API calls)
-- i18n strings for chart labels, wallet risk/export, and next-step CTAs (8 locales)
+- Contract redirect UI for Wallet and AML modules (shared callout card)
+- `probeTronContract` — broader detection via `getcontractinfo` and TronScan fallback
 
-### Fixed
-- Localized analytics HTML: restored missing chart containers in non-EN locales
-
-## [1.2.0] - 2026-07-04
+## [1.2.0] - 2026-07-12
 
 ### Added
-- **Approvals monitor** — live TRC-20 allowance scan (TronGrid + TronScan), risk badges, unlimited-approval warnings
-- Vanity generator: default demo pattern (Suffix · SEC), dual-field presets for prefix+suffix mode
-- `ROADMAP.md`, `SECURITY.md`, `ARCHITECTURE.md` — public planning and security docs
+- **Permission auditor** — owner, active, and witness keys; multisig thresholds; external-controller detection; expandable operation scopes; permission-change history; 0–100 risk score
+- **AML check v2** — TronScan `red_tag` hard flags, inbound/outbound activity scoring, first-funder intel, DEX/CEX peer allowlist, improved top-counterparty badges
+- Marketing landing page: `/tools/permissions-auditor/`
 
 ### Changed
-- README and CONTRIBUTING aligned with live module set (9 modules, approvals wired)
-- OSS `api-proxy.js` — public proxy URL helpers only
-- i18n locales and styles synced from latest app shell
+- **Approvals monitor UI** — risk-tier sections, assessment strip, clearer allowance rows
+- **Risk shield icons** — amber from score 20, red from 70 (aligned with contract/AML labels)
+- **Wallet scanner** — one-click jump to Permission auditor for multisig / external-controller accounts
+- Marketing site: ten modules (was nine); changelog **v1.2**
 
 ### Fixed
-- Wallet / AML TRC-20 activity edge cases (carried from 1.1.x)
-- Marketing SEO canonical alignment on localized app pages (hosted site)
+- Risk shield showing red at elevated scores (e.g. 50/100) while labels stayed amber
 
 ## [1.1.0] - 2026-06-29
 

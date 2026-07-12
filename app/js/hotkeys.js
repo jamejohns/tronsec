@@ -10,31 +10,48 @@
   var DOMAIN_RE = /\b((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(?:\/[^\s]*)?)\b/i;
   var TX_RE = /\b([0-9a-fA-F]{64})\b/;
 
+const CP_FINGERPRINT = 'path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"';
+const CP_KEY_ICON = 'path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"';
+const CP_SEARCH = 'circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"';
+const CP_LOCK = 'rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"';
+const CP_FILE = 'path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><circle cx="11.5" cy="14.5" r="2.5"';
+const CP_GLOBE = 'circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"';
+const CP_CODE = 'path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"';
+const CP_BARS = 'line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"';
+const CP_WAND = 'path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"';
+const CP_FLAG = 'path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"';
+
+  function cpIconHtml(icon) {
+    return '<span class="cp-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><' + icon + '/></svg></span>';
+  }
+
   var ADDR_ACTIONS = [
-    { id: 'wallet',    tab: 'scanner',      name: 'Scan Wallet Portfolio', desc: 'Portfolio, tokens, staking & transactions',    inputId: 'wallet-input',   scanFn: 'walletScan',     icon: 'path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"', },
-    { id: 'aml',       tab: 'aml-check',     name: 'Run AML Check',         desc: 'Risk scoring & counterparty analysis',        inputId: 'aml-input',      scanFn: 'amlScan',       icon: 'circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"' },
-    { id: 'approvals', tab: 'approvals',     name: 'Check Approvals',       desc: 'TRC20 token allowances & unlimited approvals', inputId: 'approvals-input', scanFn: 'approvalsScan',  icon: 'rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"' },
-    { id: 'contract',  tab: 'contract-scan', name: 'Audit Contract',        desc: 'Smart contract risk analysis',               inputId: 'contract-input',  scanFn: 'contractScan',   icon: 'path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><circle cx="11.5" cy="14.5" r="2.5"' },
+    { id: 'wallet',    tab: 'scanner',      name: 'Wallet scanner', desc: 'Portfolio, tokens, staking & transactions',    file: 'scanner.sh',       inputId: 'wallet-input',   scanFn: 'walletScan',     icon: CP_FINGERPRINT },
+    { id: 'aml',       tab: 'aml-check',     name: 'AML check',         desc: 'Risk scoring & counterparty analysis',        file: 'aml_check.log',    inputId: 'aml-input',      scanFn: 'amlScan',       icon: CP_SEARCH },
+    { id: 'approvals', tab: 'approvals',     name: 'Approvals monitor',       desc: 'TRC20 token allowances & unlimited approvals', file: 'approvals.py',     inputId: 'approvals-input', scanFn: 'approvalsScan',  icon: CP_LOCK },
+    { id: 'permissions', tab: 'permissions', name: 'Permission auditor',     desc: 'Account Permission Auditor', file: 'permissions.keys', inputId: 'permissions-input', scanFn: 'permissionsScan', icon: CP_KEY_ICON },
+    { id: 'contract',  tab: 'contract-scan', name: 'Contract scan',        desc: 'Smart contract risk analysis',               file: 'contract_scan.sh', inputId: 'contract-input',  scanFn: 'contractScan',   icon: CP_FILE },
   ];
 
   var URL_ACTIONS = [
-    { id: 'phish', tab: 'scan-url', name: 'URL Phishing Scanner', desc: 'VirusTotal + heuristics + typosquatting', inputId: 'phish-input', scanFn: 'phishCheck', icon: 'circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"' },
+    { id: 'phish', tab: 'scan-url', name: 'URL Phishing Scanner', desc: 'VirusTotal + heuristics + typosquatting', file: 'scan_url.sh', inputId: 'phish-input', scanFn: 'phishCheck', icon: CP_GLOBE },
   ];
 
   var TX_ACTIONS = [
-    { id: 'txdec', tab: 'tx-decoder', name: 'TX Decoder', desc: 'Decode transaction hex or TXID', inputId: 'tx-input', scanFn: 'txDecode', icon: 'path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"', },
+    { id: 'txdec', tab: 'tx-decoder', name: 'TX Decoder', desc: 'Decode transaction hex or TXID', file: 'tx_decoder.hex', inputId: 'tx-input', scanFn: 'txDecode', icon: CP_CODE },
   ];
 
   var MODULES = [
-    { id: 'scanner',       tab: 'scanner',      name: 'scanner.sh',       desc: 'Wallet Portfolio',         icon: 'path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"', },
-    { id: 'analytics',     tab: 'analytics',     name: 'analytics.dash',   desc: 'TRON Chain Tracker',       icon: 'line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"' },
-    { id: 'approvals-mod', tab: 'approvals',     name: 'approvals.py',     desc: 'Approvals Monitor',        icon: 'rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"' },
-    { id: 'aml-mod',       tab: 'aml-check',     name: 'aml_check.log',    desc: 'AML Compliance Check',     icon: 'circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"' },
-    { id: 'url-mod',       tab: 'scan-url',      name: 'scan_url.sh',      desc: 'URL Phishing Scanner',     icon: 'circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"' },
-    { id: 'contract-mod',  tab: 'contract-scan', name: 'contract_scan.sh', desc: 'Contract Scan Engine',      icon: 'path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><circle cx="11.5" cy="14.5" r="2.5"' },
-    { id: 'txdecoder-mod', tab: 'tx-decoder',    name: 'tx_decoder.hex',   desc: 'TX Decoder',               icon: 'path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"', },
-    { id: 'vanity-mod',    tab: 'vanity',        name: 'vanity.gen',       desc: 'Vanity Address Generator', icon: 'path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"', },
-    { id: 'report-mod',    tab: 'report',        name: 'report_scam.md',   desc: 'Report Scam',              icon: 'path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"' },
+    { id: 'scanner',       tab: 'scanner',      name: 'Wallet scanner',       file: 'scanner.sh',       desc: 'Wallet Portfolio',         icon: CP_FINGERPRINT },
+    { id: 'analytics',     tab: 'analytics',     name: 'Analytics',   file: 'analytics.dash',   desc: 'TRON Chain Tracker',       icon: CP_BARS },
+    { id: 'approvals-mod', tab: 'approvals',     name: 'Approvals monitor',     file: 'approvals.py',     desc: 'Approvals Monitor',        icon: CP_LOCK },
+    { id: 'aml-mod',       tab: 'aml-check',     name: 'AML check',    file: 'aml_check.log',    desc: 'AML Compliance Check',     icon: CP_SEARCH },
+    { id: 'permissions-mod', tab: 'permissions', name: 'Permission auditor', file: 'permissions.keys', desc: 'Account Permission Auditor', icon: CP_KEY_ICON },
+    { id: 'url-mod',       tab: 'scan-url',      name: 'URL scanner',      file: 'scan_url.sh',      desc: 'URL Phishing Scanner',     icon: CP_GLOBE },
+    { id: 'contract-mod',  tab: 'contract-scan', name: 'Contract scan', file: 'contract_scan.sh', desc: 'Contract Scan Engine',      icon: CP_FILE },
+    { id: 'txdecoder-mod', tab: 'tx-decoder',    name: 'TX decoder',   file: 'tx_decoder.hex',   desc: 'TX Decoder',               icon: CP_CODE },
+    { id: 'vanity-mod',    tab: 'vanity',        name: 'Vanity Address Generator',       file: 'vanity.gen',       desc: 'Vanity Address Generator', icon: CP_WAND },
+    { id: 'report-mod',    tab: 'report',        name: 'Report scam',   file: 'report_scam.md',   desc: 'Report Scam',              icon: CP_FLAG },
   ];
 
   function detectContent(text) {
@@ -107,9 +124,6 @@
       }
     } else {
       var q = (detected.value || '').toLowerCase();
-      if (!q || q.indexOf('connect') !== -1 || q.indexOf('wallet') !== -1) {
-        items.push({ kind: 'wallet', data: { id: 'wallet-conn' } });
-      }
       MODULES.forEach(function(m) {
         if (!q || m.name.toLowerCase().indexOf(q) !== -1 || m.desc.toLowerCase().indexOf(q) !== -1) {
           items.push({ kind: 'module', data: m, value: null });
@@ -137,77 +151,7 @@
   }
 
   function css() {
-    var s = document.createElement('style');
-    s.textContent =
-      '#cp-o{position:fixed;inset:0;z-index:9995;background:rgba(0,0,0,.55);backdrop-filter:blur(8px)}' +
-      '#cp{position:fixed;top:15%;left:50%;transform:translateX(-50%);z-index:9996;' +
-        'width:540px;max-width:calc(100vw - 32px);background:#111113;' +
-        'border:1px solid rgba(255,255,255,.1);border-radius:12px;' +
-        'box-shadow:0 24px 64px rgba(0,0,0,.5);' +
-        'font-family:Inter,system-ui,sans-serif;' +
-        'opacity:0;transform:translateX(-50%) translateY(-8px);' +
-        'transition:opacity .15s,transform .15s;pointer-events:none}' +
-      '#cp.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}' +
-      '#cp .cp-h{padding:12px 16px;display:flex;align-items:center;gap:8px;' +
-        'border-bottom:1px solid rgba(255,255,255,.06)}' +
-      '#cp .cp-h .cp-prefix{font-size:13px;color:#a1a1aa;font-weight:500;white-space:nowrap;font-family:"JetBrains Mono",monospace}' +
-      '#cp .cp-h input{flex:1;background:transparent;border:none;outline:none;' +
-        'font-family:inherit;font-size:14px;color:#f5f5f7;font-weight:400}' +
-      '#cp .cp-h input::placeholder{color:#52525b}' +
-      '#cp .cp-badge{font-size:9px;font-weight:700;letter-spacing:.5px;padding:2px 6px;border-radius:3px;white-space:nowrap;display:none}' +
-      '#cp .cp-badge.on{display:inline-block}' +
-      '#cp .cp-badge.t-address{background:rgba(255,255,255,.08);color:#f5f5f7}' +
-      '#cp .cp-badge.t-tx{background:rgba(168,85,247,0.12);color:#a855f7}' +
-      '#cp .cp-badge.t-url{background:rgba(34,197,94,0.12);color:#22c55e}' +
-      '#cp .cp-badge.t-domain{background:rgba(34,197,94,0.12);color:#22c55e}' +
-      '#cp .cp-badge.t-text{background:rgba(148,163,184,0.12);color:#94a3b8}' +
-      '#cp .cp-l{max-height:380px;overflow-y:auto;padding:6px 0}' +
-      '#cp .cp-l::-webkit-scrollbar{width:5px}' +
-      '#cp .cp-l::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:99px}' +
-      '#cp .cp-i{padding:10px 16px;display:flex;align-items:center;gap:12px;' +
-        'cursor:pointer;transition:all .1s;border-radius:8px;margin:0 6px}' +
-      '#cp .cp-i:hover{background:rgba(255,255,255,.04)}' +
-      '#cp .cp-i.sel{background:rgba(255,255,255,.06)}' +
-      '#cp .cp-i .cp-ic{width:18px;height:18px;flex-shrink:0;color:#71717a}' +
-      '#cp .cp-i .cp-ic svg{width:100%;height:100%}' +
-      '#cp .cp-i.sel .cp-ic{color:#f5f5f7}' +
-      '#cp .cp-i .cp-n{font-size:13px;font-weight:500;color:#f5f5f7;letter-spacing:-.01em}' +
-      '#cp .cp-i .cp-d{font-size:12px;color:#71717a;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;font-family:"JetBrains Mono",monospace}' +
-      '#cp .cp-i.sel .cp-d{color:#a1a1aa}' +
-      '#cp .cp-sep{padding:8px 16px 4px;font-size:11px;color:#52525b;font-weight:500;letter-spacing:.04em;text-transform:uppercase}' +
-      '#cp .cp-empty{padding:20px 16px;font-size:13px;color:#71717a;text-align:center}' +
-      '#cp .cp-f{padding:8px 16px;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:16px}' +
-      '#cp .cp-f span{font-size:9px;color:#475569;display:flex;align-items:center;gap:5px}' +
-      '#cp .cp-f .cp-wallet-on{color:#22c55e;font-weight:700}' +
-      '#cp .cp-f .cp-wallet-off{color:#64748b}' +
-      '#cp .cp-f span kbd{font-family:inherit;font-size:8px;color:#64748b;' +
-        'border:1px solid rgba(255,255,255,.1);border-radius:5px;padding:2px 6px;font-weight:600}' +
-
-      // light theme
-      '.light-theme #cp-o{background:rgba(0,0,0,0.15)}' +
-      '.light-theme #cp{background:#fff;border-color:#cbd5e1;box-shadow:none}' +
-      '.light-theme #cp .cp-h{border-bottom-color:#cbd5e1}' +
-      '.light-theme #cp .cp-h .cp-prefix{color:#52525b}' +
-      '.light-theme #cp .cp-h input{color:#1e293b}' +
-      '.light-theme #cp .cp-h input::placeholder{color:#94a3b8}' +
-      '.light-theme #cp .cp-badge.t-address{background:rgba(0,0,0,.06);color:#52525b}' +
-      '.light-theme #cp .cp-badge.t-tx{background:rgba(147,51,234,0.12);color:#9333ea}' +
-      '.light-theme #cp .cp-badge.t-url,.light-theme #cp .cp-badge.t-domain{background:rgba(22,163,74,0.12);color:#16a34a}' +
-      '.light-theme #cp .cp-badge.t-text{background:rgba(100,116,139,0.12);color:#64748b}' +
-      '.light-theme #cp .cp-l::-webkit-scrollbar-thumb{background:#cbd5e1}' +
-      '.light-theme #cp .cp-i:hover{background:rgba(0,0,0,.04)}' +
-      '.light-theme #cp .cp-i.sel{background:rgba(0,0,0,.06)}' +
-      '.light-theme #cp .cp-i .cp-ic{color:#94a3b8}' +
-      '.light-theme #cp .cp-i.sel .cp-ic{color:#18181b}' +
-      '.light-theme #cp .cp-i .cp-n{color:#1e293b}' +
-      '.light-theme #cp .cp-i .cp-d{color:#94a3b8}' +
-      '.light-theme #cp .cp-i.sel .cp-d{color:#52525b}' +
-      '.light-theme #cp .cp-sep{color:#94a3b8}' +
-      '.light-theme #cp .cp-empty{color:#94a3b8}' +
-      '.light-theme #cp .cp-f{border-top-color:#cbd5e1}' +
-      '.light-theme #cp .cp-f span{color:#94a3b8}' +
-      '.light-theme #cp .cp-f span kbd{color:#64748b;border-color:#cbd5e1}';
-    document.head.appendChild(s);
+    /* Command palette styles live in styles-tron.css */
   }
 
   function escHtml(s) {
@@ -217,16 +161,23 @@
   function createDOM() {
     var o = document.createElement('div'); o.id = 'cp-o';
     var p = document.createElement('div'); p.id = 'cp';
+    p.setAttribute('role', 'dialog');
+    p.setAttribute('aria-modal', 'true');
+    p.setAttribute('aria-label', typeof t === 'function' ? t('Quick actions') : 'Quick actions');
     p.innerHTML =
       '<div class="cp-h"><span class="cp-prefix">' + t('Search') + '</span><input id="cp-inp" type="text" placeholder="' + escHtml(t('paste address / TXID / contract / URL or type to filter')) + '" spellcheck="false" autocomplete="off"><span id="cp-badge" class="cp-badge"></span></div>' +
       '<div class="cp-l" id="cp-l"></div>' +
-      '<div class="cp-f"><span><kbd>\u2191</kbd><kbd>\u2193</kbd> ' + t('navigate') + '</span><span><kbd>\u21B5</kbd> ' + t('select') + '</span><span><kbd>esc</kbd> ' + t('close') + '</span></div>';
+      '<div class="cp-f">' +
+        '<span class="cp-f-item"><kbd>\u2191</kbd><kbd>\u2193</kbd><span class="cp-f-label">' + t('navigate') + '</span></span>' +
+        '<span class="cp-f-item"><kbd>\u21B5</kbd><span class="cp-f-label">' + t('select') + '</span></span>' +
+        '<span class="cp-f-item"><kbd>esc</kbd><span class="cp-f-label">' + t('close') + '</span></span>' +
+      '</div>';
     document.body.appendChild(o);
     document.body.appendChild(p);
     return { o: o, p: p };
   }
 
-  function renderList(items, sel) {
+  function renderList(items, sel, animate) {
     var list = document.getElementById('cp-l');
     list.innerHTML = '';
     var selIdx = 0;
@@ -234,7 +185,7 @@
     items.forEach(function(item, realIdx) {
       if (item.kind === 'sep') {
         var sep = document.createElement('div');
-        sep.className = 'cp-sep';
+        sep.className = 'cp-sep' + (animate ? '' : ' cp-sep--instant');
         sep.textContent = t('// MODULES');
         list.appendChild(sep);
         return;
@@ -242,34 +193,16 @@
 
       var isSel = (selIdx === sel);
       var d = document.createElement('div');
-      if (item.kind === 'wallet') {
-        d.className = 'cp-i tron-cnnctAprBtn' + (isSel ? ' sel' : '');
-        d.innerHTML =
-          '<span class="cp-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg></span>' +
-          '<span class="cp-n">' + t('wallet.connect') + '</span>' +
-          '<span class="cp-d">' + t('Connect TRON wallet') + '</span>';
-        d.dataset.idx = realIdx;
-        d.addEventListener('click', (function(it) {
-          return function() { executeItem(it); };
-        })(item));
-        d.addEventListener('mouseenter', (function(idx) {
-          return function() {
-            document.querySelectorAll('.cp-i').forEach(function(el) { el.classList.remove('sel'); });
-            this.classList.add('sel');
-            cmdIdx = idx;
-          };
-        })(selIdx));
-        list.appendChild(d);
-        selIdx++;
-        return;
-      }
+      if (item.kind === 'wallet') return;
 
-      d.className = 'cp-i' + (isSel ? ' sel' : '');
+      d.className = 'cp-i' + (isSel ? ' sel' : '') + (animate ? '' : ' cp-i--instant');
       d.dataset.idx = realIdx;
+      d.style.setProperty('--i', String(selIdx));
 
+      var fileLabel = item.data.file || item.data.id;
       d.innerHTML =
-        '<span class="cp-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><' + item.data.icon + '/></svg></span>' +
-        '<span class="cp-n">' + escHtml(t(item.data.name)) + '</span>' +
+        cpIconHtml(item.data.icon) +
+        '<span class="cp-n">' + escHtml(fileLabel) + '</span>' +
         '<span class="cp-d">' + escHtml(t(item.data.desc)) + '</span>';
 
       d.addEventListener('click', (function(it) {
@@ -306,25 +239,38 @@
     cmdActive = true;
     cmdIdx = 0;
     currentItems = [];
+    window._cpPrevFocus = document.activeElement;
 
     var els = createDOM();
     window._cpEls = els;
 
     currentItems = buildResults('');
-    renderList(currentItems, 0);
+    renderList(currentItems, 0, true);
 
-    setTimeout(function() { els.p.classList.add('show'); }, 10);
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() {
+        els.o.classList.add('is-open');
+        els.p.classList.add('show');
+      });
+    });
 
     var inp = document.getElementById('cp-inp');
     if (!inp) return;
     inp.focus();
+
+    if (typeof trapFocus === 'function') {
+      window._cpReleaseFocus = trapFocus(els.p, {
+        initialFocus: inp,
+        onEscape: closeCmd,
+      });
+    }
 
     inp.addEventListener('input', function() {
       currentItems = buildResults(this.value);
       var n = countSelectable(currentItems);
       if (cmdIdx >= n) cmdIdx = Math.max(0, n - 1);
       if (cmdIdx < 0) cmdIdx = 0;
-      renderList(currentItems, cmdIdx);
+      renderList(currentItems, cmdIdx, false);
 
       var badge = document.getElementById('cp-badge');
       if (!badge) return;
@@ -379,13 +325,21 @@
   function closeCmd() {
     if (!cmdActive) return;
     cmdActive = false;
+    if (typeof window._cpReleaseFocus === 'function') {
+      window._cpReleaseFocus();
+      window._cpReleaseFocus = null;
+    }
     var els = window._cpEls;
     if (els) {
+      els.o.classList.remove('is-open');
       els.p.classList.remove('show');
       setTimeout(function() {
         if (els.o && els.o.parentNode) els.o.parentNode.removeChild(els.o);
         if (els.p && els.p.parentNode) els.p.parentNode.removeChild(els.p);
-      }, 150);
+        var prev = window._cpPrevFocus;
+        window._cpPrevFocus = null;
+        if (prev && typeof prev.focus === 'function') prev.focus();
+      }, 320);
       window._cpEls = null;
     }
   }
@@ -409,9 +363,17 @@
 
   window.openCommandPalette = openCmd;
 
+  function bindMobileCmdBtn() {
+    /* Quick actions live in sidebar (desktop) and / hotkey; not in mobile More sheet. */
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', css);
+    document.addEventListener('DOMContentLoaded', function() {
+      css();
+      bindMobileCmdBtn();
+    });
   } else {
     css();
+    bindMobileCmdBtn();
   }
 })();

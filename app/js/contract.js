@@ -10,15 +10,8 @@ const contractEmpty = document.getElementById('contract-empty');
 contractInput.addEventListener('keydown', e => { if (e.key==='Enter') contractScan(); });
 contractBtn.addEventListener('click', contractScan);
 
-function ctrActionBtn({ id, label, icon, href, variant }) {
-  const cls = `wallet-action-btn${variant ? ` wallet-action-btn--${variant}` : ''}`;
-  const inner = `${icSVG(icon, 14)}<span>${esc(t(label))}</span>`;
-  if (href) return `<a class="${cls}" id="${id}" href="${esc(href)}" target="_blank" rel="noopener">${inner}</a>`;
-  return `<button type="button" class="${cls}" id="${id}">${inner}</button>`;
-}
-
 function ctrBlock(titleHtml, bodyHtml, meta = '') {
-  const metaHtml = meta ? `<span class="aml-block-meta">${t(meta)}</span>` : '';
+  const metaHtml = scanBlockMeta(meta);
   const title = /<[^>]+>/.test(titleHtml) ? titleHtml : esc(t(titleHtml));
   return `<div class="aml-block">
     <div class="aml-block-head">
@@ -40,23 +33,24 @@ function ctrKvRow(label, valueHtml, last) {
   </div>`;
 }
 
-function ctrHeadCard(name, addr, tagsHtml) {
-  return `<div class="aml-head-card contract-head-card">
-    <div class="wallet-head-top">
-      <div style="flex:1;min-width:0">
-        <div class="contract-head-name">${esc(name)}</div>
-        <div class="wallet-head-addr contract-head-addr">${esc(addr)}</div>
-      </div>
-      <div class="wallet-head-actions">
-        ${ctrActionBtn({ id: 'contract-copy-btn', label: 'Copy', icon: IC.copy })}
-        ${ctrActionBtn({ id: 'contract-tronscan-btn', label: 'TronScan', icon: IC.external, href: `https://tronscan.org/#/contract/${addr}`, variant: 'ext' })}
-      </div>
-    </div>
-    ${tagsHtml ? `<div class="wallet-head-tags">${tagsHtml}</div>` : ''}
-  </div>`;
+function ctrHeadCard(name, addr, tagsHtml, fromCache = false) {
+  const cacheTag = fromCache ? walletTag(t('session cache'), 'name') : '';
+  return scanHeadCard({
+    leadHtml: `<div style="flex:1;min-width:0">
+      <div class="contract-head-name">${esc(name)}</div>
+      <div class="wallet-head-addr contract-head-addr">${esc(addr)}</div>
+    </div>`,
+    actionsHtml: `
+      ${scanActionBtn({ id: 'contract-refresh-btn', label: 'Refresh scan', icon: IC.refresh })}
+      ${scanActionBtn({ id: 'contract-copy-btn', label: 'Copy', icon: IC.copy })}
+      ${scanActionBtn({ id: 'contract-tronscan-btn', label: 'TronScan', icon: IC.external, href: `https://tronscan.org/#/contract/${addr}`, variant: 'ext' })}
+    `,
+    tagsHtml: `${tagsHtml || ''}${cacheTag}`,
+  });
 }
 
 function bindContractActions(addr) {
+  document.getElementById('contract-refresh-btn')?.addEventListener('click', () => contractScan({ force: true }));
   document.getElementById('contract-copy-btn')?.addEventListener('click', () => {
     navigator.clipboard.writeText(addr).then(() => {
       const btn = document.getElementById('contract-copy-btn');
@@ -98,12 +92,12 @@ function ctrScoreLabel(score) {
 }
 
 function ctrRiskRow(risk) {
-  const tier = risk.lvl === 'danger' ? 'is-high' : risk.lvl === 'warn' ? 'is-med' : risk.lvl === 'info' ? 'is-info' : 'is-ok';
+  const tier = risk.lvl === 'danger' ? 'is-high' : risk.lvl === 'warn' ? 'is-med' : risk.lvl === 'info' ? 'is-low' : 'is-ok';
   const flagBadge = risk.lvl === 'danger' ? badge('b-red', t('Critical'))
     : risk.lvl === 'warn' ? badge('b-amber', t('Warning'))
     : risk.lvl === 'info' ? badge('b-cyan', t('Expected'))
     : badge('b-green', 'OK');
-  return `<div class="contract-risk ${tier}">
+  return `<div class="contract-risk risk-row ${tier}">
     <div class="contract-risk-body">
       ${risk.cat ? `<div class="contract-risk-cat">${esc(t(risk.cat))}</div>` : ''}
       <div class="contract-risk-msg">${esc(t(risk.msg))}</div>
@@ -120,6 +114,26 @@ function ctrRiskRows(risks) {
 let contractAbiLimit = 10;
 let contractResult   = null;
 let contractExtra    = null;
+let contractLastAddr = '';
+let contractFromCache = false;
+
+const CONTRACT_CACHE_TTL = 12 * 60 * 1000;
+
+function readContractSessionCache(addr) {
+  return readSessionCache('contract', addr, {
+    ttl: CONTRACT_CACHE_TTL,
+    validate: (p) => p.addr === addr && p.result,
+  });
+}
+
+function writeContractSessionCache(snapshot) {
+  if (!snapshot?.addr) return;
+  writeSessionCache('contract', snapshot.addr, snapshot);
+}
+
+function clearContractSessionCache(addr) {
+  clearSessionCache('contract', addr);
+}
 
 function _n(n) { return (n||'').toLowerCase(); }
 
@@ -394,18 +408,43 @@ async function fetchContractIntel(addr, standard) {
   };
 }
 
-async function contractScan() {
+async function contractScan(opts = {}) {
+  const force = opts.force === true;
   const addr = contractInput.value.trim();
   setError(contractErr, '');
+  if (!addr) { flashInput(contractInput); showToast(t('Enter a contract address')); return; }
+  if (!isValidTron(addr)) { flashInput(contractInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
+
+  contractLastAddr = addr;
+
+  if (!force) {
+    const cached = readContractSessionCache(addr);
+    if (cached?.result) {
+      contractResult = cached.result;
+      contractExtra = cached.extra || null;
+      contractAbiLimit = cached.abiLimit || 10;
+      contractFromCache = true;
+      hideScanEmpty(contractEmpty, { instant: true });
+      renderContract();
+      showToast(t('Loaded from session cache'));
+      return;
+    }
+  } else {
+    clearContractSessionCache(addr);
+  }
+
   contractAbiLimit = 10;
   contractResult = null;
   contractExtra = null;
-  if (!addr) { flashInput(contractInput); showToast(t('Enter a contract address')); return; }
-  if (!isValidTron(addr)) { flashInput(contractInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
-  contractRes.innerHTML = '';
-  contractEmpty.style.display = 'none';
-  spinBtn(contractBtn, true);
-  contractRes.innerHTML = SK.contract();
+  contractFromCache = false;
+  beginScanUI({
+    emptyEl: contractEmpty,
+    resultEl: contractRes,
+    errEl: contractErr,
+    btn: contractBtn,
+    input: contractInput,
+    skeletonHtml: SK.contract(),
+  });
 
   try {
     const body = { value: addr, visible: true };
@@ -416,9 +455,13 @@ async function contractScan() {
     ]);
 
     if (!contractData || contractData.Error || (!contractData.bytecode && !contractData.abi)) {
-      contractRes.innerHTML = '';
-      setError(contractErr, t('Not a contract address, or contract not deployed on TRON mainnet.'));
-      spinBtn(contractBtn, false);
+      failScanUI({
+        resultEl: contractRes,
+        errEl: contractErr,
+        msg: t('Not a contract address, or contract not deployed on TRON mainnet.'),
+        btn: contractBtn,
+        input: contractInput,
+      });
       return;
     }
 
@@ -490,10 +533,25 @@ async function contractScan() {
       official,
     };
     renderContract();
+    writeContractSessionCache({
+      addr,
+      result: contractResult,
+      extra: contractExtra,
+      abiLimit: contractAbiLimit,
+    });
   } catch (e) {
-    setError(contractErr, userFriendlyFetchError(e));
+    contractResult = null;
+    contractExtra = null;
+    failScanUI({
+      resultEl: contractRes,
+      errEl: contractErr,
+      msg: userFriendlyFetchError(e),
+      btn: contractBtn,
+      input: contractInput,
+    });
+    return;
   }
-  spinBtn(contractBtn, false);
+  endScanUI({ btn: contractBtn, input: contractInput });
 }
 
 function renderContract() {
@@ -508,24 +566,25 @@ function renderContract() {
     r.official ? badge('b-green', t('Official {symbol}', { symbol: r.official.symbol })) : '',
     standardLabel,
     r.verified ? badge('b-green', t('Verified')) : badge('b-amber', t('Unverified')),
-    r.dangerCount > 0 ? badge('b-red', `${r.dangerCount} critical`) :
-    r.warnCount > 0 ? badge('b-amber', `${r.warnCount} warnings`) : badge('b-green', t('Clean')),
+    r.dangerCount > 0 ? badge('b-red', t('{count} critical', { count: r.dangerCount })) :
+    r.warnCount > 0 ? badge('b-amber', t('{count} warnings', { count: r.warnCount })) : badge('b-green', t('Clean')),
   ].filter(Boolean).join('');
 
   const heroHtml = `
-    <div class="an-stat contract-risk-stat">
-      <div class="an-stat-label">Risk score</div>
-      <div class="contract-risk-body">
+    <div class="an-stat risk-stat risk-stat--contract contract-risk-stat">
+      <div class="an-stat-label">${t('Risk score')}</div>
+      <div class="risk-stat__body contract-risk-body">
         ${ctrShieldIcon(r.score, 40)}
-        <div class="contract-risk-text">
-          <div class="an-stat-value ${vCls}">${r.score}<span class="aml-score-unit">/100</span></div>
+        <div class="risk-stat__text contract-risk-text">
+          <div class="an-stat-value ${vCls}"><span class="score-value" data-score-value="${r.score}">0</span><span class="aml-score-unit">/100</span></div>
           <div class="an-stat-sub">${ctrScoreLabel(r.score)}</div>
+          <div class="aml-risk-meter"><div class="aml-risk-meter-fill ${vCls}" data-score-pct="${r.score}" style="width:4%"></div></div>
         </div>
       </div>
     </div>
     ${ctrHeroStat(t('Critical'), String(r.dangerCount), r.dangerCount ? t('dangerous patterns') : t('none found'), r.dangerCount ? 'is-red' : 'is-green')}
     ${ctrHeroStat(t('Warnings'), String(r.warnCount), r.warnCount ? t('review recommended') : t('none found'), r.warnCount ? 'is-amber' : 'is-green')}
-    ${ctrHeroStat('ABI entries', String(r.funcCount), contractExtra ? `${contractExtra.readFns} read / ${contractExtra.writeFns} write` : '', 'is-info')}`;
+    ${ctrHeroStat(t('ABI entries'), String(r.funcCount), contractExtra ? `${contractExtra.readFns} ${t('read')} / ${contractExtra.writeFns} ${t('write')}` : '', 'is-info')}`;
 
   let assessmentHtml;
   const claimScam = r.risks.some(x => x.lvl === 'danger' && (x.cat === 'Known scam' || x.cat === 'Claim drain' || x.cat === 'Claim trap'));
@@ -572,7 +631,7 @@ function renderContract() {
       : `<span class="kv-muted">${t('Unknown')}</span>`)}
     ${ctrKvRow(t('Deployed'), `${esc(r.created)}${ageWarn ? ' <span class="badge b-amber">&lt;7d</span>' : ''}`)}
     ${ctrKvRow(t('Interactions'), r.txCount !== '—' ? fmtNum(r.txCount) : '—')}
-    ${ctrKvRow(ttLabel('functions'), `${contractExtra ? contractExtra.readFns : '—'} read · ${contractExtra ? contractExtra.writeFns : '—'} write · ${contractExtra ? contractExtra.payableFns : '—'} ${ttLabel('payable')}`)}
+    ${ctrKvRow(ttLabel('functions'), `${contractExtra ? contractExtra.readFns : '—'} ${t('read')} · ${contractExtra ? contractExtra.writeFns : '—'} ${t('write')} · ${contractExtra ? contractExtra.payableFns : '—'} ${ttLabel('payable')}`)}
     ${r.contractBalance != null ? ctrKvRow(t('Balance'), `<span class="is-info">${r.contractBalance.toFixed(2)} TRX</span>`, true) : ctrKvRow(t('Balance'), '<span class="kv-muted">—</span>', true)}
   `);
 
@@ -603,37 +662,38 @@ function renderContract() {
   }).join('');
 
   const abiHtml = r.abi.length > 0 ? ctrBlock(
-    `Functions <span>· ${r.funcCount}</span>`,
+    `${t('Functions')} <span>· ${r.funcCount}</span>`,
     `<div class="contract-table-wrap">
       <table class="data-table contract-table">
-        <thead><tr><th>Name</th><th>Type</th><th>${tt('mutability')}</th><th>Risk</th></tr></thead>
+        <thead><tr><th>${t('Name')}</th><th>${t('Type')}</th><th>${tt('mutability')}</th><th>${t('Risk')}</th></tr></thead>
         <tbody>${abiFns}</tbody>
       </table>
       ${r.abi.length > contractAbiLimit ? `
       <div class="contract-table-foot">
-        <span class="contract-table-foot-meta kv-muted">Showing ${contractAbiLimit} of ${r.abi.length}</span>
+        <span class="contract-table-foot-meta kv-muted">${t('Showing {shown} of {total}', { shown: contractAbiLimit, total: r.abi.length })}</span>
         <button type="button" class="wallet-load-more-btn" id="show-more-abi">${icSVG(IC.arrowDown, 14)}<span>${t('Show more')}</span></button>
       </div>` : ''}
     </div>`,
-    `${contractExtra ? `${contractExtra.readFns} read` : ''}`
+    `${contractExtra ? `${contractExtra.readFns} ${t('read')}` : ''}`
   ) : '';
 
   contractRes.innerHTML = `
     <div class="contract-scan">
-      ${ctrHeadCard(r.name, r.addr, headTags)}
-      <div class="an-stat-grid an-stat-grid--4 contract-hero-grid">${heroHtml}</div>
+      ${ctrHeadCard(r.name, r.addr, headTags, contractFromCache)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">${heroHtml}</div>
       <div class="contract-assessment">${assessmentHtml}</div>
       <div class="aml-grid-2">
         ${ctrPanel(t('Score breakdown'), scoreRows)}
         ${infoHtml}
       </div>
       ${intelHtml}
-      ${ctrBlock(`Risk findings <span>· ${r.risks.length}</span>`, ctrRiskRows(r.risks))}
+      ${ctrBlock(`${t('Risk findings')} <span>· ${r.risks.length}</span>`, ctrRiskRows(r.risks))}
       ${abiHtml}
-      <p class="aml-disclaimer">ABI pattern scan — does not replace manual audit. Verify source code and permissions before interacting.</p>
+      <p class="aml-disclaimer">${t('ABI pattern scan — does not replace manual audit. Verify source code and permissions before interacting.')}</p>
     </div>`;
 
   bindContractActions(r.addr);
+  mountScanMotion(contractRes, { fromCache: contractFromCache });
 
   document.getElementById('show-more-abi')?.addEventListener('click', () => {
     contractAbiLimit += 20;
@@ -642,6 +702,10 @@ function renderContract() {
 }
 
 function resetContractScanCache() {
+  const addr = contractInput?.value?.trim() || contractLastAddr;
+  if (addr) clearContractSessionCache(addr);
+  contractLastAddr = '';
+  contractFromCache = false;
   contractResult = null;
   contractExtra = null;
   contractAbiLimit = 10;

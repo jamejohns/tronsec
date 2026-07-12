@@ -28,6 +28,21 @@ const CACHE_TTL = {
 function cacheIsFresh(key) { return analyticsCache[key] && Date.now() - analyticsCache[key] < CACHE_TTL[key]; }
 function cacheBust(key) { analyticsCache[key] = Date.now(); }
 
+const INIT_LOCALE_SWITCH_KEY = 'TRONSEC_locale_switch';
+const INIT_LOCALE_MIN_VISIBLE_MS = 1050;
+const INIT_LOADER_MS = 1000;
+
+function isLocaleSwitchPending() {
+    try {
+        const raw = sessionStorage.getItem(INIT_LOCALE_SWITCH_KEY);
+        if (!raw) return false;
+        const ts = Number(raw);
+        return Number.isFinite(ts) && ts > 0;
+    } catch (_) {
+        return false;
+    }
+}
+
 // ============ TAB SWITCHING ============
 const PURGE_FADE_MS = 220;
 const PURGE_BTN_MS = 140;
@@ -46,7 +61,7 @@ function animateModuleClear(section, onClear) {
     if (btn) {
         btn.classList.add('is-clearing');
         btn.disabled = true;
-        btn.textContent = '[ CLEARING ]';
+        btn.textContent = t('[ CLEARING ]');
     }
     if (hasContent && animTarget) animTarget.classList.add('is-purging');
 
@@ -56,8 +71,7 @@ function animateModuleClear(section, onClear) {
 
         const empty = section.querySelector('[id$="-empty"]');
         if (empty) {
-            empty.style.display = '';
-            empty.classList.remove('hidden');
+            showScanEmpty(empty);
             empty.classList.remove('is-entering');
             void empty.offsetWidth;
             empty.classList.add('is-entering');
@@ -83,6 +97,7 @@ function purgeTabNow(tabId, section) {
     if (tabId === 'scanner' && typeof resetWalletScanCache === 'function') resetWalletScanCache();
     if (tabId === 'approvals' && typeof resetApprovalsScanCache === 'function') resetApprovalsScanCache();
     if (tabId === 'aml-check' && typeof resetAmlScanCache === 'function') resetAmlScanCache();
+    if (tabId === 'permissions' && typeof resetPermissionsScanCache === 'function') resetPermissionsScanCache();
     if (tabId === 'vanity' && typeof resetVanityGen === 'function') resetVanityGen();
     if (typeof syncModuleNavState === 'function') syncModuleNavState(tabId);
 }
@@ -96,7 +111,32 @@ function purgeTab(tabId) {
     }
     animateModuleClear(section, () => purgeTabNow(tabId, section));
 }
-function switchTab(tabId) {
+const ANALYTICS_SECTIONS = ['an-section-market', 'an-section-network', 'an-section-usdt', 'an-section-security'];
+
+function parseAppHash() {
+    const raw = window.location.hash.replace(/^#/, '');
+    if (!raw) return { tab: null, section: null };
+    const analyticsMatch = raw.match(/^analytics(?:\/(.+))?$/);
+    if (analyticsMatch) {
+        const section = analyticsMatch[1] && ANALYTICS_SECTIONS.includes(analyticsMatch[1])
+            ? analyticsMatch[1]
+            : null;
+        return { tab: 'analytics', section };
+    }
+    if (document.getElementById(`tab-${raw}`)) return { tab: raw, section: null };
+    if (ANALYTICS_SECTIONS.includes(raw)) return { tab: 'analytics', section: raw };
+    return { tab: null, section: null };
+}
+
+function scrollToAnalyticsSection(sectionId) {
+    const el = document.getElementById(sectionId);
+    if (!el) return;
+    requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+}
+
+function switchTab(tabId, opts = {}) {
   closeMobileMoreMenu();
 
   document.querySelectorAll('.tab-content').forEach(tab => {
@@ -114,11 +154,24 @@ function switchTab(tabId) {
     btn.classList.add('tab-nav-active');
   });
 
+  if (typeof syncMobileMoreActiveItem === 'function') syncMobileMoreActiveItem(tabId);
+
+  document.querySelectorAll('[data-tab-btn]').forEach(btn => {
+    const id = btn.getAttribute('data-tab-btn');
+    if (!id || id === 'more') return;
+    btn.setAttribute('aria-selected', id === tabId ? 'true' : 'false');
+  });
+
   if (tabId === 'analytics') {
     if (_firstAnalytics) { _firstAnalytics = false; refreshAllAnalytics(true); }
     else { refreshAllAnalytics(false); }
     startAnalyticsPoll();
     bindAnChartResize();
+    const section = opts.section || parseAppHash().section;
+    if (section) scrollToAnalyticsSection(section);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => repaintAnChartsFromCache());
+    });
   } else {
     clearAnalyticsPoll();
   }
@@ -126,8 +179,10 @@ function switchTab(tabId) {
   if (window.lucide) lucide.createIcons();
 
   _switchingTab = true;
-  if (tabId === 'scanner') {
-    if (window.location.hash) history.replaceState(null, '', window.location.pathname + window.location.search);
+  if (tabId === 'analytics') {
+    const section = opts.section || parseAppHash().section;
+    const hash = section ? `analytics/${section}` : 'analytics';
+    if (window.location.hash !== `#${hash}`) window.location.hash = hash;
   } else if (window.location.hash !== `#${tabId}`) {
     window.location.hash = tabId;
   }
@@ -341,14 +396,15 @@ function applyMarketQuoteToUI(quote) {
 }
 
 function applyMarketUnavailable() {
+    const unavail = typeof t === 'function' ? t('Unavailable') : 'Unavailable';
     const price = document.getElementById('market-trx-price');
     const change = document.getElementById('market-trx-change');
     const mcap = document.getElementById('market-trx-mcap');
     const vol = document.getElementById('market-trx-volume');
-    if (price) { price.innerText = '—'; price.className = 'an-card-value'; }
-    if (change) { change.innerText = '—'; change.className = 'an-card-change'; }
-    if (mcap) { mcap.innerText = '—'; mcap.className = 'an-mini-val'; }
-    if (vol) { vol.innerText = '—'; vol.className = 'an-mini-val'; }
+    if (price) { price.innerText = unavail; price.className = 'an-card-value'; }
+    if (change) { change.innerText = unavail; change.className = 'an-card-change'; }
+    if (mcap) { mcap.innerText = unavail; mcap.className = 'an-mini-val'; }
+    if (vol) { vol.innerText = unavail; vol.className = 'an-mini-val'; }
 }
 
 async function fetchMarketData(opts = {}) {
@@ -413,12 +469,19 @@ const USDT_TRC20 = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 let _statsOverviewRows = null;
 let _statsOverviewAt = 0;
 let _statsOverviewDays = 0;
+function sortStatsOverviewAsc(rows) {
+    return rows.slice().sort((a, b) => {
+        const da = Date.parse(a?.dateDayStr || a?.label || '') || 0;
+        const db = Date.parse(b?.dateDayStr || b?.label || '') || 0;
+        return da - db;
+    });
+}
 async function getStatsOverview(days = 7) {
     if (_statsOverviewRows && Date.now() - _statsOverviewAt < 60000 && _statsOverviewDays === days) {
         return _statsOverviewRows;
     }
     const stats = await scanGet('/stats/overview', { days }).catch(() => null);
-    const rows = Array.isArray(stats?.data) ? stats.data.slice().reverse() : null;
+    const rows = Array.isArray(stats?.data) ? sortStatsOverviewAsc(stats.data) : null;
     _statsOverviewRows = rows;
     _statsOverviewAt = Date.now();
     _statsOverviewDays = days;
@@ -579,8 +642,8 @@ function bindAnChartResize() {
 }
 function attachPlotHover(plot, onMove, onLeave) {
     plot.on('mousemove', onMove).on('mouseleave', onLeave);
-    plot.on('touchstart', (ev) => { ev.preventDefault(); onMove(ev.touches[0]); }, { passive: false });
-    plot.on('touchmove', (ev) => { ev.preventDefault(); onMove(ev.touches[0]); }, { passive: false });
+    plot.on('touchstart', (ev) => { if (ev.touches[0]) onMove(ev.touches[0]); }, { passive: true });
+    plot.on('touchmove', (ev) => { ev.preventDefault(); if (ev.touches[0]) onMove(ev.touches[0]); }, { passive: false });
     plot.on('touchend', onLeave);
 }
 function formatChartUsd(n) {
@@ -596,7 +659,13 @@ function nearestChartIndex(data, clientX, plotLeft, plotWidth) {
 }
 function anChartDims(host, height, margin) {
     const mobile = isAnChartMobile();
-    const width = Math.max(host.clientWidth || 0, mobile ? 0 : 280);
+    const rect = host.getBoundingClientRect();
+    const parentW = host.parentElement?.clientWidth || 0;
+    const panelW = host.closest('.module-panel')?.clientWidth || 0;
+    const viewportW = document.documentElement?.clientWidth || window.innerWidth || 320;
+    let width = rect.width || host.clientWidth || parentW || panelW;
+    if (width < 80) width = panelW || parentW || (viewportW - 44);
+    width = Math.max(280, Math.min(width, viewportW - 16));
     const m = margin || { top: 14, right: 14, bottom: 28, left: 48 };
     return {
         width,
@@ -643,6 +712,10 @@ function renderAnAreaSeriesChart(host, rows, cfg) {
     host.innerHTML = '';
     host.classList.remove('an-chart--bars');
     host.classList.add('an-chart--line');
+    if (cfg.ariaLabel) {
+        host.setAttribute('role', 'img');
+        host.setAttribute('aria-label', cfg.ariaLabel);
+    }
     const profile = anChartProfile('series');
     host.classList.toggle('an-chart--mobile', profile.mobile);
     const height = cfg.height || profile.height;
@@ -710,6 +783,9 @@ function renderDualAxisLineChart(host, rows, leftKey, rightKey, leftClass, right
     }
     host.innerHTML = '';
     host.classList.add('an-chart--line');
+    const resourceLbl = typeof t === 'function' ? t('Energy and bandwidth usage chart') : 'Energy and bandwidth usage chart';
+    host.setAttribute('role', 'img');
+    host.setAttribute('aria-label', resourceLbl);
     const profile = anChartProfile('dual');
     host.classList.toggle('an-chart--mobile', profile.mobile);
     const height = profile.height;
@@ -797,6 +873,7 @@ function renderUsdtActivityChart(host, rows) {
         series: 'usdt',
         color: '#38bdf8',
         yBaseline: 'zero',
+        ariaLabel: txLbl,
         mapRow: (r) => ({
             label: chartDayLabel(r),
             fullDate: r.dateDayStr || '',
@@ -812,6 +889,7 @@ function renderTrxPriceChart(host, rows) {
         series: 'trx',
         color: '#4ade80',
         yBaseline: 'auto',
+        ariaLabel: priceLbl,
         mapRow: (r) => ({
             label: r.label,
             fullDate: r.fullDate || r.label,
@@ -1045,12 +1123,13 @@ async function fetchSecurityMetrics() {
             ${SK.analyticsStat('Active nodes', 'sec-stat-nodes', 'unavailable', 'neutral')}
             ${SK.analyticsStat('Peak TPS', 'sec-stat-tps', 'unavailable', 'neutral')}
             ${SK.analyticsStat('Total txns', 'sec-stat-txs', 'unavailable', 'neutral')}`;
-        ['sec-stat-contracts', 'sec-stat-nodes', 'sec-stat-tps', 'sec-stat-txs'].forEach(id => setAnStat(id, '--', 'neutral'));
+        ['sec-stat-contracts', 'sec-stat-nodes', 'sec-stat-tps', 'sec-stat-txs'].forEach(id => setAnStat(id, t('Unavailable'), 'neutral'));
     }
 }
 
 // ============ MOBILE / TOAST ============
 let _mobileMoreMenuGuard = false;
+let _mobileSheetReleaseFocus = null;
 function markDonateCopied(btn) {
     if (!btn || btn.dataset.donateBusy) return;
     if (!btn.dataset.donateLabel) btn.dataset.donateLabel = btn.textContent.trim();
@@ -1089,9 +1168,9 @@ function toggleMobileMoreMenu(ev) {
     const menu = document.getElementById('mobile-more-menu');
     const backdrop = document.getElementById('mobile-menu-backdrop');
     if (!menu || !backdrop) return;
-    const isOpening = menu.classList.contains('translate-y-full');
-    menu.classList.remove('translate-y-full', 'translate-y-0');
-    menu.classList.add(isOpening ? 'translate-y-0' : 'translate-y-full');
+    const isOpening = !menu.classList.contains('is-open');
+    menu.classList.toggle('is-open', isOpening);
+    menu.setAttribute('aria-hidden', isOpening ? 'false' : 'true');
     backdrop.classList.toggle('is-visible', isOpening);
     backdrop.setAttribute('aria-hidden', isOpening ? 'false' : 'true');
     document.body.classList.toggle('mobile-more-open', isOpening);
@@ -1099,31 +1178,47 @@ function toggleMobileMoreMenu(ev) {
     const btn = document.querySelector('[data-tab-btn=more]');
     if (btn) btn.classList.toggle('is-sheet-open', isOpening);
     if (isOpening) {
+        if (typeof syncMobileMoreActiveItem === 'function') syncMobileMoreActiveItem();
         _mobileMoreMenuGuard = true;
         requestAnimationFrame(() => { _mobileMoreMenuGuard = false; });
+        const focusTarget = menu.querySelector('.mobile-more-item, .mobile-more-close');
+        if (typeof trapFocus === 'function') {
+            _mobileSheetReleaseFocus = trapFocus(menu, {
+                initialFocus: focusTarget,
+                onEscape: closeMobileMoreMenu,
+            });
+        }
+    } else {
+        _mobileSheetReleaseFocus?.();
+        _mobileSheetReleaseFocus = null;
     }
 }
 function closeMobileMoreMenu() {
     const menu = document.getElementById('mobile-more-menu');
     const backdrop = document.getElementById('mobile-menu-backdrop');
     if (!menu || !backdrop) return;
-    menu.classList.remove('translate-y-0');
-    menu.classList.add('translate-y-full');
+    menu.classList.remove('is-open');
+    menu.setAttribute('aria-hidden', 'true');
     backdrop.classList.remove('is-visible');
     backdrop.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('mobile-more-open');
     document.body.style.overflow = '';
     const btn = document.querySelector('[data-tab-btn=more]');
     if (btn) btn.classList.remove('is-sheet-open');
+    _mobileSheetReleaseFocus?.();
+    _mobileSheetReleaseFocus = null;
 }
 document.addEventListener('click', function(e) {
     if (_mobileMoreMenuGuard) return;
     const menu = document.getElementById('mobile-more-menu');
     const btn = document.querySelector('[data-tab-btn=more]');
     if (!menu) return;
-    if (!menu.classList.contains('translate-y-0')) return;
+    if (!menu.classList.contains('is-open')) return;
     if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
     closeMobileMoreMenu();
+});
+window.matchMedia('(min-width: 768px)').addEventListener('change', (e) => {
+    if (e.matches) closeMobileMoreMenu();
 });
 function showToast(text, vars) {
     const toast = document.getElementById('toast');
@@ -1184,11 +1279,20 @@ function normLangCode(l) {
     return l;
 }
 
-function markActiveLangOption() {
+function updateCurrLangLabel() {
+    const el = document.getElementById('curr-lang');
+    if (!el) return;
     const lang = normLangCode(document.documentElement.getAttribute('lang'));
-    document.querySelectorAll('.lang-opt').forEach((opt) => {
-        opt.classList.toggle('lang-opt-active', normLangCode(opt.getAttribute('data-lang')) === lang);
-    });
+    const labels = { en: 'EN', ru: 'RU', zh: 'ZH', es: 'ES', 'pt-BR': 'PT', vi: 'VI', tr: 'TR', id: 'ID' };
+    el.textContent = labels[lang] || lang.toUpperCase().slice(0, 2);
+}
+
+function markActiveLangOption() {
+  const lang = normLangCode(document.documentElement.getAttribute('lang'));
+  document.querySelectorAll('.lang-opt').forEach((opt) => {
+    opt.classList.toggle('lang-opt-active', normLangCode(opt.getAttribute('data-lang')) === lang);
+  });
+  updateCurrLangLabel();
 }
 
 function appLocalePrefix() {
@@ -1202,6 +1306,21 @@ function appLocalePrefix() {
 
 function syncAppBrandLink() {
     if (typeof syncTronsecBrandLinks === 'function') syncTronsecBrandLinks();
+}
+
+function applyInitLoaderI18n() {
+    if (typeof t !== 'function') return;
+    const loader = document.getElementById('init-loader');
+    if (loader) loader.setAttribute('aria-label', t('Loading TRONSEC'));
+    const tagline = document.querySelector('.init-loader-tagline');
+    if (tagline) {
+        tagline.innerHTML =
+            t('TRX SECURITY SCANNER') +
+            ' <span class="init-loader-sep">|</span> ' +
+            t('POWERED BY') +
+            ' <span class="init-loader-tron">TRON</span>';
+    }
+    document.documentElement.classList.add('locale-loader-ready');
 }
 
 function applyDomI18n() {
@@ -1248,14 +1367,15 @@ function applyDomI18n() {
 
     const textSelectors = [
         '.sidebar-label',
-        '.mobile-sheet-block-label',
+        '.mobile-more-title',
+        '.mobile-more-item span',
         '.app-header-status span',
         '.module-panel-head h2',
         '.module-desc-lead',
         '.module-desc-tag',
         '.module-action-btn',
-        '.appr-empty-title',
-        '.appr-empty-hint',
+        '.scan-empty-title',
+        '.scan-empty-hint',
         '.an-section-label',
         '.an-card-label',
         '.an-mini-label',
@@ -1273,6 +1393,9 @@ function applyDomI18n() {
     ];
     textSelectors.forEach((sel) => {
         document.querySelectorAll(sel).forEach((el) => {
+            if (el.closest('[id$="-result"]')) return;
+            if (el.querySelector('.term')) return;
+            if (el.classList.contains('an-stat-value')) return;
             if (sel === '.field-label' && el.querySelector('.report-field-optional')) {
                 const opt = el.querySelector('.report-field-optional');
                 if (opt) setText(opt, opt.textContent.trim());
@@ -1303,17 +1426,7 @@ function applyDomI18n() {
         if (busy) el.setAttribute('data-busy', t(busy));
     });
 
-    const loader = document.getElementById('init-loader');
-    if (loader) loader.setAttribute('aria-label', t('Loading TRONSEC'));
-
-    const tagline = document.querySelector('.init-loader-tagline');
-    if (tagline) {
-        tagline.innerHTML =
-            t('TRX SECURITY SCANNER') +
-            ' <span class="init-loader-sep">|</span> ' +
-            t('POWERED BY') +
-            ' <span class="init-loader-tron">TRON</span>';
-    }
+    if (!isLocaleSwitchPending()) applyInitLoaderI18n();
 
     document.querySelectorAll('[data-footer-donate]').forEach((el) => {
         el.textContent = t('donate');
@@ -1326,6 +1439,9 @@ function applyDomI18n() {
         const version = ver ? ver.textContent.trim() : '';
         el.innerHTML = t('changelog') + (version ? ` <span class="sidebar-aside-ver">${version}</span>` : '');
     });
+
+    if (typeof refreshModuleNavStateAria === 'function') refreshModuleNavStateAria();
+    if (typeof patchAmlModuleCopy === 'function') patchAmlModuleCopy();
 }
 
 function initLangSwitcher() {
@@ -1375,6 +1491,23 @@ function initLangSwitcher() {
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') close();
     });
+
+    document.querySelectorAll('.lang-opt[href]').forEach((link) => {
+        link.addEventListener('click', (e) => {
+            const targetLang = normLangCode(link.getAttribute('data-lang'));
+            const currentLang = normLangCode(document.documentElement.getAttribute('lang'));
+            if (targetLang === currentLang) {
+                e.preventDefault();
+                close();
+                return;
+            }
+            e.preventDefault();
+            try { sessionStorage.setItem(INIT_LOCALE_SWITCH_KEY, String(Date.now())); } catch (_) {}
+            const base = (link.getAttribute('href') || '/app/').replace(/\/?$/, '/');
+            const hash = window.location.hash || '';
+            window.location.href = base + hash;
+        });
+    });
 }
 
 function loadSavedTheme() {
@@ -1385,6 +1518,7 @@ function loadSavedTheme() {
 let _captchaCallback = null;
 let _captchaOnCancel = null;
 let _captchaRequired = 3;
+let _captchaPrevFocus = null;
 const CAPTCHA_BTN_OFF = 'captcha-btn captcha-btn--disabled';
 const CAPTCHA_BTN_ON = 'captcha-btn captcha-btn--primary';
 const CAPTCHA_LOG = [
@@ -1464,6 +1598,28 @@ function applyCaptchaI18n() {
   }
 }
 
+function captchaFocusable() {
+    const modal = document.getElementById('captcha-modal');
+    if (!modal) return [];
+    return [...modal.querySelectorAll('button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')];
+}
+
+function trapCaptchaFocus(e) {
+    const modal = document.getElementById('captcha-modal');
+    if (!modal?.classList.contains('is-open') || e.key !== 'Tab') return;
+    const nodes = captchaFocusable();
+    if (!nodes.length) return;
+    const first = nodes[0];
+    const last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+    }
+}
+
 function requireCaptcha(callback, onCancel) {
   _captchaCallback = callback;
   _captchaOnCancel = onCancel || null;
@@ -1471,8 +1627,14 @@ function requireCaptcha(callback, onCancel) {
   resetCaptcha();
   modal.classList.remove('is-closing');
   modal.classList.remove('is-open');
+  _captchaPrevFocus = document.activeElement;
+  document.addEventListener('keydown', trapCaptchaFocus);
   requestAnimationFrame(() => {
-    requestAnimationFrame(() => modal.classList.add('is-open'));
+    requestAnimationFrame(() => {
+      modal.classList.add('is-open');
+      const nodes = captchaFocusable();
+      (nodes[0] || document.getElementById('captcha-start-btn'))?.focus?.();
+    });
   });
 }
 
@@ -1502,6 +1664,11 @@ function closeCaptcha(afterClose) {
   modal.classList.add('is-closing');
   setTimeout(() => {
     modal.classList.remove('is-closing');
+    document.removeEventListener('keydown', trapCaptchaFocus);
+    if (_captchaPrevFocus?.focus) {
+      try { _captchaPrevFocus.focus(); } catch (_) {}
+    }
+    _captchaPrevFocus = null;
     _captchaCallback = null;
     _captchaOnCancel = null;
     if (wasPending && typeof afterClose !== 'function' && typeof onCancel === 'function') onCancel();
@@ -1562,6 +1729,7 @@ function generateIconPuzzle() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'captcha-puzzle-btn';
+    btn.setAttribute('aria-label', t('{label} signature tile', { label: t(shape.label) }));
     btn.innerHTML = captchaShapeIcon(shape.id);
     btn.dataset.correct = isTarget ? '1' : '0';
     bindPuzzleBtn(btn, () => {
@@ -1638,18 +1806,59 @@ const REPORT_TYPE_LABELS = {
 function resetReportTypeButtons() {
     document.querySelectorAll('#report-type-group .report-type-btn').forEach(b => {
         b.classList.remove('report-type-active');
+        b.setAttribute('aria-checked', 'false');
     });
 }
 
 function selectReportType(el, type) {
     resetReportTypeButtons();
     el.classList.add('report-type-active');
+    el.setAttribute('aria-checked', 'true');
+    el.setAttribute('tabindex', '0');
     selectedReportType = type;
+    document.querySelectorAll('#report-type-group .report-type-btn').forEach(b => {
+        if (b !== el) b.setAttribute('tabindex', '-1');
+    });
+}
+
+function initReportTypeKeyboard() {
+    const group = document.getElementById('report-type-group');
+    if (!group || group.dataset.kbInit === '1') return;
+    group.dataset.kbInit = '1';
+    const buttons = () => [...group.querySelectorAll('.report-type-btn')];
+    const focusBtn = (btn) => {
+        if (!btn) return;
+        const type = btn.getAttribute('onclick')?.match(/selectReportType\(this,"([^"]+)"\)/)?.[1];
+        if (type) selectReportType(btn, type);
+        btn.focus();
+    };
+    group.addEventListener('keydown', (e) => {
+        const items = buttons();
+        const idx = items.indexOf(document.activeElement);
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            focusBtn(items[(idx + 1 + items.length) % items.length]);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            focusBtn(items[(idx - 1 + items.length) % items.length]);
+        } else if (e.key === 'Home') {
+            e.preventDefault();
+            focusBtn(items[0]);
+        } else if (e.key === 'End') {
+            e.preventDefault();
+            focusBtn(items[items.length - 1]);
+        }
+    });
+    buttons().forEach((btn, i) => btn.setAttribute('tabindex', i === 0 ? '0' : '-1'));
 }
 
 function updateDescCounter() {
     const el = document.getElementById('report-desc');
-    document.getElementById('report-desc-counter').textContent = `${el.value.length} / 500`;
+    if (!el) return;
+    document.getElementById('report-desc-counter').textContent = t('{current} / {max}', {
+        current: el.value.length,
+        max: 500,
+    });
 }
 
 function setReportSubmitBusy(busy) {
@@ -1670,8 +1879,8 @@ function setReportSubmitBusy(busy) {
 
 function submitReport() {
     const target = document.getElementById('report-target').value.trim();
-    if (!target) { flashInput(document.getElementById('report-target')); showToast(' Enter a target address or URL'); return; }
-    if (!selectedReportType) { showToast(' Select a report type'); return; }
+    if (!target) { flashInput(document.getElementById('report-target')); showToast(t('Enter a target address or URL')); return; }
+    if (!selectedReportType) { showToast(t('Select a report type')); return; }
     const desc = document.getElementById('report-desc').value.trim();
     const links = document.getElementById('report-links').value.trim();
     const contact = document.getElementById('report-contact').value.trim();
@@ -1689,7 +1898,7 @@ function submitReport() {
         if (contact) lines.push(`<b>Contact:</b> ${esc(contact)}`);
 
         if (!(typeof window.tronsecTelegramConfigured === 'function' && window.tronsecTelegramConfigured())) {
-            showToast('Report backend not configured (API keys required)');
+            showToast(t('Report backend not configured (API keys required)'));
             return;
         }
 
@@ -1722,10 +1931,10 @@ function submitReport() {
             setReportSubmitBusy(false);
             formFields.classList.add('hidden');
             successBlock.classList.remove('hidden');
-            showToast('Report sent ✓');
+            showToast(t('Report sent ✓'));
         } catch (e) {
             setReportSubmitBusy(false);
-            showToast('Failed to send report — {message}', { message: e.message });
+            showToast(t('Failed to send report — {message}'), { message: e.message });
         }
     });
 }
@@ -1738,7 +1947,7 @@ function clearReportForm() {
         document.getElementById('report-desc').value = '';
         document.getElementById('report-links').value = '';
         document.getElementById('report-contact').value = '';
-        document.getElementById('report-desc-counter').textContent = '0 / 500';
+        document.getElementById('report-desc-counter').textContent = t('{current} / {max}', { current: 0, max: 500 });
         selectedReportType = null;
         resetReportTypeButtons();
         document.getElementById('report-success').classList.add('hidden');
@@ -1748,8 +1957,8 @@ function clearReportForm() {
 
 // ============ INIT ============
 function getInitialTab() {
-    const fromHash = window.location.hash.replace(/^#/, '');
-    if (fromHash && document.getElementById(`tab-${fromHash}`)) return fromHash;
+    const parsed = parseAppHash();
+    if (parsed.tab) return parsed.tab;
     loadAppState();
     return window.activeTab || 'scanner';
 }
@@ -1758,6 +1967,7 @@ const TAB_PREFILL = {
     scanner: { inputId: 'wallet-input' },
     'aml-check': { inputId: 'aml-input' },
     approvals: { inputId: 'approvals-input' },
+    permissions: { inputId: 'permissions-input' },
     'contract-scan': { inputId: 'contract-input' },
     'scan-url': { inputId: 'phish-input' },
     'tx-decoder': { inputId: 'tx-input' },
@@ -1812,23 +2022,56 @@ function applyScanPrefill() {
 function initLoaderSleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
+function hideInitLoader(loader) {
+    if (!loader) return;
+    loader.classList.add('done');
+    loader.setAttribute('aria-hidden', 'true');
+    loader.setAttribute('aria-busy', 'false');
+    document.documentElement.classList.remove('locale-switch-boot', 'locale-loader-ready');
+}
 async function runInitLoader() {
     const loader = document.getElementById('init-loader');
     if (!loader) return;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    await initLoaderSleep(reduced ? 320 : 1380);
-    loader.classList.add('done');
-    loader.setAttribute('aria-hidden', 'true');
-    loader.setAttribute('aria-busy', 'false');
-    window.setTimeout(() => loader.remove(), reduced ? 100 : 520);
+    const localeSwitchAt = (() => {
+        try {
+            const raw = sessionStorage.getItem(INIT_LOCALE_SWITCH_KEY);
+            if (!raw) return 0;
+            const ts = Number(raw);
+            return Number.isFinite(ts) && ts > 0 ? ts : 0;
+        } catch (_) {
+            return 0;
+        }
+    })();
+    const localeSwitch = localeSwitchAt > 0;
+    if (localeSwitch) {
+        try { sessionStorage.removeItem(INIT_LOCALE_SWITCH_KEY); } catch (_) {}
+        const minMs = reduced ? 400 : INIT_LOCALE_MIN_VISIBLE_MS;
+        const minOnPage = reduced ? 360 : 620;
+        const sinceClick = Date.now() - localeSwitchAt;
+        const sinceNav = performance.now();
+        const wait = Math.max(
+            Math.max(0, minMs - sinceClick),
+            Math.max(0, minOnPage - sinceNav)
+        );
+        if (wait > 0) await initLoaderSleep(wait);
+        hideInitLoader(loader);
+        return;
+    }
+
+    await initLoaderSleep(reduced ? 120 : INIT_LOADER_MS);
+    hideInitLoader(loader);
 }
 
 window.addEventListener('DOMContentLoaded', () => {
     try {
+        if (isLocaleSwitchPending()) applyInitLoaderI18n();
         loadSavedTheme();
         syncAppBrandLink();
         initLangSwitcher();
         lucide.createIcons();
+        if (typeof initModuleDescTags === 'function') initModuleDescTags();
+        initReportTypeKeyboard();
         switchTab(getInitialTab());
 
         try {
@@ -1843,8 +2086,14 @@ window.addEventListener('DOMContentLoaded', () => {
 
 window.addEventListener('hashchange', () => {
     if (_switchingTab) return;
-    const tab = window.location.hash.replace(/^#/, '');
-    if (tab && document.getElementById(`tab-${tab}`)) {
-        switchTab(tab);
+    const parsed = parseAppHash();
+    if (parsed.tab) {
+        const active = document.querySelector('.tab-content.active');
+        const activeId = active?.id?.replace('tab-', '') || '';
+        if (parsed.tab !== activeId) {
+            switchTab(parsed.tab, { section: parsed.section || null });
+        } else if (parsed.tab === 'analytics' && parsed.section) {
+            scrollToAnalyticsSection(parsed.section);
+        }
     }
 });

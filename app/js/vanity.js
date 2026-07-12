@@ -26,7 +26,6 @@ const vanityDualInput = document.getElementById('vanity-dual-input');
 const vanityStartBtn = document.getElementById('vanity-start-btn');
 const vanityErr = document.getElementById('vanity-err');
 const vanityResult = document.getElementById('vanity-result');
-const vanityEmpty = document.getElementById('vanity-empty');
 const vanityProgress = document.getElementById('vanity-progress');
 const vanityModeGroup = document.getElementById('vanity-mode-group');
 const vanityCaseSensitive = document.getElementById('vanity-case-sensitive');
@@ -336,6 +335,7 @@ function vanitySetMode(mode) {
     const on = btn.dataset.mode === mode;
     btn.classList.toggle('is-active', on);
     btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    btn.setAttribute('tabindex', on ? '0' : '-1');
   });
   vanitySyncInputLayout(mode);
   vanityUpdateFormState();
@@ -600,7 +600,6 @@ function vanityUpdateFormState() {
   if (vanityDifficulty) {
     const showBadge = !!trimmed && !invalid.length;
     const showOk = ready;
-    vanityDifficulty.hidden = !showBadge;
     vanityDifficulty.classList.toggle('hidden', !showBadge);
     if (infeasible || tooLong) {
       vanityDifficulty.className = 'badge b-red vanity-diff-badge';
@@ -785,7 +784,6 @@ function resetVanityGen() {
   vanitySetFlowState('idle');
   vanityClearProgressDOM();
   if (vanityResult) vanityResult.innerHTML = '';
-  if (vanityEmpty) vanityEmpty.style.display = '';
   setError(vanityErr, '');
   vanityUpdateFormState();
   if (typeof syncModuleNavState === 'function') syncModuleNavState('vanity');
@@ -956,9 +954,9 @@ async function vanityStart() {
     ? `prefix:${prefix} suffix:${suffix}`
     : trimmed;
   vanityLastPatternDesc = vanityPatternDesc;
-  if (vanityEmpty) vanityEmpty.style.display = 'none';
   if (vanityResult) vanityResult.innerHTML = '';
   vanityClearProgressDOM();
+  if (vanityProgress) vanityProgress.innerHTML = SK.vanity();
   vanitySetRunning(true);
   vanityUpdateProgressUI();
   vanityProgressTimer = setInterval(vanityUpdateProgressUI, 250);
@@ -1049,6 +1047,32 @@ vanityModeGroup?.querySelectorAll('.vanity-mode-btn').forEach((btn) => {
     if (vanityRunning) return;
     vanitySetMode(btn.dataset.mode);
   });
+});
+
+vanityModeGroup?.addEventListener('keydown', (e) => {
+  if (vanityRunning) return;
+  const tabs = [...(vanityModeGroup?.querySelectorAll('.vanity-mode-btn') || [])];
+  const idx = tabs.indexOf(document.activeElement);
+  if (idx < 0) return;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    const next = tabs[(idx + 1) % tabs.length];
+    vanitySetMode(next.dataset.mode);
+    next.focus();
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const prev = tabs[(idx - 1 + tabs.length) % tabs.length];
+    vanitySetMode(prev.dataset.mode);
+    prev.focus();
+  } else if (e.key === 'Home') {
+    e.preventDefault();
+    vanitySetMode(tabs[0].dataset.mode);
+    tabs[0].focus();
+  } else if (e.key === 'End') {
+    e.preventDefault();
+    vanitySetMode(tabs[tabs.length - 1].dataset.mode);
+    tabs[tabs.length - 1].focus();
+  }
 });
 
 vanityPresets?.querySelectorAll('.vanity-preset:not(.vanity-preset-both)').forEach((btn) => {
