@@ -1163,6 +1163,13 @@ document.addEventListener('click', function(e) {
         copyDonate('TRON', btn);
     }
 });
+function resetMobileMoreSheetTransform() {
+    const menu = document.getElementById('mobile-more-menu');
+    if (!menu) return;
+    menu.classList.remove('is-dragging');
+    menu.style.removeProperty('transform');
+}
+
 function toggleMobileMoreMenu(ev) {
     if (ev) ev.stopPropagation();
     const menu = document.getElementById('mobile-more-menu');
@@ -1174,10 +1181,10 @@ function toggleMobileMoreMenu(ev) {
     backdrop.classList.toggle('is-visible', isOpening);
     backdrop.setAttribute('aria-hidden', isOpening ? 'false' : 'true');
     document.body.classList.toggle('mobile-more-open', isOpening);
-    document.body.style.overflow = isOpening ? 'hidden' : '';
     const btn = document.querySelector('[data-tab-btn=more]');
     if (btn) btn.classList.toggle('is-sheet-open', isOpening);
     if (isOpening) {
+        resetMobileMoreSheetTransform();
         if (typeof syncMobileMoreActiveItem === 'function') syncMobileMoreActiveItem();
         _mobileMoreMenuGuard = true;
         requestAnimationFrame(() => { _mobileMoreMenuGuard = false; });
@@ -1189,6 +1196,7 @@ function toggleMobileMoreMenu(ev) {
             });
         }
     } else {
+        resetMobileMoreSheetTransform();
         _mobileSheetReleaseFocus?.();
         _mobileSheetReleaseFocus = null;
     }
@@ -1202,11 +1210,66 @@ function closeMobileMoreMenu() {
     backdrop.classList.remove('is-visible');
     backdrop.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('mobile-more-open');
-    document.body.style.overflow = '';
+    resetMobileMoreSheetTransform();
     const btn = document.querySelector('[data-tab-btn=more]');
     if (btn) btn.classList.remove('is-sheet-open');
     _mobileSheetReleaseFocus?.();
     _mobileSheetReleaseFocus = null;
+}
+function initMobileMoreSheetDrag() {
+    const menu = document.getElementById('mobile-more-menu');
+    if (!menu) return;
+    const grab = menu.querySelector('.mobile-more-grab');
+    const head = menu.querySelector('.mobile-more-head');
+    if (!grab) return;
+
+    let startY = 0;
+    let dragDy = 0;
+    let dragging = false;
+    let activePointer = null;
+
+    function canStartDrag(target) {
+        return target && !target.closest('.mobile-more-close, .mobile-more-item, .mobile-more-nav, .mobile-more-foot');
+    }
+
+    function onPointerDown(e) {
+        if (!menu.classList.contains('is-open')) return;
+        if (!canStartDrag(e.target)) return;
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        dragging = true;
+        activePointer = e.pointerId;
+        startY = e.clientY;
+        dragDy = 0;
+        menu.classList.add('is-dragging');
+        if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId);
+    }
+
+    function onPointerMove(e) {
+        if (!dragging || e.pointerId !== activePointer) return;
+        dragDy = Math.max(0, e.clientY - startY);
+        menu.style.transform = `translate3d(0, ${dragDy}px, 0)`;
+    }
+
+    function onPointerEnd(e) {
+        if (!dragging || e.pointerId !== activePointer) return;
+        dragging = false;
+        activePointer = null;
+        menu.classList.remove('is-dragging');
+        if (dragDy > 72) {
+            closeMobileMoreMenu();
+            return;
+        }
+        menu.style.removeProperty('transform');
+        dragDy = 0;
+    }
+
+    [grab, head].forEach((el) => {
+        if (!el) return;
+        el.addEventListener('pointerdown', onPointerDown);
+        el.addEventListener('pointermove', onPointerMove);
+        el.addEventListener('pointerup', onPointerEnd);
+        el.addEventListener('pointercancel', onPointerEnd);
+    });
 }
 document.addEventListener('click', function(e) {
     if (_mobileMoreMenuGuard) return;
@@ -2072,6 +2135,7 @@ window.addEventListener('DOMContentLoaded', () => {
         lucide.createIcons();
         if (typeof initModuleDescTags === 'function') initModuleDescTags();
         initReportTypeKeyboard();
+        initMobileMoreSheetDrag();
         switchTab(getInitialTab());
 
         try {
