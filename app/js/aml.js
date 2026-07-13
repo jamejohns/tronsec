@@ -66,8 +66,8 @@ function restoreAmlFromCache(cached) {
     window._amlLastReport = cached.report || null;
     bindAmlActions(cached.addr);
     if (cached.graphPayload) {
-      const { addr, topPeers, peerFlags, directTransfers, txCount } = cached.graphPayload;
-      renderAMLGraph('aml-graph-container', addr, topPeers, peerFlags, directTransfers, txCount);
+      const { addr, topPeers, peerFlags, directTransfers, txCount, selfFlagged } = cached.graphPayload;
+      renderAMLGraph('aml-graph-container', addr, topPeers, peerFlags, directTransfers, txCount, { selfFlagged: !!selfFlagged });
     }
     showToast(t('Loaded from session cache'));
   }
@@ -184,302 +184,62 @@ function bindAmlActions(addr) {
   if (typeof bindScanHeadOverflow === 'function') bindScanHeadOverflow(amlRes);
 }
 
-const AML_PDF = {
-  bg: [10, 10, 11],
-  panel: [17, 17, 19],
-  text: [245, 245, 247],
-  text2: [161, 161, 170],
-  text3: [113, 113, 122],
-  text4: [82, 82, 91],
-  line: [38, 38, 42],
-  red: [251, 113, 133],
-  green: [52, 211, 153],
-  amber: [251, 191, 36],
-  info: [200, 206, 216],
-};
-
-class AmlPdfWriter {
-  constructor(reportId) {
-    this.W = 595.28;
-    this.H = 842;
-    this.margin = 45;
-    this.reportId = reportId || '';
-    this.pages = [[]];
-    this.pageIdx = 0;
-    this.cursorY = this.H - this.margin;
-    this.paintPageBg(this.reportId);
+async function amlExportPdf(report) {
+  const api = window.tronsecAmlPdf;
+  if (!report || !api?.AmlPdfWriter) {
+    showToast(t('PDF export failed'));
+    return;
   }
-
-  rgb(c) {
-    return `${(c[0] / 255).toFixed(3)} ${(c[1] / 255).toFixed(3)} ${(c[2] / 255).toFixed(3)}`;
-  }
-
-  esc(text) {
-    return amlPdfPlain(text)
-      .replace(/\\/g, '\\\\')
-      .replace(/\(/g, '\\(')
-      .replace(/\)/g, '\\)');
-  }
-
-  cmd(line) {
-    this.pages[this.pageIdx].push(line);
-  }
-
-  newPage() {
-    this.pageIdx += 1;
-    this.pages.push([]);
-    this.cursorY = this.H - this.margin - 30;
-    this.paintPageBg(this.reportId);
-  }
-
-  need(h) {
-    if (this.cursorY - h < this.margin + 52) this.newPage();
-  }
-
-  paintPageBg(reportId) {
-    this.cmd('q');
-    this.cmd(`${this.rgb(AML_PDF.bg)} rg`);
-    this.cmd(`0 0 ${this.W} ${this.H} re f`);
-    this.cmd('Q');
-    this.drawFooter(reportId);
-  }
-
-  drawFooter(reportId) {
-    const fy = this.margin + 4;
-    this.strokeLine(fy + 16, AML_PDF.line);
-    this.drawShield(this.margin, fy + 1, 13);
-    this.text(this.margin + 18, fy + 10, 'TRONSEC', 8, 'sans', AML_PDF.text, true);
-    this.text(this.margin + 18, fy + 2, 'AML Screening', 6.5, 'mono', AML_PDF.text4);
-    if (reportId) {
-      this.textRight(this.W - this.margin, fy + 8, reportId, 7, 'mono', AML_PDF.text4);
-    }
-  }
-
-  fillRect(x, y, w, h, color) {
-    this.cmd('q');
-    this.cmd(`${this.rgb(color)} rg`);
-    this.cmd(`${x} ${y} ${w} ${h} re f`);
-    this.cmd('Q');
-  }
-
-  strokeLine(y, color) {
-    this.cmd('q');
-    this.cmd(`${this.rgb(color)} RG`);
-    this.cmd('0.4 w');
-    this.cmd(`${this.margin} ${y} m ${this.W - this.margin} ${y} l S`);
-    this.cmd('Q');
-  }
-
-  strokeRect(x, y, w, h, color, width) {
-    this.cmd('q');
-    this.cmd(`${this.rgb(color)} RG`);
-    this.cmd(`${width || 0.5} w`);
-    this.cmd(`${x} ${y} ${w} ${h} re S`);
-    this.cmd('Q');
-  }
-
-  panel(x, y, w, h, fill, border) {
-    if (fill) this.fillRect(x, y, w, h, fill);
-    if (border) this.strokeRect(x, y, w, h, border, 0.5);
-  }
-
-  text(x, y, str, size, font, color, bold) {
-    const key = font === 'mono' ? 'F2' : (bold ? 'F1b' : 'F1');
-    this.cmd('BT');
-    this.cmd(`${this.rgb(color)} rg`);
-    this.cmd(`/${key} ${size} Tf`);
-    this.cmd(`1 0 0 1 ${x} ${y} Tm`);
-    this.cmd(`(${this.esc(str)}) Tj`);
-    this.cmd('ET');
-  }
-
-  textWidth(str, size, font) {
-    const ratio = font === 'mono' ? 0.6 : 0.48;
-    return String(str).length * size * ratio;
-  }
-
-  textRight(rightX, y, str, size, font, color, bold) {
-    this.text(rightX - this.textWidth(str, size, font), y, str, size, font, color, bold);
-  }
-
-  wrapText(str, maxWidth, size, font) {
-    const words = String(str).split(/\s+/);
-    const lines = [];
-    let line = '';
-    for (const word of words) {
-      const test = line ? `${line} ${word}` : word;
-      if (this.textWidth(test, size, font) > maxWidth && line) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = test;
-      }
-    }
-    if (line) lines.push(line);
-    return lines.length ? lines : [''];
-  }
-
-  drawShield(x, y, size) {
-    const w = size * 0.82;
-    const h = size;
-    const mx = (v) => x + (v / 64) * w;
-    const my = (v) => y + h - (v / 64) * h;
-    this.cmd('q');
-    this.cmd(`${this.rgb(AML_PDF.text)} rg`);
-    this.cmd(`${mx(32)} ${my(8)} m`);
-    this.cmd(`${mx(12)} ${my(18)} l`);
-    this.cmd(`${mx(12)} ${my(30)} l`);
-    this.cmd(`${mx(12)} ${my(40.8)} ${mx(20.2)} ${my(50.8)} ${mx(32)} ${my(54)} c`);
-    this.cmd(`${mx(43.8)} ${my(50.8)} ${mx(52)} ${my(40.8)} ${mx(52)} ${my(30)} c`);
-    this.cmd(`${mx(52)} ${my(18)} l`);
-    this.cmd(`${mx(32)} ${my(8)} l`);
-    this.cmd('h f');
-    this.cmd('Q');
-  }
-
-  section(title) {
-    this.need(28);
-    this.strokeLine(this.cursorY, AML_PDF.line);
-    this.cursorY -= 18;
-    this.text(this.margin, this.cursorY, amlPdfPlain(title).toUpperCase(), 8, 'sans', AML_PDF.text4, true);
-    this.cursorY -= 14;
-  }
-
-  bullet(str, color) {
-    const lines = this.wrapText(str, this.W - this.margin * 2 - 16, 9, 'sans');
-    this.need(lines.length * 12 + 4);
-    lines.forEach((line, i) => {
-      if (i === 0) this.text(this.margin, this.cursorY, '-', 9, 'mono', AML_PDF.text4);
-      this.text(this.margin + 10, this.cursorY, line, 9, 'sans', color || AML_PDF.text2);
-      this.cursorY -= 12;
-    });
-    this.cursorY -= 2;
-  }
-
-  row(label, value, valueColor) {
-    this.need(14);
-    this.text(this.margin, this.cursorY, label, 9, 'sans', AML_PDF.text3);
-    this.text(this.margin + 150, this.cursorY, String(value), 9, 'mono', valueColor || AML_PDF.text);
-    this.cursorY -= 14;
-  }
-
-  disclaimerBox(text) {
-    const lines = this.wrapText(text, this.W - this.margin * 2 - 20, 7.5, 'sans');
-    const boxH = lines.length * 10 + 18;
-    this.need(boxH + 14);
-    const boxY = this.cursorY - boxH;
-    this.panel(this.margin, boxY, this.W - this.margin * 2, boxH, AML_PDF.panel, AML_PDF.line);
-    this.text(this.margin + 10, this.cursorY - 12, 'DISCLAIMER', 7, 'mono', AML_PDF.text4, true);
-    let ly = this.cursorY - 24;
-    lines.forEach(line => {
-      this.text(this.margin + 10, ly, line, 7.5, 'sans', AML_PDF.text3);
-      ly -= 10;
-    });
-    this.cursorY = boxY - 14;
-  }
-
-  download(filename) {
-    const blob = new Blob([this.build()], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  build() {
-    const objs = [''];
-    const add = (body) => { objs.push(body); return objs.length - 1; };
-
-    const fontSans = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
-    const fontSansBold = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
-    const fontMono = add('<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>');
-
-    const contentIds = this.pages.map((page) => {
-      const stream = page.join('\n');
-      return add(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
-    });
-
-    const pageIds = contentIds.map(() => add('PLACEHOLDER'));
-    const pagesId = add(`<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`);
-
-    pageIds.forEach((pageId, i) => {
-      objs[pageId] = `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${this.W} ${this.H}] /Contents ${contentIds[i]} 0 R /Resources << /Font << /F1 ${fontSans} 0 R /F1b ${fontSansBold} 0 R /F2 ${fontMono} 0 R >> >> >>`;
-    });
-
-    const catalogId = add(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`);
-
-    let pdf = '%PDF-1.4\n';
-    const offsets = [0];
-    for (let i = 1; i < objs.length; i++) {
-      offsets.push(pdf.length);
-      pdf += `${i} 0 obj\n${objs[i]}\nendobj\n`;
-    }
-    const xrefPos = pdf.length;
-    pdf += `xref\n0 ${objs.length}\n0000000000 65535 f \n`;
-    for (let i = 1; i < objs.length; i++) {
-      pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
-    }
-    pdf += `trailer\n<< /Size ${objs.length} /Root ${catalogId} 0 R >>\nstartxref\n${xrefPos}\n%%EOF`;
-    return pdf;
-  }
-}
-
-function amlPdfStatusColor(status, isFlagged) {
-  if (isFlagged || status === 'flagged') return AML_PDF.red;
-  if (status === 'unusual') return AML_PDF.amber;
-  if (status === 'insufficient') return AML_PDF.text3;
-  return AML_PDF.green;
-}
-
-function amlExportPdf(report) {
+  const { AmlPdfWriter, AML_PDF, amlPdfStatusColor } = api;
   const btn = document.getElementById('aml-export-pdf-btn');
   if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
   try {
-    const reportId = `ID ${report.addr.slice(-8).toUpperCase()}`;
+    await api.ensurePdfBrandAssets();
+    const reportId = `AML-${report.addr.slice(-8).toUpperCase()}`;
     const pdf = new AmlPdfWriter(reportId);
     const m = pdf.margin;
     const scoreColor = amlPdfStatusColor(report.status, report.isFlagged);
-    const top = pdf.H - m;
+    const stamp = new Date(report.scannedAt).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 
-    pdf.text(m, top - 16, 'TRONSEC', 22, 'sans', AML_PDF.text, true);
-    pdf.text(m, top - 30, 'AML SCREENING REPORT', 9, 'mono', AML_PDF.text4, true);
-
-    const stamp = new Date(report.scannedAt).toUTCString().replace(' GMT', ' UTC');
-    pdf.textRight(pdf.W - m, top - 16, stamp, 7.5, 'mono', AML_PDF.text4);
-    pdf.textRight(pdf.W - m, top - 28, reportId, 7.5, 'mono', AML_PDF.text4);
-
-    pdf.strokeLine(top - 40, AML_PDF.line);
-
-    const cardH = 78;
-    const cardY = top - 40 - cardH;
-    pdf.fillRect(m, cardY, 4, cardH, scoreColor);
-    pdf.panel(m + 4, cardY, pdf.W - m * 2 - 4, cardH, AML_PDF.panel, AML_PDF.line);
-
-    pdf.text(m + 18, cardY + 54, String(report.finalScore), 28, 'mono', scoreColor, true);
-    pdf.text(m + 46, cardY + 54, '/100', 11, 'mono', AML_PDF.text3);
-    pdf.text(m + 18, cardY + 36, t(report.statusLabel), 11, 'sans', scoreColor, true);
-    pdf.text(m + 18, cardY + 22, report.hasHardSignals ? t('Composite risk signal') : t('Activity risk signal'), 8, 'sans', AML_PDF.text4);
-    pdf.text(m + 18, cardY + 10, t('Sample: latest {count} transactions', { count: amlSampleCount() }), 7, 'mono', AML_PDF.text4);
-
-    pdf.text(m + 200, cardY + 62, t('SUBJECT ADDRESS'), 7, 'mono', AML_PDF.text4, true);
-    const addrLines = pdf.wrapText(report.addr, pdf.W - m * 2 - 212, 8.5, 'mono');
-    addrLines.slice(0, 2).forEach((line, i) => {
-      pdf.text(m + 200, cardY + 48 - i * 12, line, 8.5, 'mono', AML_PDF.text2);
+    pdf.drawReportHeader({
+      title: t('AML SCREENING REPORT'),
+      moduleLabel: t('AML check'),
+      stamp,
+      reportId,
     });
 
-    pdf.cursorY = cardY - 22;
+    pdf.drawScoreCard({
+      score: report.finalScore,
+      scoreColor,
+      statusLabel: t(report.statusLabel),
+      subtitle: report.hasHardSignals ? t('Composite risk signal') : t('Activity risk signal'),
+      meta: t('Sample: latest {count} transactions', { count: amlSampleCount() }),
+      address: report.addr,
+      addressLabel: t('SUBJECT ADDRESS'),
+    });
 
     if (report.assessmentText) {
       pdf.section(t('Assessment'));
       pdf.bullet(t(report.assessmentText), scoreColor);
     }
     if (report.hardFlags?.length) {
-      pdf.section(t('Security flags'));
-      report.hardFlags.forEach(flag => pdf.bullet(t(flag), AML_PDF.red));
+      const fs = report.flagSources || {};
+      if (fs.secAcc?.length) {
+        pdf.section(t('Scanned address — TronScan security'));
+        fs.secAcc.forEach((entry) => pdf.bullet(`${t(entry.label)} — ${t(entry.hint)}`, AML_PDF.red));
+      }
+      if (fs.tags?.length) {
+        pdf.section(t('Scanned address — public tags'));
+        fs.tags.forEach((entry) => pdf.bullet(`${t(entry.label)} — ${t(entry.hint)}`, AML_PDF.red));
+      }
+      if (fs.tokens?.length) {
+        pdf.section(t('Scanned address — token holdings'));
+        fs.tokens.forEach((entry) => pdf.bullet(`${t(entry.label)} — ${t(entry.hint)}`, AML_PDF.red));
+      }
+      if (!fs.secAcc?.length && !fs.tags?.length && !fs.tokens?.length) {
+        pdf.section(t('Security flags'));
+        report.hardFlags.forEach(flag => pdf.bullet(t(flag), AML_PDF.red));
+      }
     }
     if (report.peerFlags?.length) {
       pdf.section(t('Flagged counterparties (TronScan security)'));
@@ -555,8 +315,19 @@ function amlExportPdf(report) {
   }
 }
 
-function amlShieldIcon(riskScore, size, isFlagged) {
-  return riskShieldIcon(riskScore, size, { flagged: isFlagged, className: 'risk-shield-icon aml-risk-icon' });
+function amlShieldTier(status, isFlagged) {
+  if (isFlagged || status === 'flagged') return 'high';
+  if (status === 'unusual') return 'med';
+  if (status === 'insufficient') return 'low';
+  return 'low';
+}
+
+function amlShieldIcon(riskScore, size, isFlagged, status) {
+  return riskShieldIcon(riskScore, size, {
+    flagged: isFlagged,
+    tier: amlShieldTier(status, isFlagged),
+    className: 'risk-shield-icon aml-risk-icon',
+  });
 }
 
 function amlHardFlagPoints(label) {
@@ -582,7 +353,7 @@ function amlRiskStat(status, statusLabel, finalScore, isFlagged, hasHardSignals)
   const cls = amlRiskClass(status, isFlagged);
   const icon = status === 'insufficient' && !hasHardSignals
     ? riskShieldIcon(0, 40, { muted: true, className: 'risk-shield-icon aml-risk-icon aml-risk-icon--muted' })
-    : amlShieldIcon(finalScore, 40, isFlagged);
+    : amlShieldIcon(finalScore, 40, isFlagged, status);
   const scoreText = status === 'insufficient' && !hasHardSignals
     ? '—'
     : `<span class="score-value" data-score-value="${finalScore}">0</span><span class="aml-score-unit">/100</span>`;
@@ -716,12 +487,14 @@ function buildAmlViewParts(report, graphPayload, opts = {}) {
   const addr = report.addr;
   const {
     finalScore, status, statusLabel, isFlagged, hasHardSignals, hardFlags = [], peerFlags = [],
+    dustPeers = [],
     peerTagAlerts = [],
     scoreFactors = [], txCount = 0, dtCount = 0, concentration = 0, uniquePeers = 0,
     ageDays, knownEntityCount = 0, balanceTrx, accCreated, activityWindow,
     tronTags = [], parsedTokens = [], topPeers = [], topContracts = [],
     peerSecurityScreened = [],
     secAccLevel = 'unavailable', secTokenLevel = 'unavailable', incompleteHistory = false,
+    flagSources = { secAcc: [], tags: [], tokens: [] },
     firstFunder = null, inboundCount = 0, outboundCount = 0, flowRatio = null,
   } = report;
 
@@ -737,8 +510,8 @@ function buildAmlViewParts(report, graphPayload, opts = {}) {
   ].filter(Boolean).join('');
 
   let alertsInner = '';
-  if (isFlagged && hardFlags.length) {
-    alertsInner += amlAlertList('red', 'Security flags', hardFlags.map(f => esc(t(f))));
+  if (hardFlags.length) {
+    alertsInner += amlFlagSourceAlerts(flagSources, peerFlags, peersPending);
   }
   if (incompleteHistory) {
     alertsInner += amlAlertInline('amber', t('Security flags detected, but recent transaction history could not be loaded — activity metrics below may be incomplete.'));
@@ -790,7 +563,7 @@ function buildAmlViewParts(report, graphPayload, opts = {}) {
   }
 
   const sourceRows = [
-    amlKvRow(tt('aml'), amlSourceBadge(secAccLevel)),
+    amlKvRow(tt('aml'), amlSourceSecAccValue(secAccLevel, flagSources.secAcc)),
     amlKvRow(tt('shield'), amlSourceBadge(secTokenLevel), true),
   ];
   const sourcesHtml = amlPanel(t('Sources checked'), sourceRows.join(''));
@@ -818,6 +591,10 @@ function buildAmlViewParts(report, graphPayload, opts = {}) {
   const peersMeta = peersPending
     ? t('Security screening…')
     : { key: 'Top {count} by direct transfers · TronScan security API', vars: { count: AML_PEER_SECURITY_LIMIT } };
+  const peersNoteBase = t('These addresses sent or received the most direct TRX/TRC-20 transfers in the analyzed sample. Each is checked against TronScan security data (blacklist, fraud, token abuse).');
+  const peersNote = !peersPending && peerFlags.length === 0 && (flagSources.secAcc?.length || flagSources.tags?.length)
+    ? `${peersNoteBase} ${t('No flagged counterparties here — risk comes from the scanned address itself (TronScan account security).')}`
+    : peersNoteBase;
   const peersHtml = amlRowsBlock(
     `${esc(t('Top counterparties (security screened)'))} <span>· ${topPeers.length}</span>`,
     topPeers.map(([a, c]) => {
@@ -831,7 +608,7 @@ function buildAmlViewParts(report, graphPayload, opts = {}) {
     }).join(''),
     peersMeta,
     'No direct transfers found in analyzed history',
-    esc(t('These addresses sent or received the most direct TRX/TRC-20 transfers in the analyzed sample. Each is checked against TronScan security data (blacklist, fraud, token abuse).'))
+    esc(peersNote)
   );
 
   const contractsHtml = topContracts.length > 0
@@ -902,7 +679,8 @@ function renderAmlScanFromReport(report, graphPayload, fromCache = false, opts =
       graphPayload.topPeers,
       graphPayload.peerFlags,
       graphPayload.directTransfers,
-      graphPayload.txCount
+      graphPayload.txCount,
+      { selfFlagged: !!graphPayload.selfFlagged },
     );
   }
   if (typeof syncModuleNavState === 'function') syncModuleNavState('aml-check');
@@ -970,7 +748,8 @@ function patchAmlProgressiveFinish(report, graphPayload, gen) {
       graphPayload.topPeers,
       graphPayload.peerFlags,
       graphPayload.directTransfers,
-      graphPayload.txCount
+      graphPayload.txCount,
+      { selfFlagged: !!graphPayload.selfFlagged },
     );
   }
 
@@ -1056,31 +835,114 @@ function getTRC20Recipient(tx) {
 }
 
 function buildAmlHardFlags(secAcc, tagAcc) {
-  const hardFlags = [];
-  if (secAcc) {
-    const redTag = String(secAcc.red_tag || secAcc.redTag || '').trim();
-    if (/suspicious/i.test(redTag)) {
-      hardFlags.push('TronScan flagged as Suspicious');
-    }
-    if (secAcc.is_black_list)           hardFlags.push('Blacklisted by stablecoin issuer (USDT/USDC)');
-    if (secAcc.has_fraud_transaction)   hardFlags.push('Has flagged fraud transactions');
-    if (secAcc.has_cheat_transaction)   hardFlags.push('Suspicious cheat transactions');
-    if (secAcc.fraud_token_creator)     hardFlags.push('Created fraud tokens');
-    if (secAcc.send_ad_by_memo)         hardFlags.push('Frequently sends advertising/spam');
+  return [
+    ...amlSecAccFlagEntries(secAcc),
+    ...amlTagFlagEntries(tagAcc),
+  ].map((entry) => entry.label);
+}
+
+function amlSecAccFlagEntries(secAcc) {
+  const entries = [];
+  if (!secAcc) return entries;
+  const redTag = String(secAcc.red_tag || secAcc.redTag || '').trim();
+  if (/suspicious/i.test(redTag)) {
+    entries.push({
+      label: 'TronScan flagged as Suspicious',
+      hint: 'TronScan red-tag on this scanned address (not a counterparty).',
+    });
   }
-  if (tagAcc) {
-    const tags = normalizeTagList(tagAcc);
-    for (const tag of tags) {
-      const tagName = (typeof tag === 'string' ? tag : (tag.tagName || tag.tag || tag.label || ''));
-      if (!tagName) continue;
-      if (AML_SANCTION_TAG_RE.test(tagName)) {
-        hardFlags.push(t('Sanctioned (public tag): {tag}', { tag: tagName }));
-      } else if (AML_RISK_TAG_RE.test(tagName)) {
-        hardFlags.push(t('Security tag: ') + tagName);
-      }
+  if (secAcc.is_black_list) {
+    entries.push({
+      label: 'Blacklisted by stablecoin issuer (USDT/USDC)',
+      hint: 'USDT/USDC issuer blacklist includes this scanned address.',
+    });
+  }
+  if (secAcc.has_fraud_transaction) {
+    entries.push({
+      label: 'Has flagged fraud transactions',
+      hint: 'TronScan fraud database links this address to flagged transactions (sent or received). Counterparty screening below is separate.',
+    });
+  }
+  if (secAcc.fraud_token_creator) {
+    entries.push({
+      label: 'Created fraud tokens',
+      hint: 'TronScan marks this address as a creator of fraud tokens.',
+    });
+  }
+  return entries;
+}
+
+function amlTagFlagEntries(tagAcc) {
+  const entries = [];
+  if (!tagAcc) return entries;
+  const tags = normalizeTagList(tagAcc);
+  for (const tag of tags) {
+    const tagName = (typeof tag === 'string' ? tag : (tag.tagName || tag.tag || tag.label || ''));
+    if (!tagName) continue;
+    if (AML_SANCTION_TAG_RE.test(tagName)) {
+      entries.push({
+        label: t('Sanctioned (public tag): {tag}', { tag: tagName }),
+        hint: 'Public TronScan tag on this scanned address.',
+      });
+    } else if (AML_RISK_TAG_RE.test(tagName)) {
+      entries.push({
+        label: t('Security tag: ') + tagName,
+        hint: 'Public TronScan tag on this scanned address.',
+      });
     }
   }
-  return hardFlags;
+  return entries;
+}
+
+function buildAmlFlagSources(secAcc, tagAcc, tokenHardFlags = []) {
+  return {
+    secAcc: amlSecAccFlagEntries(secAcc),
+    tags: amlTagFlagEntries(tagAcc),
+    tokens: (tokenHardFlags || []).map((label) => ({
+      label,
+      hint: 'TronScan token security flagged a token this address holds.',
+    })),
+  };
+}
+
+function amlFlagEntryHtml(entry) {
+  const hint = entry.hint
+    ? `<div class="aml-alert-source">${esc(t(entry.hint))}</div>`
+    : '';
+  return `<li>${esc(typeof entry.label === 'string' ? t(entry.label) : entry.label)}${hint}</li>`;
+}
+
+function amlFlagSourceAlerts(flagSources, peerFlags, peersPending) {
+  const { secAcc = [], tags = [], tokens = [] } = flagSources || {};
+  let html = '';
+  if (secAcc.length) {
+    html += `<div class="aml-alert aml-alert--red">
+      <div class="aml-alert-head">${icSVG(IC.alert, 14)}<span class="aml-alert-title">${esc(t('Scanned address — TronScan security'))}</span></div>
+      <ul class="aml-alert-list">${secAcc.map(amlFlagEntryHtml).join('')}</ul>
+    </div>`;
+  }
+  if (tags.length) {
+    html += `<div class="aml-alert aml-alert--red">
+      <div class="aml-alert-head">${icSVG(IC.alert, 14)}<span class="aml-alert-title">${esc(t('Scanned address — public tags'))}</span></div>
+      <ul class="aml-alert-list">${tags.map(amlFlagEntryHtml).join('')}</ul>
+    </div>`;
+  }
+  if (tokens.length) {
+    html += `<div class="aml-alert aml-alert--red">
+      <div class="aml-alert-head">${icSVG(IC.alert, 14)}<span class="aml-alert-title">${esc(t('Scanned address — token holdings'))}</span></div>
+      <ul class="aml-alert-list">${tokens.map(amlFlagEntryHtml).join('')}</ul>
+    </div>`;
+  }
+  const selfFlagged = secAcc.length > 0 || tags.length > 0 || tokens.length > 0;
+  if (!peersPending && selfFlagged && peerFlags.length === 0) {
+    html += amlAlertInline('amber', t('No flagged counterparties in the analyzed sample — the flag applies to this address itself (see above).'));
+  }
+  return html;
+}
+
+function amlSourceSecAccValue(secAccLevel, secAccEntries = []) {
+  if (!secAccEntries.length) return amlSourceBadge(secAccLevel);
+  return `${amlSourceBadge(secAccLevel)}<div class="aml-flag-list">${secAccEntries.map((e) => esc(t(e.label))).join('<br>')}</div>`;
 }
 
 function classifyAmlTokenSecurity(secToken) {
@@ -1301,15 +1163,62 @@ async function analyzeAmlTransactions(addr, txs) {
   };
 }
 
-async function fetchAmlPeerIntel(topPeers, tagAcc) {
-  const peerFlags = [];
+function amlMetricsWithoutDust(directTransfers, dustPeers) {
+  const dustSet = new Set((dustPeers || []).map(a => String(a).toLowerCase()));
+  const rows = (directTransfers || []).filter(d => !dustSet.has(String(d.peer).toLowerCase()));
+  const peerCounts = {};
+  for (const d of rows) {
+    const k = addrLookupKey(d.peer);
+    peerCounts[k] = (peerCounts[k] || 0) + 1;
+  }
+  const uniquePeers = Object.keys(peerCounts).length;
+  const dtCount = rows.length;
+  const maxToSingle = Math.max(0, ...Object.values(peerCounts));
+  const concentration = dtCount > 0 ? maxToSingle / dtCount : 0;
+  let inboundCount = 0;
+  let outboundCount = 0;
+  let stableInbound = 0;
+  let stableOutbound = 0;
+  for (const d of rows) {
+    if (d.inbound) {
+      inboundCount += 1;
+      if (d.isStable) stableInbound += 1;
+    }
+    if (d.outbound) {
+      outboundCount += 1;
+      if (d.isStable) stableOutbound += 1;
+    }
+  }
+  return { dtCount, concentration, uniquePeers, inboundCount, outboundCount, stableInbound, stableOutbound };
+}
+
+function amlReclassifyInboundDustPeers(peerFlags, dustPeers, directTransfers) {
+  const dustSet = new Set((dustPeers || []).map(a => String(a).toLowerCase()));
+  const keptFlags = [];
+  for (const pAddr of peerFlags || []) {
+    if (isAmlPeerInboundDustHeavy(pAddr, directTransfers)) {
+      const k = String(pAddr).toLowerCase();
+      if (!dustSet.has(k)) {
+        dustPeers = [...(dustPeers || []), pAddr];
+        dustSet.add(k);
+      }
+    } else {
+      keptFlags.push(pAddr);
+    }
+  }
+  return { peerFlags: keptFlags, dustPeers: dustPeers || [] };
+}
+
+async function fetchAmlPeerIntel(topPeers, tagAcc, directTransfers = []) {
+  let peerFlags = [];
+  let dustPeers = [];
   const peerTagAlerts = [];
   const topPeerAddrs = topPeers.slice(0, AML_PEER_SECURITY_LIMIT).map(p => p[0]).filter(isValidTron);
   const peerTagAddrs = topPeers.map((p) => p[0]).filter(isValidTron);
   let knownEntityCount = 0;
 
   if (topPeerAddrs.length === 0 && peerTagAddrs.length === 0) {
-    return { peerFlags, peerTagAlerts, knownEntityCount, topPeerAddrs };
+    return { peerFlags, dustPeers, peerTagAlerts, knownEntityCount, topPeerAddrs };
   }
 
   const peerFetchResults = await Promise.all([
@@ -1325,9 +1234,12 @@ async function fetchAmlPeerIntel(topPeers, tagAcc) {
 
   for (let i = 0; i < topPeerAddrs.length; i++) {
     const ps = peerSecResults[i];
+    const pAddr = topPeerAddrs[i];
     if (!ps) continue;
-    if (ps.is_black_list || ps.has_fraud_transaction || ps.fraud_token_creator || ps.has_cheat_transaction) {
-      peerFlags.push(topPeerAddrs[i]);
+    if (ps.is_black_list || ps.has_fraud_transaction || ps.fraud_token_creator) {
+      if (!peerFlags.includes(pAddr)) peerFlags.push(pAddr);
+    } else if (ps.has_cheat_transaction || ps.send_ad_by_memo) {
+      if (!dustPeers.includes(pAddr)) dustPeers.push(pAddr);
     }
   }
 
@@ -1346,23 +1258,59 @@ async function fetchAmlPeerIntel(topPeers, tagAcc) {
       }
       if (AML_RISK_TAG_RE.test(tn)) {
         flagged = true;
-        peerTagAlerts.push({ tag: tn, addr: pAddr });
+        if (!isAmlPeerInboundDustHeavy(pAddr, directTransfers)) {
+          peerTagAlerts.push({ tag: tn, addr: pAddr });
+        }
       }
     }
-    if (flagged && !peerFlags.includes(pAddr)) peerFlags.push(pAddr);
+    if (flagged) {
+      if (isAmlPeerInboundDustHeavy(pAddr, directTransfers)) {
+        if (!dustPeers.includes(pAddr)) dustPeers.push(pAddr);
+      } else if (!peerFlags.includes(pAddr) && !dustPeers.includes(pAddr)) {
+        peerFlags.push(pAddr);
+      }
+    }
     if (known) knownEntityCount++;
   }
 
-  return { peerFlags, peerTagAlerts, knownEntityCount, topPeerAddrs };
+  for (const pAddr of topPeerAddrs) {
+    if (!dustPeers.includes(pAddr) && !peerFlags.includes(pAddr) && isAmlPeerInboundDustHeavy(pAddr, directTransfers)) {
+      dustPeers.push(pAddr);
+    }
+  }
+
+  ({ peerFlags, dustPeers } = amlReclassifyInboundDustPeers(peerFlags, dustPeers, directTransfers));
+
+  return { peerFlags, dustPeers, peerTagAlerts, knownEntityCount, topPeerAddrs };
 }
 
 function computeAmlActivityScore({
   dtCount, txCount, ageDays, concentration, uniquePeers,
-  knownEntityCount = 0, peerFlags = [], hardFlags = [], isFlagged = false,
+  knownEntityCount = 0, peerFlags = [], dustPeers = [], directTransfers = [],
+  hardFlags = [], isFlagged = false,
   inboundCount = 0, outboundCount = 0, stableInbound = 0, stableOutbound = 0,
 }) {
   let score = 0;
   const scoreFactors = [];
+
+  let activityDtCount = dtCount;
+  let activityConcentration = concentration;
+  let activityUniquePeers = uniquePeers;
+  let activityInbound = inboundCount;
+  let activityOutbound = outboundCount;
+  let activityStableInbound = stableInbound;
+  let activityStableOutbound = stableOutbound;
+
+  if (dustPeers.length && directTransfers.length) {
+    const cleaned = amlMetricsWithoutDust(directTransfers, dustPeers);
+    activityDtCount = cleaned.dtCount;
+    activityConcentration = cleaned.concentration;
+    activityUniquePeers = cleaned.uniquePeers;
+    activityInbound = cleaned.inboundCount;
+    activityOutbound = cleaned.outboundCount;
+    activityStableInbound = cleaned.stableInbound;
+    activityStableOutbound = cleaned.stableOutbound;
+  }
 
   if (dtCount === 0 && txCount === 0 && ageDays === null) {
     score = 0;
@@ -1377,19 +1325,19 @@ function computeAmlActivityScore({
       }
     }
 
-    if (dtCount > 50) { score += 15; scoreFactors.push({ label: 'High direct transfer volume (50+)', pts: 15 }); }
-    else if (dtCount > 20) { score += 8; scoreFactors.push({ label: 'Elevated direct transfers (20+)', pts: 8 }); }
-    else if (dtCount > 10) { score += 3; scoreFactors.push({ label: 'Moderate direct transfers (10+)', pts: 3 }); }
+    if (activityDtCount > 50) { score += 15; scoreFactors.push({ label: 'High direct transfer volume (50+)', pts: 15 }); }
+    else if (activityDtCount > 20) { score += 8; scoreFactors.push({ label: 'Elevated direct transfers (20+)', pts: 8 }); }
+    else if (activityDtCount > 10) { score += 3; scoreFactors.push({ label: 'Moderate direct transfers (10+)', pts: 3 }); }
 
-    if (concentration > 0.7 && uniquePeers >= 3) {
+    if (activityConcentration > 0.7 && activityUniquePeers >= 3) {
       score += 25;
-      scoreFactors.push({ label: `High ${GLOSSARY.concentration?.lbl?.toLowerCase() || 'concentration'} (${(concentration * 100).toFixed(0)}%)`, pts: 25 });
-    } else if (concentration > 0.5 && uniquePeers >= 3) {
+      scoreFactors.push({ label: `High ${GLOSSARY.concentration?.lbl?.toLowerCase() || 'concentration'} (${(activityConcentration * 100).toFixed(0)}%)`, pts: 25 });
+    } else if (activityConcentration > 0.5 && activityUniquePeers >= 3) {
       score += 10;
-      scoreFactors.push({ label: `Elevated concentration (${(concentration * 100).toFixed(0)}%)`, pts: 10 });
+      scoreFactors.push({ label: `Elevated concentration (${(activityConcentration * 100).toFixed(0)}%)`, pts: 10 });
     }
 
-    if (uniquePeers < 3 && dtCount > 10) {
+    if (activityUniquePeers < 3 && activityDtCount > 10) {
       score += 15;
       scoreFactors.push({ label: 'Low counterparty diversity', pts: 15 });
     }
@@ -1405,8 +1353,8 @@ function computeAmlActivityScore({
       scoreFactors.push({ label: `${peerFlags.length} flagged counterparty${peerFlags.length > 1 ? ' addresses' : ''}`, pts: peerFlags.length * 12 });
     }
 
-    if (inboundCount >= 5 && outboundCount > 0) {
-      const ratio = inboundCount / outboundCount;
+    if (activityInbound >= 5 && activityOutbound > 0) {
+      const ratio = activityInbound / activityOutbound;
       if (ratio >= 3) {
         score += 15;
         scoreFactors.push({
@@ -1415,12 +1363,12 @@ function computeAmlActivityScore({
           pts: 15,
         });
       }
-    } else if (inboundCount >= 10 && outboundCount === 0) {
+    } else if (activityInbound >= 10 && activityOutbound === 0) {
       score += 12;
       scoreFactors.push({ label: 'Inbound-only transfer pattern in sample', pts: 12 });
     }
 
-    if (stableInbound >= 5 && stableOutbound <= 1 && inboundCount >= 8) {
+    if (activityStableInbound >= 5 && activityStableOutbound <= 1 && activityInbound >= 8) {
       score += 12;
       scoreFactors.push({ label: 'Stablecoin inflow without matching outflow', pts: 12 });
     }
@@ -1465,16 +1413,18 @@ function computeAmlActivityScore({
 }
 
 function assembleAmlReport({
-  addr, hardFlags, isFlagged, analysis, score, peerFlags, topPeerAddrs,
+  addr, hardFlags, isFlagged, analysis, score, peerFlags, dustPeers = [], topPeerAddrs,
   knownEntityCount, parsedTokens, tronTags, activityWindow, balanceTrx,
-  accCreated, ageDays, secAcc, tokens, scanProfile, peersPending = false,
-  secTokenLevel = 'unavailable', peerTagAlerts = [],
+  accCreated, ageDays, secAcc, tagAcc, tokens, scanProfile, peersPending = false,
+  secTokenLevel = 'unavailable', peerTagAlerts = [], tokenHardFlags = [],
   firstFunder = null, inboundCount = 0, outboundCount = 0, flowRatio = null,
 }) {
   const secAccRedTag = secAcc && /suspicious/i.test(String(secAcc.red_tag || secAcc.redTag || '').trim());
-  const secAccDanger = secAcc && (secAccRedTag || secAcc.is_black_list || secAcc.has_fraud_transaction || secAcc.fraud_token_creator || secAcc.has_cheat_transaction);
-  const secAccWarn = secAcc && secAcc.send_ad_by_memo;
+  const secAccDanger = secAcc && (secAccRedTag || secAcc.is_black_list || secAcc.has_fraud_transaction || secAcc.fraud_token_creator);
+  const secAccWarn = secAcc && (secAcc.send_ad_by_memo || secAcc.has_cheat_transaction);
+  const dustVictimReceived = !!(secAcc && (secAcc.has_cheat_transaction || secAcc.send_ad_by_memo));
   const incompleteHistory = !!(isFlagged && analysis.txCount === 0 && (tokens.length > 0 || scanProfile.totalTransactionCount || scanProfile.transactions));
+  const flagSources = buildAmlFlagSources(secAcc, tagAcc, tokenHardFlags);
 
   return {
     addr,
@@ -1485,7 +1435,10 @@ function assembleAmlReport({
     isFlagged,
     hasHardSignals: score.hasHardSignals,
     hardFlags: [...hardFlags],
+    flagSources,
     peerFlags: [...peerFlags],
+    dustPeers: [...dustPeers],
+    dustVictimReceived,
     peerTagAlerts: [...peerTagAlerts],
     peerSecurityScreened: [...topPeerAddrs],
     peerSecurityLimit: AML_PEER_SECURITY_LIMIT,
@@ -1535,22 +1488,27 @@ async function amlScan(opts = {}) {
     clearAmlSessionCache(addr);
   }
 
+  const gen = ++amlScanGen;
+  amlFromCache = false;
+  setAmlScanLocked(true);
+  hideScanEmpty(amlEmpty);
+  amlRes.innerHTML = SK.aml();
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
   try {
     if (await probeTronContract(addr)) {
-      amlFromCache = false;
-      hideScanEmpty(amlEmpty);
+      if (gen !== amlScanGen) return;
       amlRes.innerHTML = await renderAmlContractRedirect(addr);
       bindAmlContractRedirect(addr);
+      setAmlScanLocked(false);
       return;
     }
-  } catch (_) {}
+  } catch (_) {
+    if (gen !== amlScanGen) return;
+  }
 
   requireCaptcha(async () => {
-    const gen = ++amlScanGen;
-    amlFromCache = false;
-    setAmlScanLocked(true);
-    hideScanEmpty(amlEmpty);
-    amlRes.innerHTML = SK.aml();
+    if (gen !== amlScanGen) return;
 
     try {
     const [accRes, tokenRes, secAcc, tagAcc, scanAcc, txs] = await Promise.all([
@@ -1573,6 +1531,8 @@ async function amlScan(opts = {}) {
     const accCreated = acc.create_time
       ? new Date(acc.create_time).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
       : null;
+
+    await new Promise((resolve) => requestAnimationFrame(resolve));
 
     let hardFlags = buildAmlHardFlags(secAcc, tagAcc);
     let isFlagged = hardFlags.length > 0;
@@ -1621,6 +1581,7 @@ async function amlScan(opts = {}) {
       accCreated,
       ageDays,
       secAcc,
+      tagAcc,
       tokens,
       scanProfile,
       peersPending: needsPeerIntel || needsTokenIntel,
@@ -1637,6 +1598,7 @@ async function amlScan(opts = {}) {
           peerFlags: [],
           directTransfers: analysis.directTransfers,
           txCount: analysis.txCount,
+          selfFlagged: hardFlags.length > 0,
         }
       : null;
 
@@ -1645,21 +1607,24 @@ async function amlScan(opts = {}) {
     setAmlScanLocked(false);
 
     let peerFlags = [];
+    let dustPeers = [];
     let peerTagAlerts = [];
     let knownEntityCount = 0;
     let topPeerAddrs = topPeerAddrsPreview;
     let parsedTokensFinal = parsedTokens;
     let secTokenLevel = 'unavailable';
     let hardFlagsFinal = [...hardFlags];
+    let tokenHardFlags = [];
 
     const [peerIntel, tokenIntel] = await Promise.all([
-      needsPeerIntel ? fetchAmlPeerIntel(analysis.topPeers, tagAcc) : Promise.resolve(null),
+      needsPeerIntel ? fetchAmlPeerIntel(analysis.topPeers, tagAcc, analysis.directTransfers) : Promise.resolve(null),
       needsTokenIntel ? fetchAmlTokenSecurity(parsedTokens) : Promise.resolve(null),
     ]);
     if (gen !== amlScanGen) return;
 
     if (peerIntel) {
       peerFlags = peerIntel.peerFlags;
+      dustPeers = peerIntel.dustPeers || [];
       peerTagAlerts = peerIntel.peerTagAlerts;
       knownEntityCount = peerIntel.knownEntityCount;
       topPeerAddrs = peerIntel.topPeerAddrs;
@@ -1668,6 +1633,7 @@ async function amlScan(opts = {}) {
       parsedTokensFinal = tokenIntel.tokens;
       secTokenLevel = tokenIntel.level;
       if (tokenIntel.flags.length) {
+        tokenHardFlags = [...tokenIntel.flags];
         hardFlagsFinal = [...hardFlagsFinal, ...tokenIntel.flags];
         isFlagged = hardFlagsFinal.length > 0;
       }
@@ -1681,6 +1647,8 @@ async function amlScan(opts = {}) {
       uniquePeers: analysis.uniquePeers,
       knownEntityCount,
       peerFlags,
+      dustPeers,
+      directTransfers: analysis.directTransfers,
       hardFlags: hardFlagsFinal,
       isFlagged,
       inboundCount: analysis.inboundCount,
@@ -1696,6 +1664,7 @@ async function amlScan(opts = {}) {
       analysis,
       score: finalScoreResult,
       peerFlags,
+      dustPeers,
       topPeerAddrs,
       knownEntityCount,
       parsedTokens: parsedTokensFinal,
@@ -1705,11 +1674,13 @@ async function amlScan(opts = {}) {
       accCreated,
       ageDays,
       secAcc,
+      tagAcc,
       tokens,
       scanProfile,
       peersPending: false,
       secTokenLevel,
       peerTagAlerts,
+      tokenHardFlags,
       firstFunder: analysis.firstFunder,
       inboundCount: analysis.inboundCount,
       outboundCount: analysis.outboundCount,
@@ -1723,6 +1694,7 @@ async function amlScan(opts = {}) {
           peerFlags: [...peerFlags],
           directTransfers: analysis.directTransfers,
           txCount: analysis.txCount,
+          selfFlagged: !!(report.flagSources?.secAcc?.length || report.flagSources?.tags?.length),
         }
       : null;
 
@@ -1745,18 +1717,14 @@ async function amlScan(opts = {}) {
     if (gen === amlScanGen) setAmlScanLocked(false);
   }
   }, () => {
+    if (gen !== amlScanGen) return;
+    amlRes.innerHTML = '';
     setAmlScanLocked(false);
     if (!amlRes.innerHTML.trim() && !amlErr?.innerHTML?.trim()) {
       showScanEmpty(amlEmpty);
     }
   });
 }
-
-window.tronsecAmlPdf = {
-  AmlPdfWriter,
-  AML_PDF,
-  amlPdfStatusColor,
-};
 
 function resetAmlScanCache() {
   const addr = amlInput?.value?.trim() || amlLastAddr;

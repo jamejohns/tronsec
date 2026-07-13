@@ -177,7 +177,7 @@ const CP_FLAG = 'path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 
     return { o: o, p: p };
   }
 
-  function renderList(items, sel, animate) {
+  function renderList(items, sel) {
     var list = document.getElementById('cp-l');
     list.innerHTML = '';
     var selIdx = 0;
@@ -185,7 +185,7 @@ const CP_FLAG = 'path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 
     items.forEach(function(item, realIdx) {
       if (item.kind === 'sep') {
         var sep = document.createElement('div');
-        sep.className = 'cp-sep' + (animate ? '' : ' cp-sep--instant');
+        sep.className = 'cp-sep';
         sep.textContent = t('// MODULES');
         list.appendChild(sep);
         return;
@@ -195,9 +195,8 @@ const CP_FLAG = 'path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 
       var d = document.createElement('div');
       if (item.kind === 'wallet') return;
 
-      d.className = 'cp-i' + (isSel ? ' sel' : '') + (animate ? '' : ' cp-i--instant');
+      d.className = 'cp-i' + (isSel ? ' sel' : '');
       d.dataset.idx = realIdx;
-      d.style.setProperty('--i', String(selIdx));
 
       var fileLabel = item.data.file || item.data.id;
       d.innerHTML =
@@ -245,13 +244,11 @@ const CP_FLAG = 'path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 
     window._cpEls = els;
 
     currentItems = buildResults('');
-    renderList(currentItems, 0, true);
+    renderList(currentItems, 0);
 
     requestAnimationFrame(function() {
-      requestAnimationFrame(function() {
-        els.o.classList.add('is-open');
-        els.p.classList.add('show');
-      });
+      els.o.classList.add('is-open');
+      els.p.classList.add('show');
     });
 
     var inp = document.getElementById('cp-inp');
@@ -270,7 +267,7 @@ const CP_FLAG = 'path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 
       var n = countSelectable(currentItems);
       if (cmdIdx >= n) cmdIdx = Math.max(0, n - 1);
       if (cmdIdx < 0) cmdIdx = 0;
-      renderList(currentItems, cmdIdx, false);
+      renderList(currentItems, cmdIdx);
 
       var badge = document.getElementById('cp-badge');
       if (!badge) return;
@@ -339,7 +336,7 @@ const CP_FLAG = 'path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 
         var prev = window._cpPrevFocus;
         window._cpPrevFocus = null;
         if (prev && typeof prev.focus === 'function') prev.focus();
-      }, 320);
+      }, 180);
       window._cpEls = null;
     }
   }

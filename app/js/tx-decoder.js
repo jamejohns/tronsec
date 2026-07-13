@@ -389,12 +389,6 @@ function isTronScanRiskyTx(scanInfo) {
 }
 
 // -- Dust / address-poisoning heuristics --------------------------------
-const DUST_TRX_SUN = 1_000_000; // <= 1 TRX
-
-function isMicroTrxSun(sun) {
-  const n = Number(sun) || 0;
-  return n > 0 && n <= DUST_TRX_SUN;
-}
 
 function isMicroTokenTransfer(tr) {
   if (!tr) return false;
@@ -411,31 +405,6 @@ function tronAddrPoisonMatch(a, b) {
   if (!a || !b || a === '—' || b === '—' || a === b) return false;
   if (!isValidTron(a) || !isValidTron(b)) return false;
   return a.slice(0, 4) === b.slice(0, 4) && a.slice(-4) === b.slice(-4);
-}
-
-const _dustSenderCache = {};
-async function fetchDustSenderProfile(address) {
-  if (!address || !isValidTron(address)) return null;
-  if (Object.prototype.hasOwnProperty.call(_dustSenderCache, address)) return _dustSenderCache[address];
-  try {
-    const res = await scanGet('/account', { address });
-    const d = res?.data ?? res ?? {};
-    const profile = {
-      out: Number(d.transactions_out ?? 0),
-      inn: Number(d.transactions_in ?? 0),
-      balance: Number(d.balance ?? 0),
-    };
-    _dustSenderCache[address] = profile;
-    return profile;
-  } catch (_) {
-    _dustSenderCache[address] = null;
-    return null;
-  }
-}
-
-function isDustBotProfile(profile) {
-  if (!profile) return false;
-  return profile.out >= 80 && profile.out > profile.inn * 4 && profile.balance < DUST_TRX_SUN * 10;
 }
 
 async function collectDustSignals(ctx) {

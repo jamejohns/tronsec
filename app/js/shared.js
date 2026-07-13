@@ -37,7 +37,7 @@ function riskShieldTier(score, flagged) {
 }
 
 window.riskShieldIcon = function riskShieldIcon(score, size, opts = {}) {
-  const { flagged = false, className = '', muted = false } = opts;
+  const { flagged = false, className = '', muted = false, tier: tierOverride } = opts;
   const extraCls = className ? ' ' + esc(className) : '';
 
   if (muted) {
@@ -46,7 +46,7 @@ window.riskShieldIcon = function riskShieldIcon(score, size, opts = {}) {
     </svg>`;
   }
 
-  const tier = riskShieldTier(score, flagged);
+  const tier = tierOverride || riskShieldTier(score, flagged);
   const risk = flagged ? Math.max(score, 70) : score;
   const palette = {
     low:  { color: 'var(--green)', fill: 0.14, glow: 3 },
@@ -114,6 +114,48 @@ function upstreamHeaders(kind) {
 // ==================================
 const isValidTron = a => /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test((a||'').trim());
 const sameTronAddr = (a, b) => !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
+
+const DUST_TRX_SUN = 1_000_000; // <= 1 TRX
+const _dustSenderCache = {};
+
+function isMicroTrxSun(sun) {
+  const n = Number(sun) || 0;
+  return n > 0 && n <= DUST_TRX_SUN;
+}
+
+async function fetchDustSenderProfile(address) {
+  if (!address || !isValidTron(address)) return null;
+  if (Object.prototype.hasOwnProperty.call(_dustSenderCache, address)) return _dustSenderCache[address];
+  try {
+    const res = await scanGet('/account', { address });
+    const d = res?.data ?? res ?? {};
+    const profile = {
+      out: Number(d.transactions_out ?? 0),
+      inn: Number(d.transactions_in ?? 0),
+      balance: Number(d.balance ?? 0),
+    };
+    _dustSenderCache[address] = profile;
+    return profile;
+  } catch (_) {
+    _dustSenderCache[address] = null;
+    return null;
+  }
+}
+
+function isDustBotProfile(profile) {
+  if (!profile) return false;
+  return profile.out >= 80 && profile.out > profile.inn * 4 && profile.balance < DUST_TRX_SUN * 10;
+}
+
+function isAmlPeerInboundDustHeavy(peerAddr, directTransfers) {
+  const inbound = (directTransfers || []).filter(d => d.inbound && sameTronAddr(d.peer, peerAddr));
+  if (!inbound.length) return false;
+  return inbound.every(d => {
+    if (d.isStable) return false;
+    if (d.isTrc20) return true;
+    return isMicroTrxSun(d.amount);
+  });
+}
 
 function permKeyWeight(key) {
   return Number(key?.weight) || 0;
@@ -2280,7 +2322,7 @@ function showScanEmpty(emptyEl) {
 }
 
 const SESSION_CACHE_TTL_MS = 12 * 60 * 1000;
-const SESSION_CACHE_VERSION = 1;
+const SESSION_CACHE_VERSION = 5;
 
 function sessionCacheLang() {
   if (typeof i18nLang === 'function') return i18nLang();
@@ -2352,7 +2394,7 @@ function clearSessionCache(module, id, options = {}) {
 
 function beginScanUI({ emptyEl, resultEl, errEl, btn, input, skeletonHtml, lockInput = true }) {
   setError(errEl, '');
-  hideScanEmpty(emptyEl);
+  hideScanEmpty(emptyEl, { instant: true });
   if (resultEl && skeletonHtml != null) resultEl.innerHTML = skeletonHtml;
   if (btn) {
     spinBtn(btn, true);

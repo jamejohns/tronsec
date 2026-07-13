@@ -568,13 +568,18 @@ async function phishCheck(opts = {}) {
 
   phishFromCache = false;
   lockScanInput(phishInput, true);
-  hideScanEmpty(phishEmpty);
   spinBtn(phishBtn, true);
   if (phishBtn) phishBtn.setAttribute('aria-busy', 'true');
 
   requireCaptcha(async () => {
-    setError(phishErr, '');
-    phishRes.innerHTML = SK.phishCheck();
+    beginScanUI({
+      emptyEl: phishEmpty,
+      resultEl: phishRes,
+      errEl: phishErr,
+      btn: phishBtn,
+      input: phishInput,
+      skeletonHtml: SK.phishCheck(),
+    });
 
     const steps = [
       t('Loading blocklists…'),

@@ -1,7 +1,8 @@
 // -- Interactive force-directed counterparty graph --
-function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfers, txCount) {
+function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfers, txCount, opts = {}) {
   const container = document.getElementById(containerId);
   if (!container || peers.length < 1) return;
+  const selfFlagged = !!opts.selfFlagged;
 
   const root = container.closest('.aml-graph-root') || container.parentElement;
   root.querySelectorAll('.aml-graph-stats, .aml-graph-foot').forEach(el => el.remove());
@@ -30,7 +31,7 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
     return 'safe';
   }
 
-  let nodes = [{ id: targetAddr, label: t('You'), type: 'center', txCount: 0, volume: 0 }];
+  let nodes = [{ id: targetAddr, label: t('You'), type: 'center', txCount: 0, volume: 0, selfFlagged }];
   for (const [addr, count] of peers) {
     nodes.push({
       id: addr,
@@ -121,8 +122,8 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
     .attr('r', rScale)
     .attr('fill', d => d.type === 'center' ? 'rgba(255,255,255,.95)' : colors[d.type])
     .attr('fill-opacity', d => d.type === 'center' ? 1 : 0.1)
-    .attr('stroke', d => d.type === 'center' ? 'rgba(255,255,255,.2)' : colors[d.type])
-    .attr('stroke-width', d => d.type === 'center' ? 1.5 : 1.25);
+    .attr('stroke', d => d.type === 'center' ? (d.selfFlagged ? colors.danger : 'rgba(255,255,255,.2)') : colors[d.type])
+    .attr('stroke-width', d => d.type === 'center' ? (d.selfFlagged ? 2.5 : 1.5) : 1.25);
 
   nodeG.append('text')
     .attr('class', 'node-inner')
@@ -152,7 +153,7 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
     .attr('font-family', 'var(--font-ui)')
     .attr('fill', d => d.type === 'center' ? '#52525b' : (colors[d.type] || '#52525b'))
     .attr('dy', d => rScale(d) + 17)
-    .text(d => d.type === 'center' ? t('Target') :
+    .text(d => d.type === 'center' ? (d.selfFlagged ? t('Flagged') : t('Target')) :
       d.type === 'danger' ? t('Flagged') :
       d.type === 'warn' ? t('Watch') : t('OK'));
 

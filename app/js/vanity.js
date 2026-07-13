@@ -62,6 +62,8 @@ let vanityLastPrefix = '';
 let vanityLastSuffix = '';
 let vanityProgressReady = false;
 let vanitySmoothedRate = 0;
+let vanityWorkerBlobUrl = null;
+let vanityWorkerBlobPromise = null;
 
 function vanityWorkerCount() {
   const cores = navigator.hardwareConcurrency || 4;
@@ -875,8 +877,27 @@ function vanityRenderFound(address, privateKey, attempts) {
   if (window.lucide) lucide.createIcons();
 }
 
-function vanityWorkerUrl() {
+function vanityWorkerScriptUrl() {
   return new URL('js/vanity-worker.js', window.location.href).href;
+}
+
+/** One network fetch per page — all workers share the same blob: URL. */
+async function ensureVanityWorkerUrl() {
+  if (vanityWorkerBlobUrl) return vanityWorkerBlobUrl;
+  if (!vanityWorkerBlobPromise) {
+    vanityWorkerBlobPromise = (async () => {
+      const res = await fetch(vanityWorkerScriptUrl(), { cache: 'force-cache' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const code = await res.text();
+      const blob = new Blob([code], { type: 'text/javascript' });
+      vanityWorkerBlobUrl = URL.createObjectURL(blob);
+      return vanityWorkerBlobUrl;
+    })().catch((err) => {
+      vanityWorkerBlobPromise = null;
+      throw err;
+    });
+  }
+  return vanityWorkerBlobPromise;
 }
 
 async function vanityStart() {
@@ -966,11 +987,19 @@ async function vanityStart() {
   vanityActiveWorkers = workerCount;
   let workersReady = 0;
   let workerFailed = false;
+  let workerUrl;
+  try {
+    workerUrl = await ensureVanityWorkerUrl();
+  } catch (err) {
+    vanitySetRunning(false);
+    setError(vanityErr, t('Worker error: {message}', { message: err.message || String(err) }));
+    return;
+  }
 
   for (let i = 0; i < workerCount; i++) {
     let worker;
     try {
-      worker = new Worker(vanityWorkerUrl(), { type: 'module' });
+      worker = new Worker(workerUrl, { type: 'module' });
     } catch (err) {
       vanitySetRunning(false);
       setError(vanityErr, t('Worker error: {message}', { message: err.message || String(err) }));

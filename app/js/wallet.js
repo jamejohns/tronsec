@@ -224,7 +224,7 @@ function walletBuildSummaryText(report) {
   return lines.join('\n');
 }
 
-function walletExportPdf(report) {
+async function walletExportPdf(report) {
   const api = window.tronsecAmlPdf;
   if (!report || !api?.AmlPdfWriter) {
     showToast(t('PDF export failed'));
@@ -233,35 +233,31 @@ function walletExportPdf(report) {
   const btn = document.getElementById('wallet-export-pdf-btn');
   if (btn) btn.classList.add('is-busy');
   try {
+    await api.ensurePdfBrandAssets();
     const { AmlPdfWriter, AML_PDF, amlPdfStatusColor } = api;
-    const reportId = `WLT-${Date.now().toString(36).toUpperCase()}`;
+    const reportId = `WLT-${report.addr.slice(-8).toUpperCase()}`;
     const pdf = new AmlPdfWriter(reportId);
     const m = pdf.margin;
     const r = report.riskReport || {};
     const scoreColor = amlPdfStatusColor(r.status, r.isFlagged);
-    const top = pdf.H - m;
-
-    pdf.text(m, top - 16, 'TRONSEC', 22, 'sans', AML_PDF.text, true);
-    pdf.text(m, top - 30, t('WALLET SCAN REPORT').toUpperCase(), 9, 'mono', AML_PDF.text4, true);
     const stamp = new Date(report.scannedAt).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-    pdf.textRight(pdf.W - m, top - 16, stamp, 7.5, 'mono', AML_PDF.text4);
-    pdf.textRight(pdf.W - m, top - 28, reportId, 7.5, 'mono', AML_PDF.text4);
-    pdf.strokeLine(top - 40, AML_PDF.line);
 
-    const cardY = top - 118;
-    const cardH = 72;
-    pdf.fillRect(m, cardY, 4, cardH, scoreColor);
-    pdf.panel(m + 4, cardY, pdf.W - m * 2 - 4, cardH, AML_PDF.panel, AML_PDF.line);
-    pdf.text(m + 18, cardY + 54, String(r.finalScore ?? '—'), 28, 'mono', scoreColor, true);
-    pdf.text(m + 46, cardY + 54, '/100', 11, 'mono', AML_PDF.text3);
-    pdf.text(m + 18, cardY + 36, t(r.statusLabel || 'Unknown'), 11, 'sans', scoreColor, true);
-    pdf.text(m + 18, cardY + 22, t('Wallet risk signal'), 8, 'sans', AML_PDF.text4);
-    pdf.text(m + 18, cardY + 10, t('On-chain profile + security heuristics'), 7, 'mono', AML_PDF.text4);
-    pdf.text(m + 200, cardY + 62, t('SUBJECT ADDRESS'), 7, 'mono', AML_PDF.text4, true);
-    pdf.wrapText(report.addr, pdf.W - m * 2 - 212, 8.5, 'mono').forEach((line, i) => {
-      pdf.text(m + 200, cardY + 48 - i * 12, line, 8.5, 'mono', AML_PDF.text2);
+    pdf.drawReportHeader({
+      title: t('WALLET SCAN REPORT'),
+      moduleLabel: t('Wallet scanner'),
+      stamp,
+      reportId,
     });
-    pdf.cursorY = cardY - 22;
+
+    pdf.drawScoreCard({
+      score: r.finalScore ?? '—',
+      scoreColor,
+      statusLabel: t(r.statusLabel || 'Unknown'),
+      subtitle: t('Wallet risk signal'),
+      meta: t('On-chain profile + security heuristics'),
+      address: report.addr,
+      addressLabel: t('SUBJECT ADDRESS'),
+    });
 
     if (r.hardFlags?.length) {
       pdf.section(t('Security flags'));
@@ -865,16 +861,6 @@ async function walletScan(opts = {}) {
   if (!addr) { flashInput(walletInput); showToast(t('Enter a TRON address')); return; }
   if (!isValidTron(addr)) { flashInput(walletInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
 
-  try {
-    if (await probeTronContract(addr)) {
-      walletFromCache = false;
-      hideScanEmpty(walletEmpty);
-      walletRes.innerHTML = await renderWalletContractRedirect(addr);
-      bindWalletContractRedirect(addr);
-      return;
-    }
-  } catch (_) {}
-
   if (!force) {
     const cached = readWalletSessionCache(addr);
     if (cached) {
@@ -899,6 +885,16 @@ async function walletScan(opts = {}) {
   txShowCount = 10;
 
   try {
+    try {
+      if (await probeTronContract(addr)) {
+        walletFromCache = false;
+        hideScanEmpty(walletEmpty);
+        walletRes.innerHTML = await renderWalletContractRedirect(addr);
+        bindWalletContractRedirect(addr);
+        return;
+      }
+    } catch (_) {}
+
     const [accRes, txRes, trc20TxRes, tokenRes, scanAcc, secAcc, tagAcc, scanApprovalRaw] = await Promise.all([
       gridGet(`/v1/accounts/${addr}`).catch(() => ({ data: [] })),
       gridGet(`/v1/accounts/${addr}/transactions`, { limit: 50, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
