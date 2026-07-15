@@ -39,12 +39,14 @@ GitHub release tags begin at **v1.0.0** (June 2026). The product itself shipped 
 - **2026-07-10** — **Network analytics charts** — interactive 7-day TRX, energy/bandwidth, USDT activity; mobile chart layout
 - **2026-07-10** — **Wallet scanner** — session cache, on-chain approvals, risk score 0–100, PDF/summary, next-step links to Approvals/AML
 - **2026-07-12** — **[v1.2.0]** — **Permission auditor**, AML v2 lite, approvals UI refresh, risk-shield color alignment
+- **2026-07-15** — **Product demo video** — [6-minute YouTube walkthrough](https://www.youtube.com/watch?v=AwwVFx8PJgc) of all app modules
 
 ---
 
 ## [Unreleased]
 
 ### Added
+- **Product demo** — [YouTube walkthrough](https://www.youtube.com/watch?v=AwwVFx8PJgc) (wallet, AML, approvals, permissions, phishing, contracts, TX decoder, vanity, PWA UX)
 - **Wallet scanner** — smart contract detection (not only token contracts) with redirect callout to Contract Scan
 - **Command palette** — file-style module labels (`scanner.sh`, `vanity.gen`, …), open animation, keyboard hint styling
 
