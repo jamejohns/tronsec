@@ -15,6 +15,8 @@
   <a href="https://tronsec.io/"><img src="https://img.shields.io/badge/Website-tronsec.io-e50914?style=for-the-badge" alt="Website"></a>
   &nbsp;
   <a href="https://t.me/tronsec_chat"><img src="https://img.shields.io/badge/Telegram-community-0088cc?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram"></a>
+  &nbsp;
+  <a href="https://www.youtube.com/watch?v=AwwVFx8PJgc"><img src="https://img.shields.io/badge/Demo-YouTube-ff0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube demo"></a>
 </p>
 
 <p align="center">
@@ -49,7 +51,8 @@ Focus areas: **on-chain risk** · **financial crime signals** · **secure client
 
 This repository is the **open-source application** (MIT). The marketing site lives at **[tronsec.io](https://tronsec.io)**.
 
-> **Live demo:** [tronsec.io/app](https://tronsec.io/app/)
+> **Live demo:** [tronsec.io/app](https://tronsec.io/app/)  
+> **Full walkthrough (~6 min):** [YouTube — all modules](https://www.youtube.com/watch?v=AwwVFx8PJgc)
 
 The **first public GitHub release** was June 2026 — not the start of the project. TRONSEC had been in active development on [tronsec.io](https://tronsec.io) for roughly **three months** before the repo went public. Tags here track the OSS export; the timeline below is the full product history.
 
