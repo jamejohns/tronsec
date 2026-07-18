@@ -6,7 +6,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.mjs",
     "check:js": "node tests/check-js-syntax.mjs",
     "check:guards": "node tests/check-export-guards.mjs"
   }
