@@ -423,13 +423,100 @@ function walletTxHashBtn(hash) {
   return `<button type="button" class="wallet-inline-link wallet-tx-decode-btn" data-hash="${esc(hash)}" title="${esc(hash)}">${esc(addrLabel(hash))}</button>`;
 }
 
+function walletAddrHexKey(addr) {
+  const s = String(addr || '').trim();
+  if (!s) return '';
+  const hex = s.replace(/^0x/i, '');
+  if (/^41[0-9a-fA-F]{40}$/.test(hex)) return hex.toLowerCase();
+  if (typeof isValidTron === 'function' && isValidTron(s) && typeof _base58Decode === 'function') {
+    try {
+      const bytes = _base58Decode(s);
+      if (bytes && bytes.length >= 21) {
+        return Array.from(bytes.subarray(0, 21))
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
+      }
+    } catch (_) {}
+  }
+  return s.toLowerCase();
+}
+
+function walletSameAddr(a, b) {
+  if (!a || !b) return false;
+  if (typeof sameTronAddr === 'function' && sameTronAddr(a, b)) return true;
+  const ka = walletAddrHexKey(a);
+  const kb = walletAddrHexKey(b);
+  return !!ka && ka === kb;
+}
+
+function walletActivityPeerHtml(templateKey, addr) {
+  const btn = walletContractScanBtn(addr);
+  if (!templateKey) return btn;
+  const marker = '\u0000';
+  const labeled = t(templateKey, { addr: marker });
+  const parts = String(labeled).split(marker);
+  if (parts.length < 2) return esc(labeled) + ' ' + btn;
+  return esc(parts[0]) + btn + esc(parts.slice(1).join(marker));
+}
+
+async function walletEnsureBase58(addr) {
+  if (!addr || typeof addr !== 'string') return addr;
+  const s = addr.trim();
+  if (!s) return s;
+  if (typeof isValidTron === 'function' && isValidTron(s)) return s;
+  if (/^0?x?41[0-9a-fA-F]{40}$/.test(s) && typeof hexToTronAddress === 'function') {
+    try { return await hexToTronAddress(s); } catch (_) { return s; }
+  }
+  return s;
+}
+
+async function walletNormalizeActivityAddrs(txs) {
+  if (!Array.isArray(txs) || !txs.length) return;
+  const cache = new Map();
+  const one = async (a) => {
+    if (!a) return a;
+    const k = String(a);
+    if (cache.has(k)) return cache.get(k);
+    const p = walletEnsureBase58(k);
+    cache.set(k, p);
+    return p;
+  };
+  for (const tx of txs) {
+    const val = tx?.raw_data?.contract?.[0]?.parameter?.value;
+    if (val) {
+      if (val.owner_address) val.owner_address = await one(val.owner_address);
+      if (val.to_address) val.to_address = await one(val.to_address);
+      if (val.contract_address) val.contract_address = await one(val.contract_address);
+    }
+    if (tx.from) tx.from = await one(tx.from);
+    if (tx.to) tx.to = await one(tx.to);
+  }
+}
+
+function walletFmtActivityTrx(sun, isDust) {
+  const n = Number(sun) || 0;
+  if (!(n > 0)) return '—';
+  const trx = n / 1e6;
+  if (isDust || trx < 0.01) {
+    const s = trx < 1e-6 ? trx.toExponential(2) : trx.toFixed(6).replace(/\.?0+$/, '');
+    return s + ' TRX';
+  }
+  return toTRX(n) + ' TRX';
+}
+
+function walletActivityDustBadge() {
+  return '<span class="wallet-tag is-warn wallet-activity-dust-tag" title="'
+    + esc(t('Possible dust attack — micro-transfer designed to pollute your transaction history.'))
+    + '">' + esc(t('dust')) + '</span>';
+}
+
 function buildActivityItem(tx, addr) {
   const c = tx.raw_data?.contract?.[0];
   const rawVal = c?.parameter?.value || {};
   const time = tx.block_timestamp ? ago(tx.block_timestamp) : '—';
   const txHash = tx.txID || tx.transaction_id || tx.hash || tx.tx_id || '';
   const isTrc20 = tx._isTrc20 || tx.token_info || tx.token_amount != null || (tx.type && String(tx.type).toLowerCase().includes('trc20')) || !!tx.tokenInfo;
-  let iconCls, iconPath, title, meta, amountHtml;
+  let iconCls, iconPath, title, metaHtml, amountHtml, isDust = false;
 
   if (isTrc20) {
     const tokenInfo = tx.token_info || tx.tokenInfo || {};
@@ -439,49 +526,137 @@ function buildActivityItem(tx, addr) {
     const amount = amountRaw / Math.pow(10, decimals || 6);
     const from = rawVal.owner_address || tx.from || null;
     const to = rawVal.to_address || tx.to || null;
-    const isIn = sameTronAddr(to, addr);
+    const isIn = walletSameAddr(to, addr);
     iconCls = isIn ? 'is-in' : 'is-out';
     iconPath = isIn ? IC.arrowDown : IC.arrowUp;
     title = isIn ? t('Received {symbol}', { symbol }) : t('Sent {symbol}', { symbol });
-    meta = isIn ? t('from {addr}', { addr: addrLabel(from || '?') }) : t('to {addr}', { addr: addrLabel(to || '?') });
+    metaHtml = isIn ? walletActivityPeerHtml('from {addr}', from) : walletActivityPeerHtml('to {addr}', to);
     amountHtml = `<div class="wallet-activity-amt ${isIn ? 'tx-amt-in' : 'tx-amt-out'}">${isIn ? '+' : '-'}${Number(amount).toLocaleString(undefined, { maximumFractionDigits: 4 })}</div>`;
   } else {
     const type = c?.type || 'Unknown';
-    const val = rawVal;
-    const from = val?.owner_address || null;
-    const to = val?.to_address || null;
-    const amount = val?.amount || val?.call_value || 0;
-    const isIn = type === 'TransferContract' && sameTronAddr(to, addr);
-    const isOut = type === 'TransferContract' && sameTronAddr(from, addr);
-    if (isIn) { iconCls = 'is-in'; iconPath = IC.arrowDown; title = t('Received TRX'); meta = t('from {addr}', { addr: addrLabel(from || '?') }); }
-    else if (isOut) { iconCls = 'is-out'; iconPath = IC.arrowUp; title = t('Sent TRX'); meta = t('to {addr}', { addr: addrLabel(to || '?') }); }
-    else {
+    const from = rawVal?.owner_address || null;
+    const to = rawVal?.to_address || null;
+    const contract = rawVal?.contract_address || null;
+    const amount = type === 'TransferAssetContract'
+      ? Number(rawVal?.call_value || 0)
+      : (rawVal?.amount || rawVal?.call_value || 0);
+    const isXfer = type === 'TransferContract' || type === 'TransferAssetContract';
+    const isIn = isXfer && walletSameAddr(to, addr);
+    const isOut = isXfer && walletSameAddr(from, addr);
+    isDust = type === 'TransferContract' && isIn
+      && typeof isMicroTrxSun === 'function' && isMicroTrxSun(amount);
+
+    if (isIn) {
+      iconCls = isDust ? 'is-warn' : 'is-in';
+      iconPath = IC.arrowDown;
+      title = isDust
+        ? t('Dust / spam TRX')
+        : (type === 'TransferAssetContract' ? t('Received asset') : t('Received TRX'));
+      metaHtml = walletActivityPeerHtml('from {addr}', from);
+    } else if (isOut) {
+      iconCls = 'is-out';
+      iconPath = IC.arrowUp;
+      title = type === 'TransferAssetContract' ? t('Sent asset') : t('Sent TRX');
+      metaHtml = walletActivityPeerHtml('to {addr}', to);
+    } else if (type === 'TriggerSmartContract') {
+      iconCls = 'is-neutral';
+      iconPath = IC.activity;
+      title = t('Contract call');
+      metaHtml = contract
+        ? walletActivityPeerHtml('to {addr}', contract)
+        : walletActivityPeerHtml('', to);
+    } else {
       iconCls = 'is-neutral';
       iconPath = IC.activity;
       title = type.replace('Contract', '').replace(/([A-Z])/g, ' $1').trim() || t('Contract call');
-      meta = addrLabel(to || from || '?');
+      metaHtml = walletActivityPeerHtml('', to || contract);
     }
-    amountHtml = amount
-      ? `<div class="wallet-activity-amt ${isIn ? 'tx-amt-in' : isOut ? 'tx-amt-out' : 'tx-amt-neutral'}">${isIn ? '+' : isOut ? '-' : ''}${toTRX(amount)} TRX</div>`
+
+    const amtTxt = walletFmtActivityTrx(amount, isDust);
+    amountHtml = amtTxt !== '—'
+      ? `<div class="wallet-activity-amt ${isDust ? 'tx-amt-warn' : isIn ? 'tx-amt-in' : isOut ? 'tx-amt-out' : 'tx-amt-neutral'}">${isDust || isIn ? '+' : isOut ? '-' : ''}${amtTxt}</div>`
       : `<div class="wallet-activity-amt tx-amt-neutral">—</div>`;
   }
 
   const hashBtn = walletTxHashBtn(txHash);
-  const metaHtml = hashBtn
-    ? `<span class="wallet-activity-route">${esc(meta)}</span><span class="wallet-activity-hash">${hashBtn}</span>`
-    : `<span class="wallet-activity-route">${esc(meta)}</span>`;
+  const routeHtml = hashBtn
+    ? `<span class="wallet-activity-route">${metaHtml}</span><span class="wallet-activity-hash">${hashBtn}</span>`
+    : `<span class="wallet-activity-route">${metaHtml}</span>`;
+  const titleHtml = esc(title) + (isDust ? ' ' + walletActivityDustBadge() : '');
 
-  return `<div class="wallet-activity-item">
+  return `<div class="wallet-activity-item${isDust ? ' is-dust' : ''}">
     <div class="wallet-activity-icon ${iconCls}">${icSVG(iconPath, 14)}</div>
     <div class="wallet-activity-body">
-      <div class="wallet-activity-title">${esc(title)}</div>
-      <div class="wallet-activity-meta">${metaHtml}</div>
+      <div class="wallet-activity-title">${titleHtml}</div>
+      <div class="wallet-activity-meta">${routeHtml}</div>
     </div>
     <div>
       ${amountHtml}
       <div class="wallet-activity-time">${time}</div>
     </div>
   </div>`;
+}
+
+const WALLET_JUNK_TOKEN_RE = /(?:airdrop|claim|bonus|gift|reward|giveaway|visit|www\.?|https?:|\.com\b|\.io\b|\.xyz\b|\.my\b|\bcom\b|\dcom\b|telegram|t\.me\/|@\w|free\s*trx|gas\s*free|gasfree|buy\s*gas|casino|lottery|gambl|win\s*prize|benefits?\s+at|hash\s*gambl)/i;
+
+function isWalletJunkToken(tok) {
+  const label = [tok?.symbol, tok?.name].filter(Boolean).join(' ');
+  if (label && WALLET_JUNK_TOKEN_RE.test(label)) return true;
+  if (!(Number(tok?.priceInUsd) > 0)) return true;
+  return false;
+}
+
+function walletTokenRowHtml(tok) {
+  const uv = tok.priceInUsd > 0 ? tok.balance * tok.priceInUsd : null;
+  const balFmt = tok.balance >= 1e6
+    ? (tok.balance / 1e6).toFixed(2) + 'M'
+    : tok.balance >= 1e3
+      ? (tok.balance / 1e3).toFixed(2) + 'K'
+      : tok.balance.toFixed(Math.min(tok.decimals, 4));
+  const sym = String(tok.symbol || '—');
+  return `<div class="wallet-token-row">
+    <div class="wallet-token-icon">${esc(sym.slice(0, 3))}</div>
+    <div class="wallet-token-body">
+      <div class="wallet-token-name">${esc(sym)}${tok.name ? ` <span style="color:var(--text-4);font-weight:400">${esc(tok.name)}</span>` : ''}</div>
+      <div class="wallet-token-meta">${walletContractScanBtn(tok.contract)}</div>
+    </div>
+    <div class="wallet-token-val">
+      <div class="wallet-token-usd">${uv && uv > 0 ? '$' + uv.toFixed(2) : '—'}</div>
+      <div class="wallet-token-bal">${esc(balFmt)} · ${tok.priceInUsd > 0 ? '$' + Number(tok.priceInUsd).toFixed(4) : t('no price')}</div>
+    </div>
+  </div>`;
+}
+
+function walletTokenHoldingsHtml(tokens, portfolioUsd) {
+  if (!tokens.length) {
+    return '<div class="wallet-empty-block">' + t('No TRC20 tokens with balance') + '</div>';
+  }
+  const sorted = [...tokens].sort((a, b) => {
+    const ua = a.priceInUsd > 0 ? a.balance * a.priceInUsd : 0;
+    const ub = b.priceInUsd > 0 ? b.balance * b.priceInUsd : 0;
+    return ub - ua;
+  });
+  const kept = [];
+  const junk = [];
+  for (const tok of sorted) {
+    (isWalletJunkToken(tok) ? junk : kept).push(tok);
+  }
+  const visible = kept.length ? kept : sorted.slice(0, Math.min(3, sorted.length));
+  const hidden = kept.length ? junk : sorted.slice(visible.length);
+  let html = visible.map(walletTokenRowHtml).join('');
+  if (hidden.length) {
+    const label = hidden.length === 1
+      ? t('1 spam-like token hidden')
+      : t('{count} spam-like tokens hidden', { count: hidden.length });
+    html += `<details class="wallet-token-junk">
+      <summary class="wallet-token-junk-summary">${esc(label)}</summary>
+      <div class="wallet-token-junk-list">${hidden.map(walletTokenRowHtml).join('')}</div>
+    </details>`;
+  }
+  if (portfolioUsd > 0) {
+    html += `<div class="wallet-token-footer"><span>${t('Token holdings')}</span><strong>$${portfolioUsd.toFixed(2)}</strong></div>`;
+  }
+  return html;
 }
 
 function walletLoadMoreBtn(busy) {
@@ -966,6 +1141,7 @@ async function walletScan(opts = {}) {
     });
 
     walletTxs = nativeTxs.concat(normTrc20).sort((a, b) => (b.block_timestamp || 0) - (a.block_timestamp || 0));
+    await walletNormalizeActivityAddrs(walletTxs);
 
     let trc20 = [];
     if (tokenRes?.data?.length) {
@@ -1069,6 +1245,7 @@ async function loadMoreTxs() {
         const key = (t._isTrc20 ? 'T' : 'N') + (t.from || '') + (t.to || '') + (t.block_timestamp || 0) + (t.token_symbol || '');
         if (!seen.has(key)) { seen.add(key); walletTxs.push(t); }
       }
+      await walletNormalizeActivityAddrs(more);
     } catch (_) {}
   }
 
@@ -1150,7 +1327,9 @@ function renderWallet() {
 
   const showTxs = txs.slice(0, txShowCount);
   const allTxShown = txShowCount >= txs.length && !walletHasMore;
-  const sortedTokens = [...trc20].sort((a, b) => (tokenUsd(b) || 0) - (tokenUsd(a) || 0));
+  const junkTok = trc20.filter(isWalletJunkToken).length;
+  const keepTok = Math.max(0, trc20.length - junkTok);
+  const tokTitleMeta = junkTok > 0 && keepTok > 0 ? String(keepTok) : String(trc20.length);
 
   const headTags = [
     acc._inactive ? walletTag(t('inactive account'), 'warn') : walletTag(t('active account'), 'live'),
@@ -1186,29 +1365,7 @@ function renderWallet() {
       : kvRow(t('Votes'), votePower > 0 ? `${fmtNum(votePower)} to ${votes.length} SR${votes.length !== 1 ? 's' : ''}` : '—', true),
   ].join('');
 
-  const tokenHtml = sortedTokens.length === 0
-    ? '<div class="wallet-empty-block">' + t('No TRC20 tokens with balance') + '</div>'
-    : sortedTokens.map(tok => {
-        const uv = tokenUsd(tok);
-        const balFmt = tok.balance >= 1e6
-          ? (tok.balance / 1e6).toFixed(2) + 'M'
-          : tok.balance >= 1e3
-            ? (tok.balance / 1e3).toFixed(2) + 'K'
-            : tok.balance.toFixed(Math.min(tok.decimals, 4));
-        return `<div class="wallet-token-row">
-          <div class="wallet-token-icon">${esc(tok.symbol.slice(0, 3))}</div>
-          <div class="wallet-token-body">
-            <div class="wallet-token-name">${esc(tok.symbol)}${tok.name ? ` <span style="color:var(--text-4);font-weight:400">${esc(tok.name)}</span>` : ''}</div>
-            <div class="wallet-token-meta">${walletContractScanBtn(tok.contract)}</div>
-          </div>
-          <div class="wallet-token-val">
-            <div class="wallet-token-usd">${uv && uv > 0 ? '$' + uv.toFixed(2) : '—'}</div>
-            <div class="wallet-token-bal">${esc(balFmt)} · ${tok.priceInUsd > 0 ? '$' + tok.priceInUsd.toFixed(4) : t('no price')}</div>
-          </div>
-        </div>`;
-      }).join('') + (trc20UsdTotal > 0
-        ? `<div class="wallet-token-footer"><span>${t('Token holdings')}</span><strong>$${trc20UsdTotal.toFixed(2)}</strong></div>`
-        : '');
+  const tokenHtml = walletTokenHoldingsHtml(trc20, trc20UsdTotal);
 
   const riskStatHtml = typeof walletRiskStat === 'function'
     ? walletRiskStat(riskReport.status, riskReport.statusLabel, riskReport.finalScore, riskReport.isFlagged, riskReport.hasHardSignals)
@@ -1285,7 +1442,7 @@ function renderWallet() {
       </div>
 
       <div>
-        <div class="scan-section-title wallet-section-title">${t('Token holdings')} <span>· ${trc20.length}</span></div>
+        <div class="scan-section-title wallet-section-title">${t('Token holdings')} <span>· ${tokTitleMeta}</span></div>
         <div class="wallet-token-list">${tokenHtml}</div>
       </div>
 
