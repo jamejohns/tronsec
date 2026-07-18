@@ -75,6 +75,9 @@
 </div>
 </div>
 <div class="app-header-actions">
+<button type=button id=help-widget-toggle class="app-header-btn app-header-icon app-header-help help-widget-trigger" aria-expanded=false aria-controls=help-widget-panel data-i18n-aria-label="Help & support" aria-label="Help & support" title="Help & support">
+<i data-lucide=life-buoy class="w-4 h-4"></i>
+</button>
 <div id=lang-switcher class="app-header-lang">
 <button type="button" class="app-header-btn app-header-lang-btn" title="Switch language" aria-expanded=false id=lang-switcher-btn>
 <i data-lucide=globe class="w-4 h-4 shrink-0"></i>
@@ -101,7 +104,7 @@
 <div class="sidebar-scroll">
 <div class="space-y-4 md:space-y-5">
 <div class=space-y-1>
-<div class="sidebar-label">Quick actions</div>
+<div class="sidebar-label sidebar-label-plain">Commands</div>
 <button onclick=openCommandPalette() class="sidebar-nav-btn sidebar-cmd-btn">
 <i data-lucide=terminal class="shrink-0"></i>
 <span class="module-file">command.palette</span>
@@ -835,6 +838,16 @@
 <button onclick='switchTab("analytics")' data-tab-btn=analytics class="flex flex-col items-center gap-0.5 sidebar-nav-btn"><i data-lucide=bar-chart-2 class="w-4 h-4"></i><span class=text-[9px] data-i18n=Stats>Stats</span></button>
 <button onclick=toggleMobileMoreMenu() data-tab-btn=more class="flex flex-col items-center gap-0.5 sidebar-nav-btn"><i data-lucide=more-horizontal class="w-4 h-4"></i><span class=text-[9px] data-i18n=More>More</span></button>
 </nav>
+<div id=help-o></div>
+<div id=help-widget-panel class="help-widget-panel hidden" role=dialog aria-modal=true aria-labelledby=help-widget-title>
+<div class=help-widget-grab aria-hidden=true></div>
+<div class=help-widget-head>
+<h2 id=help-widget-title class=help-widget-title data-i18n="Help & support">Help & support</h2>
+<button type=button id=help-widget-close class=help-widget-close data-i18n-aria-label=Close aria-label=Close><svg width=16 height=16 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden=true><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+</div>
+<div class=help-widget-scroll id=help-widget-scroll></div>
+</div>
+
 <script src=js/secrets.js></script>
 <script src=js/proxy-config.js></script>
 <script src=js/api-proxy.js></script>
@@ -854,6 +867,7 @@
 <script src=js/permissions.js></script>
 <script src=js/tx-decoder.js></script>
 <script src=js/vanity.js></script>
+<script src=js/help-widget.js></script>
 <script src=js/tour.js></script>
 <script src=js/hotkeys.js></script>
 <script src=js/pwa-install.js></script>

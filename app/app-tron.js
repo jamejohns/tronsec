@@ -1505,6 +1505,7 @@ function applyDomI18n() {
 
     if (typeof refreshModuleNavStateAria === 'function') refreshModuleNavStateAria();
     if (typeof patchAmlModuleCopy === 'function') patchAmlModuleCopy();
+    if (typeof refreshHelpWidgetI18n === 'function') refreshHelpWidgetI18n();
 }
 
 function initLangSwitcher() {
@@ -2133,6 +2134,7 @@ window.addEventListener('DOMContentLoaded', () => {
         syncAppBrandLink();
         initLangSwitcher();
         lucide.createIcons();
+        if (typeof initHelpWidget === 'function') initHelpWidget();
         if (typeof initModuleDescTags === 'function') initModuleDescTags();
         initReportTypeKeyboard();
         initMobileMoreSheetDrag();
