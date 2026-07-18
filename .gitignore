@@ -11,3 +11,5 @@ Thumbs.db
 *.log
 app.zip
 app/app.zip
+
+node_modules/

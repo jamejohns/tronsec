@@ -2,15 +2,19 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, main1]
   pull_request:
-    branches: [main]
+    branches: [main, main1]
 
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Block secrets.local.js in tree
         run: |
@@ -52,3 +56,12 @@ jobs:
 
       - name: License present
         run: test -f LICENSE
+
+      - name: Readable JS + export guards
+        run: node tests/check-export-guards.mjs
+
+      - name: JS syntax (node --check)
+        run: node tests/check-js-syntax.mjs
+
+      - name: Unit tests (risk / AML / contract / permissions)
+        run: npm test

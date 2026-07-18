@@ -29,6 +29,18 @@ python -m http.server 8080
 
 Open **http://localhost:8080/app/**.
 
+## Tests / CI
+
+Requires **Node 20+** (no extra packages):
+
+```bash
+npm test                 # risk / AML / contract / permissions unit tests
+npm run check:guards     # readable JS + no secrets + export markers
+npm run check:js         # node --check on app/**/*.js
+```
+
+GitHub Actions runs the same checks on `main` / `main1`.
+
 ## Rules
 
 - **Never commit API keys**, bot tokens, or `app/js/secrets.local.js`.
