@@ -1,32 +1,31 @@
 <p align="center">
-  <img src="assets/brand/logo-mark-readme.svg" alt="TRONSEC" width="80" height="80">
+  <img src="assets/brand/logo-mark-readme.svg" alt="TRONSEC logo — TRON security terminal" width="80" height="80">
 </p>
 
 <h1 align="center">TRONSEC</h1>
 
 <p align="center">
-  <strong>Security terminal for the TRON ecosystem</strong><br>
-  Wallets · approvals · contracts · transactions · URLs · vanity addresses — read-only, in the browser.
+  <strong>Open-source TRON security terminal</strong><br>
+  Wallet risk · AML screening · TRC-20 approvals · contract audit · TX decode · URL phishing · vanity generator
 </p>
 
 <p align="center">
-  <a href="https://tronsec.io/app/"><img src="https://img.shields.io/badge/Open_App-tronsec.io%2Fapp-0a0a0a?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNCIgaGVpZ2h0PSIxNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik03IDJsMTAgNXYxMGMwIDUuNSA0LjIgMTAuNCAxMCAxMiA1LjgtMS42IDEwLTYuNSAxMC0xMlY3TDE3IDJIN3oiLz48L3N2Zz4=" alt="Open app"></a>
+  <a href="https://tronsec.io/app/"><img src="https://img.shields.io/badge/Live_App-tronsec.io%2Fapp-e50914?style=for-the-badge" alt="Live app on tronsec.io"></a>
   &nbsp;
-  <a href="https://tronsec.io/"><img src="https://img.shields.io/badge/Website-tronsec.io-e50914?style=for-the-badge" alt="Website"></a>
+  <a href="https://tronsec.io/"><img src="https://img.shields.io/badge/Website-tronsec.io-0a0a0a?style=for-the-badge" alt="TRONSEC website"></a>
   &nbsp;
-  <a href="https://t.me/tronsec_chat"><img src="https://img.shields.io/badge/Telegram-community-0088cc?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram"></a>
+  <a href="https://www.youtube.com/watch?v=AwwVFx8PJgc"><img src="https://img.shields.io/badge/Video_demo-YouTube-ff0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube product demo"></a>
   &nbsp;
-  <a href="https://www.youtube.com/watch?v=AwwVFx8PJgc"><img src="https://img.shields.io/badge/Demo-YouTube-ff0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube demo"></a>
+  <a href="https://t.me/tronsec_io"><img src="https://img.shields.io/badge/Community-Telegram-0088cc?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram community"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/jamejohns/tronsec/actions/workflows/ci.yml"><img src="https://github.com/jamejohns/tronsec/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/jamejohns/tronsec/actions/workflows/ci.yml"><img src="https://github.com/jamejohns/tronsec/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <img src="https://img.shields.io/github/license/jamejohns/tronsec?style=flat-square" alt="MIT License">
-  <img src="https://img.shields.io/badge/API_keys-server--side_(Worker)-22c55e?style=flat-square" alt="Server-side API keys">
-  <img src="https://img.shields.io/badge/TRON-Mainnet-e50914?style=flat-square" alt="TRON">
-  <img src="https://img.shields.io/badge/JavaScript-vanilla-f7df1e?style=flat-square&logo=javascript&logoColor=000" alt="JS">
-  <img src="https://img.shields.io/badge/Languages-8-64748b?style=flat-square" alt="i18n">
-  <img src="https://img.shields.io/badge/Modules-10-22c55e?style=flat-square" alt="Modules">
+  <img src="https://img.shields.io/badge/read--only-no_wallet_connect-22c55e?style=flat-square" alt="Read-only — no wallet connect">
+  <img src="https://img.shields.io/badge/TRON-Mainnet-e50914?style=flat-square" alt="TRON mainnet">
+  <img src="https://img.shields.io/badge/stack-vanilla_JavaScript-f7df1e?style=flat-square&logo=javascript&logoColor=000" alt="Vanilla JavaScript">
+  <img src="https://img.shields.io/badge/languages-8-64748b?style=flat-square" alt="8 UI languages">
 </p>
 
 <p align="center">
@@ -43,84 +42,75 @@
 
 <br>
 
-## Overview
+## What is TRONSEC?
 
-**TRONSEC** is a read-only security workbench for TRON. Paste an address, contract, transaction hash, or URL — get structured risk signals without connecting a wallet or creating an account.
+**TRONSEC** is a browser-based **TRON (TRX) security workbench**. It helps users, analysts, and developers inspect TRON mainnet addresses, smart contracts, transactions, and URLs **without connecting a wallet** and **without creating an account**.
 
-Focus areas: **on-chain risk** · **financial crime signals** · **secure client architecture** — wallet compromise patterns, TRC-20 approvals, phishing & drainer surfaces, and read-only tooling that helps users decide before they sign.
+Use it to answer questions such as:
 
-This repository is the **open-source application** (MIT). The marketing site lives at **[tronsec.io](https://tronsec.io)**.
+- Is this **TRON wallet address** risky? What tokens and approvals does it hold?
+- Does this address show **AML / sanctions exposure** or suspicious counterparty links?
+- Which **TRC-20 approvals** are unlimited or granted to unknown spenders?
+- Is this **TRON smart contract** privileged, proxied, or commonly abused?
+- What does this **transaction calldata** actually do — transfer, approval, or drain pattern?
+- Is this **URL** a TRON phishing or typosquat page?
 
-> **Live demo:** [tronsec.io/app](https://tronsec.io/app/)  
-> **Full walkthrough (~6 min):** [YouTube — all modules](https://www.youtube.com/watch?v=AwwVFx8PJgc)
+The live product runs at **[tronsec.io/app](https://tronsec.io/app/)**.  
+This repository is the **MIT-licensed, readable JavaScript export** of the application modules and UI shell.
 
-The **first public GitHub release** was June 2026 — not the start of the project. TRONSEC had been in active development on [tronsec.io](https://tronsec.io) for roughly **three months** before the repo went public. Tags here track the OSS export; the timeline below is the full product history.
+> **Video walkthrough (~6 min):** [YouTube — all modules](https://www.youtube.com/watch?v=AwwVFx8PJgc)
 
 <br>
 
-## Development timeline
+## Who is this for?
 
-| Period | Milestones |
+| Audience | Typical use |
 |:--|:--|
-| **Apr 2026** | Terminal UI shell, module routing, Cloudflare Worker proxy (API keys server-side), wallet scanner (portfolio, TRC-20, stake, activity), TronGrid / TronScan client layer |
-| **May 2026** | AML check + flow graph, contract audit heuristics, TX decoder, URL / phishing scanner (heuristics + VirusTotal via worker), scam-report flow, **8-language i18n** |
-| **Jun 2026** | PWA + service worker, vanity generator (local Web Workers), TRC-20 **approvals** monitor, production deploy on tronsec.io, **MIT OSS published** ([v1.0](https://github.com/jamejohns/tronsec/releases/tag/v1.0) → [v1.1](https://github.com/jamejohns/tronsec/releases/tag/v1.1.0)) |
-| **Jul 2026** | Approvals polish, **permission auditor**, public architecture / security docs, OSS [v1.2.0](https://github.com/jamejohns/tronsec/releases/tag/v1.2.0); **network analytics charts**; **wallet scanner** risk score, contract detection, session cache, PDF export |
+| **TRON users** | Check a address or link before signing in TronLink / Trust Wallet |
+| **Security researchers** | Reproduce heuristics, extend modules, cite readable source |
+| **Developers & integrators** | Self-host the terminal, wire your own Cloudflare Worker proxy |
+| **Compliance & OSINT** | AML-style on-chain signals, counterparty graphs, exportable PDF summaries |
 
-Full month-by-month notes: **[CHANGELOG.md#development-history](CHANGELOG.md#development-history)**.
+TRONSEC is **read-only**. It does not execute transactions, hold custody, or request seed phrases.
 
 <br>
 
-## Production: API keys stay on the server
+## Security modules (open source)
 
-**[tronsec.io](https://tronsec.io) does not ship API keys in the browser.**
+| Module | File(s) | Capabilities |
+|:--|:--|:--|
+| **Wallet scanner** | `wallet.js`, `shared.js` | Portfolio USD, TRC-20 holdings, stake / bandwidth / energy, activity feed, **risk score 0–100**, contract vs token detection, on-chain approval count, session cache, PDF summary, guided next steps |
+| **AML check** | `aml.js`, `aml-categories.js`, `graph.js` | On-chain heuristics, **risk category taxonomy** (sanctions, mixer, scam, exchange, DeFi, spam/dust), counterparty exposure, token-flow **D3 graph**, PDF export |
+| **TRC-20 approvals** | `approvals.js` | Active allowances, unlimited-approval warnings, risky / unknown spenders, TronScan + grid merge |
+| **Permission auditor** | `permissions.js` | Owner / active / witness keys, multisig thresholds, external controllers, permission history |
+| **Contract audit** | `contract.js` | Privileged functions, proxy patterns, TRON bytecode signals |
+| **TX decoder** | `tx-decoder.js` | TRC-20 transfers, approvals in calldata, fees, dust / poisoning / drainer heuristics |
+| **URL / phishing scan** | `phish-check.js` | Typosquatting, homoglyphs, TRON-themed lures; VirusTotal via worker |
+| **Vanity generator** | `vanity.js`, `vanity-worker.js` | Base58 prefix/suffix search in **local Web Workers** — keys never leave the browser |
+| **Network dashboard** | `app-tron.js` (shell) | Live TRX metrics, chain stats; **7-day charts** (TRX, energy/bandwidth, USDT activity) |
+| **Scam report** | `shared.js` + worker | Structured address/domain reports when worker is configured |
 
-The deployed app is static HTML/JS. Every upstream call (TronGrid, TronScan, VirusTotal, optional scam-report backend) goes through a **Cloudflare Worker** proxy. Credentials are **Wrangler secrets on the worker** — they never appear in the client bundle, DevTools, or this git tree.
+All modules share a **Cloudflare Worker proxy client** (`api-proxy.js`, `proxy-config.js`) so **API keys stay server-side** on production and in recommended self-hosted setups.
+
+<br>
+
+## How TRONSEC handles API keys
+
+Production **[tronsec.io](https://tronsec.io)** never ships TronGrid, TronScan, or VirusTotal keys in static JavaScript.
 
 ```
-Browser  →  Cloudflare Worker (secrets)  →  TronGrid / TronScan / VirusTotal
+Browser (static app/)  →  Cloudflare Worker (secrets)  →  TronGrid · TronScan · VirusTotal
 ```
 
-| Production loads | Contains secrets? |
+| Artifact | Contains secrets? |
 |:--|:--|
 | `app/js/proxy-config.js` | No — public worker URL only |
+| `app/js/api-proxy.js` | No — URL builder + fetch helpers |
 | `app/js/secrets.js` | No — empty placeholders |
-| `app/js/secrets.local.js` | **Not shipped** — gitignored, not in prod HTML |
+| `app/js/secrets.local.js` | **Local dev only** — gitignored, not in production HTML |
 
-Cloning this repo and running locally uses the **same worker proxy by default** — no keys required.
-
-Full diagram: **[ARCHITECTURE.md](ARCHITECTURE.md)**
-
-<br>
-
-## Modules
-
-| Module | What it does |
-|:--|:--|
-| **Wallet scanner** | Portfolio USD, TRC-20 holdings, stake, bandwidth & energy, security flags, activity feed; **risk score 0–100**, on-chain approval count, session cache, PDF/summary export; links to Approvals / AML |
-| **Approvals** | Lists active TRC-20 allowances, flags unlimited grants and risky spenders |
-| **Permission auditor** | Owner, active, and witness keys; multisig thresholds; external-controller detection; permission-change history |
-| **AML check** | On-chain heuristics, counterparty exposure, token flows, PDF export |
-| **Contract audit** | Privileged functions, proxy patterns, TRON-specific bytecode signals |
-| **TX decoder** | TRC-20 transfers, approvals, contract calls, fees, scam-pattern warnings |
-| **URL scanner** | Typosquatting, homoglyphs, VirusTotal (via worker) |
-| **Vanity generator** | Base58 patterns in **local Web Workers** — generated keys never leave your browser |
-| **Scam report** | Structured address/domain reports (delivered via worker when configured) |
-| **Network dashboard** | Live TRX price, chain stats, Fear & Greed; **7-day charts** for TRX price, energy/bandwidth usage, and USDT transfer activity (D3 area/line, hover & touch tooltips) |
-
-<br>
-
-## Pet OSS (satellite repos)
-
-Small, focused tools extracted from TRONSEC patterns — also pinned on [@jamejohns](https://github.com/jamejohns):
-
-| Repo | What it is |
-|:--|:--|
-| [**tronsec-worker-starter**](https://github.com/jamejohns/tronsec-worker-starter) | Cloudflare Worker API proxy — TronGrid, TronScan, VirusTotal keys stay server-side |
-| [**tron-approvals-check**](https://github.com/jamejohns/tron-approvals-check) | CLI to list TRON token approvals and flag unlimited or risky spenders |
-| [**tron-phish-rules**](https://github.com/jamejohns/tron-phish-rules) | Versioned TRON phishing URL heuristics + offline checker (no VirusTotal required) |
-
-Use the worker starter with the CLI tools, or run the full terminal here.
+Clone this repo and run locally — **default config uses the public worker**; no keys required.  
+Details: **[ARCHITECTURE.md](ARCHITECTURE.md)**
 
 <br>
 
@@ -130,80 +120,139 @@ Use the worker starter with the CLI tools, or run the full terminal here.
 git clone https://github.com/jamejohns/tronsec.git
 cd tronsec
 python -m http.server 8080
+# open http://localhost:8080/app/
 ```
 
-Open **http://localhost:8080/app/** — works out of the box via the public worker proxy (`proxy-config.js`). **No API keys needed.**
+Optional: copy `app/js/secrets.local.example.js` → `secrets.local.js` for direct TronGrid/TronScan keys on **your machine only** (advanced dev — not how tronsec.io works).
 
 <br>
 
 ## Worker proxy routes
 
-Public worker base URL (not a secret):
+Default worker base (public, not a secret):
 
 ```js
 // app/js/proxy-config.js
 window.TRONSEC_PROXY = { base: 'https://api-proxy.tronsec-io.workers.dev' };
 ```
 
-| Route | Upstream |
+| Route prefix | Upstream |
 |:--|:--|
 | `/grid/*` | TronGrid |
 | `/scan/*` | TronScan |
 | `/vt/*` | VirusTotal |
 | `/cmc/*` | CoinMarketCap (TRX quotes) |
-| `/telegram/sendMessage` | Scam-report form delivery (worker-held credentials) |
+| `/telegram/sendMessage` | Optional scam-report delivery (worker credentials) |
 
-**Self-hosting:** deploy your own worker, store keys as server secrets, point `proxy-config.js` at your worker URL, restrict CORS to your domain.
-
-<br>
-
-## Optional: local dev without proxy
-
-<details>
-<summary><strong>Advanced — direct TronGrid/TronScan keys in the browser (dev machines only)</strong></summary>
-
-This path is **not used on tronsec.io**. Only for developers who intentionally disable the proxy:
-
-```bash
-cp app/js/secrets.local.example.js app/js/secrets.local.js
-```
-
-```js
-window.TRONSEC_PROXY = { base: '' };
-Object.assign(window.TRONSEC_KEYS, {
-  trongrid: 'YOUR_DEV_TRONGRID_KEY',
-  tronscan: 'YOUR_DEV_TRONSCAN_KEY',
-});
-```
-
-Keys are visible in DevTools. VirusTotal still requires a worker. Never commit `secrets.local.js`.
-
-</details>
+Self-hosting: deploy your own worker ([tronsec-worker-starter](https://github.com/jamejohns/tronsec-worker-starter)), store keys as Wrangler secrets, point `proxy-config.js` at your URL, restrict CORS.
 
 <br>
 
-## Project layout
+## Repository layout
 
 ```
-app/                 Shell, styles, modules (vanilla JS)
-assets/              Brand, fonts, i18n (8 locales)
-manifest.json        PWA metadata
-sw.js                Service worker
+app/
+  index.html          App shell (sidebar modules, command palette)
+  app-tron.js         Bootstrap, routing, network charts
+  js/
+    wallet.js         Wallet scanner
+    aml.js            AML heuristics + graph integration
+    aml-categories.js Category taxonomy & exposure labels
+    approvals.js      TRC-20 allowance monitor
+    permissions.js    Account permission auditor
+    contract.js       Contract risk heuristics
+    tx-decoder.js     Transaction decoder
+    phish-check.js    URL / phishing scanner
+    vanity.js         Vanity generator (local workers)
+    shared.js         Fetch layer, risk helpers, PDF export
+    api-proxy.js      Worker client (readable OSS copy)
+assets/
+  js/i18n-locales.js  UI strings (EN, RU, ZH, ES, PT-BR, VI, TR, ID)
+manifest.json         PWA manifest
+sw.js                 Service worker
 ```
 
-Stack: vanilla JavaScript · Tailwind · Lucide · D3.js · TronGrid / TronScan / VirusTotal (via worker).
+Stack: **vanilla JavaScript**, Tailwind CSS, Lucide icons, D3.js, Web Workers. No React/Vue build step.
+
+<br>
+
+## Internationalization
+
+Eight locales ship in `assets/js/i18n-locales.js`: **English, Russian, Chinese, Spanish, Portuguese (Brazil), Vietnamese, Turkish, Indonesian**.  
+Module logic lives in English under `app/js/`; UI strings are centralized for translation.
+
+<br>
+
+## Pet OSS (focused satellite repos)
+
+| Repository | Purpose |
+|:--|:--|
+| [tronsec-worker-starter](https://github.com/jamejohns/tronsec-worker-starter) | Cloudflare Worker API proxy template |
+| [tron-approvals-check](https://github.com/jamejohns/tron-approvals-check) | CLI — list TRON token approvals |
+| [tron-phish-rules](https://github.com/jamejohns/tron-phish-rules) | Versioned TRON phishing URL rules (offline) |
+| [tron-drainer-tracker](https://github.com/jamejohns/tron-drainer-tracker) | Watch for new TRC-20 drainer contracts on-chain |
+
+<br>
+
+## This repo vs tronsec.io production
+
+| | **This repository (OSS)** | **tronsec.io (production)** |
+|:--|:--|:--|
+| JavaScript | Readable source | Obfuscated build |
+| Wallet connect / sign-in | **Not included** | Prod-only flows |
+| Scope | Security **modules** + classic terminal UI | Full product shell + ops features |
+| API keys | Worker proxy (recommended) | Same worker architecture |
+| License | MIT | Proprietary deployed site |
+
+The OSS export is maintained so researchers and integrators can **audit and extend TRON security tooling** without exposing production-only operational code.
+
+<br>
+
+## Product timeline
+
+| When | Highlights |
+|:--|:--|
+| **Apr 2026** | Terminal shell, worker proxy, wallet scanner, shared TronGrid/TronScan client |
+| **May 2026** | AML + graph, contract audit, TX decoder, URL scanner, 8-language i18n |
+| **Jun 2026** | PWA, vanity workers, approvals monitor, **MIT OSS** [v1.0](https://github.com/jamejohns/tronsec/releases/tag/v1.0) → [v1.1](https://github.com/jamejohns/tronsec/releases/tag/v1.1.0) |
+| **Jul 2026** | Permission auditor, network charts, wallet risk score & PDF — [v1.2.0](https://github.com/jamejohns/tronsec/releases/tag/v1.2.0) |
+| **Aug–Sep 2026** | AML category taxonomy, exposure labels, wallet/AML graph polish, approvals merge logic, extended i18n, CI export guards |
+
+Full notes: **[CHANGELOG.md](CHANGELOG.md)**
+
+<br>
+
+## FAQ
+
+**Does TRONSEC connect to my wallet?**  
+No. The open-source app is read-only. It never asks for a seed phrase or signing capability.
+
+**Where do TRON API keys go?**  
+On tronsec.io and in recommended self-hosted setups, keys live in a **server-side worker**, not in the browser bundle.
+
+**Does the vanity generator send private keys to a server?**  
+No. Vanity search runs in **local Web Workers**; generated keys stay in your browser.
+
+**Which network is supported?**  
+**TRON mainnet** (TRX, TRC-20, smart contracts on TRON).
+
+**Can I use this for compliance decisions?**  
+TRONSEC provides **heuristic on-chain signals** for research and user protection. It is not a substitute for formal KYC/AML procedures or legal advice.
+
+**How do I report a security issue?**  
+See **[SECURITY.md](SECURITY.md)** for responsible disclosure.
 
 <br>
 
 ## Security & privacy
 
-- **Read-only** — no wallet connection, no transaction signing from this UI.
-- **Production keys server-side** — Cloudflare Worker + Wrangler secrets on the live site.
-- **Vanity keys stay local** — generated private keys never sent to any server.
-- **No seed phrases** — TRONSEC never asks for your wallet mnemonic.
-- Official product: **[tronsec.io](https://tronsec.io)** — keep `app/js/brand.js` attribution when forking.
+- Read-only terminal — inspect before you sign elsewhere  
+- No wallet connection in the OSS export  
+- Vanity keys remain local  
+- No seed phrase collection  
+- Production credentials only on the worker — never in git  
 
-See [SECURITY.md](SECURITY.md) for responsible disclosure.
+When forking, keep attribution in `app/js/brand.js` and link to [tronsec.io](https://tronsec.io).
 
 <br>
 
@@ -211,8 +260,10 @@ See [SECURITY.md](SECURITY.md) for responsible disclosure.
   <sub>
     <a href="https://tronsec.io/app/"><strong>tronsec.io/app</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://tronsec.io">tronsec.io</a>
+    <a href="https://tronsec.io">Website</a>
     &nbsp;·&nbsp;
-    <a href="https://t.me/tronsec_chat">Telegram</a>
+    <a href="https://t.me/tronsec_io">Telegram</a>
+    &nbsp;·&nbsp;
+    MIT License
   </sub>
 </p>
