@@ -31,7 +31,8 @@
         app: SITE + '/app/',
         name: 'TRONSEC',
         domain: 'tronsec.io',
-        telegram: 'https://t.me/tronsec_chat',
+        telegram: 'https://t.me/tronsec_io',
+        telegramBot: 'https://t.me/tronsec_bot',
     };
 
     function isSameOriginDeploy() {
@@ -47,53 +48,3 @@
         }
         return '/';
     }
-
-    function absoluteUrl(path) {
-        return SITE.replace(/\/$/, '') + (path.startsWith('/') ? path : '/' + path);
-    }
-
-    function resolveUrl(path) {
-        return isSameOriginDeploy() ? path : absoluteUrl(path);
-    }
-
-    function marketingHomeUrl() {
-        return resolveUrl(localePrefixFromPath());
-    }
-
-    function appUrlForLang(lang) {
-        const path = LOCALE_APP[lang] || LOCALE_APP.en;
-        return resolveUrl(path);
-    }
-
-    function applyExternalBrandAttrs(el) {
-        if (!el || isSameOriginDeploy()) {
-            if (el) {
-                el.removeAttribute('target');
-                el.removeAttribute('rel');
-            }
-            return;
-        }
-        el.target = '_blank';
-        el.rel = 'noopener noreferrer';
-    }
-
-    global.syncTronsecBrandLinks = function syncTronsecBrandLinks() {
-        const home = marketingHomeUrl();
-
-        document.querySelectorAll('[data-tronsec-brand]').forEach((el) => {
-            el.href = home;
-            el.title = 'TRONSEC — tronsec.io';
-            applyExternalBrandAttrs(el);
-        });
-
-        document.querySelectorAll('[data-tronsec-site]').forEach((el) => {
-            el.href = SITE + '/';
-            applyExternalBrandAttrs(el);
-        });
-
-        document.querySelectorAll('#lang-dd .lang-opt').forEach((el) => {
-            const lang = el.getAttribute('data-lang');
-            if (lang) el.href = appUrlForLang(lang);
-        });
-    };
-}(window));
