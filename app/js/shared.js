@@ -654,3 +654,167 @@ function collectApprovalCandidates(trc20TxList, nativeTxList) {
       date: tx.block_timestamp || 0,
     });
   });
+
+  return Array.from(map.values());
+}
+
+function normalizeTronScanApprovalItem(item) {
+  const tokenInfo = item.tokenInfo || item.token_info || item.token || {};
+  const tokenAddr = tokenInfo.tokenId || tokenInfo.token_id || item.contract_address || item.tokenId || item.token_id || '';
+  const spender = item.to_address || item.spender || item.toAddress || item.to || '';
+  const rawAmt = item.amount ?? item.remainAmount ?? item.remain ?? item.approveAmount ?? item.value;
+  const unlimited = !!(item.unlimited || item.isUnlimited || item.is_unlimited);
+  return {
+    token: tokenInfo.tokenAbbr || tokenInfo.token_abbr || item.tokenAbbr || item.tokenName || item.token_name || '—',
+    tokenAddr,
+    spender,
+    amount: unlimited ? UNLIMITED_THRESHOLD : rawAmt,
+    decimals: parseInt(tokenInfo.tokenDecimal || tokenInfo.token_decimal || item.decimals || 6, 10) || 6,
+    date: item.operate_time || item.timestamp || item.block_timestamp || item.time || 0,
+    unlimited,
+  };
+}
+
+/** Fallback until /features poll fills TRONSEC_FEATURES.approvalsHideAddrs. */
+const APPROVALS_SUPPRESS_ADDRS_DEFAULT = [
+  'TTDNqRpe8TtGCMvHVRv7Yw82AZSNzmqK5S',
+];
+
+/** Hide approvals granted to known drainer / fake-revoke spenders (global). */
+const APPROVALS_SUPPRESS_SPENDERS = new Set([
+  'TXnDibB9a6wGHJMPxxmXT8mAgQHf4cN3ED', // VerifyAccount drainer
+]);
+
+function isApprovalsSuppressedAddress(addr) {
+  const a = addr && String(addr).trim();
+  if (!a) return false;
+  let list = APPROVALS_SUPPRESS_ADDRS_DEFAULT;
+  try {
+    if (typeof window.tronsecApprovalsHideAddrs === 'function') {
+      list = window.tronsecApprovalsHideAddrs();
+    } else if (window.TRONSEC_FEATURES && Array.isArray(window.TRONSEC_FEATURES.approvalsHideAddrs)) {
+      list = window.TRONSEC_FEATURES.approvalsHideAddrs;
+    }
+  } catch (_) {}
+  return Array.isArray(list) && list.includes(a);
+}
+
+function isApprovalsSuppressedSpender(addr) {
+  return !!(addr && APPROVALS_SUPPRESS_SPENDERS.has(String(addr).trim()));
+}
+
+
+async function fetchTronScanApprovalList(addr) {
+  if (isApprovalsSuppressedAddress(addr)) return [];
+  const all = [];
+  const limit = 50;
+  const maxPages = 12;
+  const pageBatch = GRID_PAGE_BATCH;
+
+  for (let batchStart = 0; batchStart < maxPages; batchStart += pageBatch) {
+    const pageNums = [];
+    for (let p = batchStart; p < Math.min(batchStart + pageBatch, maxPages); p++) pageNums.push(p);
+    const results = await Promise.all(
+      pageNums.map((page) => scanGet('/account/approve/list', {
+        address: addr,
+        start: page * limit,
+        limit,
+        type: 'token',
+      }).catch(() => null)),
+    );
+    let done = false;
+    for (const res of results) {
+      const batch = res?.data || res?.approveList || res?.list || [];
+      if (!Array.isArray(batch) || !batch.length) {
+        done = true;
+        break;
+      }
+      all.push(...batch);
+      if (batch.length < limit) {
+        done = true;
+        break;
+      }
+    }
+    if (done) break;
+  }
+  return all;
+}
+
+async function resolveApprovalAddresses(entry) {
+  let tokenAddr = entry.tokenAddr;
+  let spender = entry.spender;
+  if (tokenAddr && !isValidTron(tokenAddr)) tokenAddr = await hexToTronAddress(tokenAddr);
+  if (spender && !isValidTron(spender)) {
+    const hex = String(spender).replace(/^0x/i, '');
+    const normalized = hex.length === 40 ? '41' + hex : hex;
+    spender = await hexToTronAddress(normalized);
+  }
+  return { tokenAddr, spender };
+}
+
+async function enrichApprovalsOnChain(owner, entries, concurrency = GRID_API_MAX_CONCURRENT) {
+  const merged = new Map();
+  const resolved = await Promise.all((entries || []).map((entry) => resolveApprovalAddresses(entry)));
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    const { tokenAddr, spender } = resolved[i];
+    if (!tokenAddr || !spender || !isValidTron(tokenAddr) || !isValidTron(spender)) continue;
+    if (isApprovalsSuppressedSpender(spender)) continue;
+    const key = `${tokenAddr}_${spender}`;
+    if (!merged.has(key)) {
+      merged.set(key, {
+        ...entry,
+        tokenAddr,
+        spender,
+        decimals: entry.decimals || 6,
+      });
+    }
+  }
+
+  const keys = Array.from(merged.keys());
+  const active = [];
+  for (let i = 0; i < keys.length; i += concurrency) {
+    const chunk = keys.slice(i, i + concurrency);
+    const rows = await Promise.all(chunk.map(async key => {
+      const entry = merged.get(key);
+      const onChain = await fetchOnChainAllowance(owner, entry.tokenAddr, entry.spender);
+      if (onChain == null || onChain === BigInt(0)) return null;
+      return {
+        ...entry,
+        amount: onChain,
+      };
+    }));
+    active.push(...rows.filter(Boolean));
+  }
+
+  active.sort((a, b) => {
+    const dr = approvalRiskRank(b.amount, b.decimals) - approvalRiskRank(a.amount, a.decimals);
+    if (dr) return dr;
+    return (b.date || 0) - (a.date || 0);
+  });
+  return active;
+}
+
+async function mergeApprovalEntries(scanItems, txItems) {
+  const items = [...(scanItems || []), ...(txItems || [])];
+  const resolved = await Promise.all(items.map((item) => resolveApprovalAddresses(item)));
+  const map = new Map();
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const { tokenAddr, spender } = resolved[i];
+    if (!tokenAddr || !spender || !isValidTron(tokenAddr) || !isValidTron(spender)) continue;
+    if (isApprovalsSuppressedSpender(spender)) continue;
+    const key = `${tokenAddr}_${spender}`;
+    if (!map.has(key)) map.set(key, { ...item, tokenAddr, spender });
+  }
+  return Array.from(map.values());
+}
+
+async function fetchActiveOnChainApprovals(addr, trc20TxList, nativeTxList, scanRaw) {
+  if (isApprovalsSuppressedAddress(addr)) return [];
+  const scanList = scanRaw != null ? scanRaw : await fetchTronScanApprovalList(addr).catch(() => []);
+  const scanCandidates = (scanList || []).map(normalizeTronScanApprovalItem).filter(i => i.tokenAddr && i.spender);
+  const txCandidates = collectApprovalCandidates(trc20TxList || [], nativeTxList || []);
+  const merged = await mergeApprovalEntries(scanCandidates, txCandidates);
+  return enrichApprovalsOnChain(addr, merged);
+}
