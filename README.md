@@ -193,7 +193,7 @@ Module logic lives in English under `app/js/`; UI strings are centralized for tr
 | [tronsec-worker-starter](https://github.com/jamejohns/tronsec-worker-starter) | Cloudflare Worker API proxy template |
 | [tron-approvals-check](https://github.com/jamejohns/tron-approvals-check) | CLI — list TRON token approvals |
 | [tron-phish-rules](https://github.com/jamejohns/tron-phish-rules) | Versioned TRON phishing URL rules (offline) |
-| [tron-drainer-tracker](https://github.com/jamejohns/tron-drainer-tracker) | Watch for new TRC-20 drainer contracts on-chain |
+| [tron-drainer-tracker](https://github.com/jamejohns/tron-drainer-tracker) | **Defensive** chain monitor — flags new USDT approval-phishing / VerifyAccount scam **contracts** via TronGrid + TronScan (read-only IOC registry; **not** a drainer kit) |
 
 <br>
 
