@@ -1638,3 +1638,167 @@ const SK = {
             ${sk('sk-line', `${28 + (i % 2) * 8}%`)}
             ${sk('sk-line', `${18 + (i % 3) * 6}%`)}
           </div>`).join('')}
+      </div>
+    </div>`,
+
+  tableRows: (rows = 4, cols = 5) => `
+    <div class="sk-table-head" style="--sk-cols:${cols}">
+      ${Array.from({ length: cols }, () => sk('sk-line-xs')).join('')}
+    </div>
+    ${Array.from({ length: rows }, () => `
+      <div class="sk-table-row" style="--sk-cols:${cols}">
+        ${Array.from({ length: cols }, (_, ci) => sk('sk-line-xs', ci === 0 ? '72%' : ci === cols - 1 ? '55%' : '100%')).join('')}
+      </div>`).join('')}`,
+
+  table: (rows = 4, cols = 5) => `
+    <div class="sk-table-wrap">${SK.tableRows(rows, cols)}</div>`,
+
+  tabs: (count = 3) => `
+    <div class="sk-tabs-row">
+      ${Array.from({ length: count }, (_, i) => `<div class="sk sk-tab-pill${i === 0 ? ' is-wide' : ''}"></div>`).join('')}
+    </div>`,
+
+  tokens: (count = 4) => `
+    <div class="sk-token-grid">
+      ${Array.from({ length: count }, () => `
+        <div class="sk-token-card">
+          ${sk('sk-avatar')}
+          <div class="sk-token-meta">
+            ${sk('sk-line-xs', '58%')}
+            ${sk('sk-line-xs', '42%')}
+          </div>
+          <div class="sk-token-val">
+            ${sk('sk-line-sm', '48px')}
+            ${sk('sk-line-xs', '36px')}
+          </div>
+        </div>`).join('')}
+    </div>`,
+
+  chart: (h = 220) => `
+    <div class="sk-panel">
+      <div class="sk-panel-head sk-panel-head-split">
+        ${sk('sk-line-xs', '36%')}
+        ${sk('sk-line-xs', '22%')}
+      </div>
+      <div class="sk-panel-body sk-panel-body-flush">
+        <div class="sk sk-chart" style="height:${h}px"></div>
+        <div class="sk-stat-grid sk-stat-grid-compact" style="grid-template-columns:repeat(4,minmax(0,1fr));padding:8px 12px;border-top:1px solid var(--line)">
+          ${Array.from({ length: 4 }, (_, i) => `
+            <div class="sk-stat sk-stat-flat">
+              ${sk('sk-line-xs', '50%')}
+              ${sk('sk-line-md', `${40 + i * 5}%`)}
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>`,
+
+  analyticsCell: () => `
+    <div class="an-stat an-stat--sk">
+      <div class="sk an-sk-label"></div>
+      <div class="sk an-sk-value"></div>
+      <div class="sk an-sk-sub"></div>
+    </div>`,
+
+  analyticsGrid: (n = 3) => Array.from({ length: n }, () => SK.analyticsCell()).join(''),
+
+  scanHeadCard: (actionCount = 3) => `
+    <div class="scan-head-card sk-wallet-block">
+      <div class="wallet-head-top">
+        ${sk('sk-line-md', '72%')}
+        <div class="wallet-head-actions" style="display:flex;gap:6px">
+          ${Array.from({ length: actionCount }, () => sk('sk-line-xs', '72px')).join('')}
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px">
+        ${sk('sk-badge', '64px')}${sk('sk-badge', '58px')}${sk('sk-badge', '52px')}
+      </div>
+    </div>`,
+
+  assessmentSk: () => `
+    <div class="aml-alert aml-alert--inline sk-wallet-block" style="padding:12px 14px">
+      <div class="sk" style="width:14px;height:14px;border-radius:50%;flex-shrink:0"></div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+        ${sk('sk-line-sm', '78%')}
+        ${sk('sk-line-xs', '54%')}
+      </div>
+    </div>`,
+
+  amlKvRowsSk: (n = 4) => Array.from({ length: n }, (_, i) => `
+    <div class="kv-row sk-wallet-kv">
+      ${sk('sk-line-xs', `${22 + (i % 4) * 6}%`)}
+      ${sk('sk-line-xs', `${30 + (i % 3) * 8}%`)}
+    </div>`).join(''),
+
+  amlBlockSk: (headW = '32%', bodyHtml = '', metaW = '') => `
+    <div class="aml-block sk-wallet-block">
+      <div class="aml-block-head">
+        ${sk('sk-line-xs', headW)}
+        ${metaW ? sk('sk-line-xs', metaW) : ''}
+      </div>
+      <div class="aml-block-body">${bodyHtml || SK.amlKvRowsSk(4)}</div>
+    </div>`,
+
+  amlSignalRowsSk: (n = 5) => `
+    <div class="aml-signals">
+      ${Array.from({ length: n }, () => `
+        <div class="aml-signal sk-wallet-block" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 14px">
+          ${sk('sk-line-sm', '72%')}
+          ${sk('sk-line-xs', '30px')}
+        </div>`).join('')}
+    </div>`,
+
+  amlRowsSk: (n = 3) => `
+    <div class="aml-rows">
+      ${Array.from({ length: n }, () => `
+        <div class="aml-row sk-wallet-block">
+          <div class="sk sk-avatar" style="width:34px;height:34px;border-radius:8px"></div>
+          <div class="aml-row-body" style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:0">
+            ${sk('sk-line-xs', '46%')}
+            ${sk('sk-line-xs', '34%')}
+          </div>
+          ${sk('sk-badge', '44px')}
+        </div>`).join('')}
+    </div>`,
+
+  phishFlagRowsSk: (n = 3) => `
+    <div class="phish-flags">
+      ${Array.from({ length: n }, () => `
+        <div class="phish-flag sk-wallet-block">
+          <div class="phish-flag-body" style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:0">
+            ${sk('sk-line-sm', '90%')}
+            ${sk('sk-line-xs', '48%')}
+          </div>
+          ${sk('sk-badge', '52px')}
+        </div>`).join('')}
+    </div>`,
+
+  analyticsStat: (label, id, sub, tone = 'neutral') => `
+    <div class="an-stat">
+      <div class="an-stat-label">${t(label)}</div>
+      <div class="an-stat-value is-${tone}" id="${id}"><span class="sk an-sk-value an-sk-value--inline"></span></div>
+      <div class="an-stat-sub">${t(sub)}</div>
+    </div>`,
+
+  walletMeterSk: () => `
+    <div class="wallet-meter">
+      <div class="wallet-meter-head" style="display:flex;justify-content:space-between;gap:8px">
+        ${sk('sk-line-xs', '30%')}
+        ${sk('sk-line-xs', '40%')}
+      </div>
+      <div class="sk sk-wallet-meter-track"></div>
+    </div>`,
+
+  walletTokenRowSk: () => `
+    <div class="wallet-token-row">
+      <div class="sk sk-avatar" style="width:38px;height:38px;border-radius:10px"></div>
+      <div class="wallet-token-body" style="display:flex;flex-direction:column;gap:6px">
+        ${sk('sk-line-xs', '46%')}
+        ${sk('sk-line-xs', '62%')}
+      </div>
+      <div class="wallet-token-val" style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        ${sk('sk-line-xs', '52px')}
+        ${sk('sk-line-xs', '68px')}
+      </div>
+    </div>`,
+
+  walletActivityRowSk: () => `
