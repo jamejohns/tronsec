@@ -1310,3 +1310,167 @@ async function fetchAmlGridTxPages(address, kind) {
   }
 
   return all;
+}
+
+async function fetchAmlTxHistory(address) {
+  const nativeRaw = await fetchAmlGridTxPages(address, 'native');
+  let txs = dedupeTxList(nativeRaw);
+
+  if (txs.length < AML_TX_SAMPLE_LIMIT) {
+    const trc20Raw = await fetchAmlGridTxPages(address, 'trc20');
+    txs = dedupeTxList(txs.concat(normalizeAmlGridTrc20Rows(trc20Raw)));
+  }
+
+  if (txs.length >= 50) return trimAmlTxHistory(txs);
+
+  const [nativeScan, trc20Raw] = await Promise.all([
+    fetchTronScanNativeTransfers(address, 200).catch(() => []),
+    fetchTrc20FromTronScan(address).catch(() => []),
+  ]);
+  const trc20Scan = trc20Raw
+    .filter(isAmlTrc20TransferRow)
+    .map(normalizeScanTrc20TransferToGridTx)
+    .filter(t => t._trc20From || t._trc20To);
+  txs = dedupeTxList(txs.concat(nativeScan, trc20Scan));
+  return trimAmlTxHistory(txs);
+}
+
+async function fetchAmlPeerTxSample(address, limit = 120) {
+  const nativeRaw = await fetchAmlGridTxPages(address, 'native');
+  let txs = dedupeTxList(nativeRaw);
+  if (txs.length < limit) {
+    const trc20Raw = await fetchAmlGridTxPages(address, 'trc20');
+    txs = dedupeTxList(txs.concat(normalizeAmlGridTrc20Rows(trc20Raw)));
+  }
+  return sortAmlTxHistoryDesc(txs).slice(0, limit);
+}
+
+const _amlSanctionCache = new Map();
+
+async function fetchAmlSanctionScreen(addresses) {
+  const addrs = [...new Set((addresses || []).filter(isValidTron))].slice(0, 32);
+  if (!addrs.length) return { hits: [], meta: {}, unavailable: false };
+
+  if (!useApiProxy()) {
+    return { hits: [], meta: {}, unavailable: true };
+  }
+
+  const cacheKey = addrs.map((a) => a.toLowerCase()).sort().join(',');
+  if (_amlSanctionCache.has(cacheKey)) return _amlSanctionCache.get(cacheKey);
+
+  try {
+    const res = await fetchWithTimeout(
+      window.tronsecProxyUrl('/aml/v1/sanctions-check', { addresses: addrs.join(',') }),
+      { headers: withProxyHeaders({}), cache: 'default' },
+      8000,
+    );
+    if (!res.ok) {
+      const out = { hits: [], meta: {}, unavailable: true };
+      _amlSanctionCache.set(cacheKey, out);
+      return out;
+    }
+    const body = await res.json();
+    const out = {
+      hits: Array.isArray(body?.hits) ? body.hits : [],
+      meta: body?.meta || {},
+      unavailable: false,
+    };
+    _amlSanctionCache.set(cacheKey, out);
+    return out;
+  } catch (_) {
+    return { hits: [], meta: {}, unavailable: true };
+  }
+}
+
+function patchAmlModuleCopy() {
+  if (typeof t !== 'function' || typeof AML_TX_SAMPLE_LIMIT !== 'number') return;
+  const count = AML_TX_SAMPLE_LIMIT;
+  const leadKey = 'Behavioral risk screening on the latest {count} transactions — composite score, counterparty graph, OFAC SDN / UK OFSI (where synced), TronScan public tags, and TRONSEC label signals.';
+  const lead = document.querySelector('#tab-aml-check .module-desc-lead');
+  if (lead) {
+    lead.setAttribute('data-i18n', leadKey);
+    lead.textContent = t(leadKey, { count });
+  }
+  document.querySelectorAll('#tab-aml-check .module-desc-tag').forEach((tag) => {
+    if (tag.dataset.amlTxSample !== '1') return;
+    tag.dataset.amlTxSample = '1';
+    tag.textContent = t('{count} txs', { count });
+  });
+}
+
+
+// ==================================
+//  TRX PRICE  (wallet USD + analytics market — shared CMC cache)
+// ==================================
+let TRX_PRICE  = null;
+let TRX_CHANGE = null;
+
+const TRX_MARKET_KEY = 'tronsec_trx_market_v1';
+const TRX_MARKET_TTL = 30 * 60 * 1000;
+window.TRONSEC_TRX_MARKET_TTL = TRX_MARKET_TTL;
+
+function readTrxMarketCache() {
+  try {
+    const d = JSON.parse(localStorage.getItem(TRX_MARKET_KEY));
+    if (d && d.usd) return d;
+  } catch (_) {}
+  return null;
+}
+
+function isTrxMarketCacheFresh(entry) {
+  return !!(entry && entry.ts && Date.now() - entry.ts < TRX_MARKET_TTL);
+}
+
+function writeTrxMarketCache(quote) {
+  if (!quote?.usd) return;
+  try {
+    localStorage.setItem(TRX_MARKET_KEY, JSON.stringify({
+      usd: quote.usd,
+      change: quote.change ?? null,
+      marketCap: quote.marketCap ?? null,
+      volume24h: quote.volume24h ?? null,
+      ts: Date.now(),
+    }));
+  } catch (_) {}
+}
+
+function syncTrxPriceGlobals(quote) {
+  if (!quote?.usd) return;
+  TRX_PRICE = quote.usd;
+  TRX_CHANGE = quote.change ?? null;
+}
+
+async function fetchWithTimeout(url, opts = {}, ms = 7000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function scanFetchDirect(path, params = {}, timeoutMs = 7000) {
+  const res = await fetchWithTimeout(
+    scanRequestUrl(path, params),
+    { headers: upstreamHeaders('scan'), cache: 'no-store' },
+    timeoutMs,
+  );
+  if (!res.ok) return null;
+  return res.json();
+}
+
+async function fetchTrxQuoteFromCmc() {
+  if (!useApiProxy()) return null;
+  try {
+    const res = await fetchWithTimeout(
+      window.tronsecProxyUrl('/cmc/v1/cryptocurrency/quotes/latest', { symbol: 'TRX', convert: 'USD' }),
+      { cache: 'no-store' },
+      7000,
+    );
+    if (!res.ok) return null;
+    const body = await res.json();
+    const q = body?.data?.TRX?.quote?.USD;
+    const usd = parseFloat(q?.price || 0) || null;
+    if (!usd) return null;
+    const change = q?.percent_change_24h;
