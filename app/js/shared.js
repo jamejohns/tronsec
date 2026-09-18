@@ -982,3 +982,167 @@ async function gridPost(path, body, opts = {}) {
 // -- Tronscan API rate limiter + in-memory response cache --
 const _scanQueue = [];
 let _scanActive = 0;
+let _scanPumpTimer = null;
+const _scanApiCache = new Map();
+const _scanInflightByKey = new Map();
+const SCAN_API_CACHE_DEFAULT_TTL = 8 * 60 * 1000;
+
+function scanApiCacheTtl(urlStr) {
+  if (urlStr.includes('/security/')) return 15 * 60 * 1000;
+  if (urlStr.includes('/account/tag')) return 15 * 60 * 1000;
+  if (urlStr.includes('/account/approve/')) return 5 * 60 * 1000;
+  if (urlStr.includes('/account/tokens')) return 10 * 60 * 1000;
+  if (urlStr.includes('/contract')) return 10 * 60 * 1000;
+  return SCAN_API_CACHE_DEFAULT_TTL;
+}
+
+function clearScanApiCache() {
+  _scanApiCache.clear();
+  _scanInflightByKey.clear();
+}
+
+function clearApiCaches() {
+  clearGridApiCache();
+  clearScanApiCache();
+}
+
+function _scheduleScanPump(delay = 0) {
+  if (_scanPumpTimer != null) return;
+  _scanPumpTimer = setTimeout(() => {
+    _scanPumpTimer = null;
+    _scanNext();
+  }, delay);
+}
+
+async function _scanNext() {
+  if (_scanActive >= SCAN_API_MAX_CONCURRENT || _scanQueue.length === 0) return;
+  _scanActive++;
+  const { url, headers, resolve, reject } = _scanQueue.shift();
+  if (_scanQueue.length && _scanActive < SCAN_API_MAX_CONCURRENT) {
+    _scheduleScanPump(SCAN_API_START_INTERVAL_MS);
+  }
+  try {
+    const res = await fetch(url.toString(), {headers});
+    if (!res.ok) {
+      let bodyText = '';
+      try { bodyText = await res.text(); } catch(_) { bodyText = ''; }
+      let json = null;
+      try { json = JSON.parse(bodyText); } catch(_) { json = null; }
+      const msg = json && (json.error || json.message) ? (json.error || json.message) : (bodyText || res.statusText || '');
+      const err = new Error(`TronScan ${res.status}${msg?': '+msg:''}`);
+      err.status = res.status;
+      err.body = json || bodyText;
+      reject(err);
+    } else {
+      resolve(await res.json());
+    }
+  } catch(e) { reject(e); }
+  finally {
+    _scanActive--;
+    _scheduleScanPump(_scanQueue.length ? SCAN_API_START_INTERVAL_MS : 0);
+  }
+}
+function _enqueueScan(url, headers) {
+  return new Promise((resolve, reject) => {
+    _scanQueue.push({ url, headers, resolve, reject });
+    _scheduleScanPump();
+  });
+}
+
+async function scanGet(path, params = {}, opts = {}) {
+  const url = new URL(scanRequestUrl(path, params));
+  const headers = withProxyHeaders(upstreamHeaders('scan'));
+  const key = url.toString();
+  if (!opts.bypassCache) {
+    const hit = _scanApiCache.get(key);
+    if (hit && Date.now() - hit.ts < hit.ttl) return hit.data;
+    const pending = _scanInflightByKey.get(key);
+    if (pending) return pending;
+  }
+  const flight = _enqueueScan(url, headers).then((data) => {
+    if (!opts.bypassCache) {
+      _scanApiCache.set(key, { data, ts: Date.now(), ttl: scanApiCacheTtl(key) });
+    }
+    return data;
+  }).finally(() => {
+    _scanInflightByKey.delete(key);
+  });
+  if (!opts.bypassCache) _scanInflightByKey.set(key, flight);
+  return flight;
+}
+
+/** TronScan may return frozen as { total, balances: [] } instead of an array. */
+function normalizeFrozenV2(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (!raw || typeof raw !== 'object') return [];
+  if (Array.isArray(raw.balances)) {
+    return raw.balances.map((b) => ({
+      amount: Number(b.amount ?? b.frozen_balance ?? 0) || 0,
+      type: b.resource ?? b.type ?? b.frozen_balance_resource,
+    }));
+  }
+  if (Array.isArray(raw.frozen)) return raw.frozen;
+  if (raw.amount != null || raw.frozen_balance != null) return [raw];
+  return [];
+}
+
+function asArray(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (raw == null) return [];
+  return [raw];
+}
+
+function normalizeTagList(tagAcc) {
+  if (!tagAcc) return [];
+  if (Array.isArray(tagAcc)) return tagAcc;
+  if (Array.isArray(tagAcc.data)) return tagAcc.data;
+  if (tagAcc.tagName || tagAcc.tag || tagAcc.label) return [tagAcc];
+  if (tagAcc.chainTags && typeof tagAcc.chainTags === 'object') {
+    const out = [];
+    for (const group of Object.values(tagAcc.chainTags)) {
+      if (Array.isArray(group)) out.push(...group);
+    }
+    return out;
+  }
+  return [];
+}
+
+function normalizeAccountRecord(acc) {
+  if (!acc || typeof acc !== 'object') return acc;
+  acc.frozenV2 = normalizeFrozenV2(acc.frozenV2 ?? acc.frozen);
+  acc.votes = asArray(acc.votes);
+  return acc;
+}
+
+function userFriendlyFetchError(e) {
+  if (!e) return t('Unknown fetch error');
+  if (typeof e === 'string') return t(e);
+  const status = e.status || (e.message && (e.message.match(/\b(\d{3})\b/) ? Number(e.message.match(/\b(\d{3})\b/)[1]) : null));
+  if (status === 400 || status === 404) return t('Address not found or unactivated — no on-chain account for that address. Please check the address format and try again.');
+  if (status >= 500) return t('External service error (TronGrid/TronScan). Please try again later.');
+  return t('Fetch failed: {message}', { message: e.message || String(e) });
+}
+
+function scanRowInvolvesAddress(row, address) {
+  if (!row || !address) return false;
+  const want = String(address);
+  const fields = [
+    row.from_address, row.to_address, row.from, row.to,
+    row.transferFromAddress, row.transferToAddress,
+    row.fromAddress, row.toAddress, row.ownerAddress, row.owner_address,
+    row.owner, row.sender, row.receiver, row.account, row.address,
+  ];
+  return fields.some((v) => v != null && String(v) === want);
+}
+
+/**
+ * TronScan `/token_trc20/transfers?address=` ignores the filter and returns
+ * recent *global* TRC-20 transfers — never use bare `address` here.
+ * Prefer `relatedAddress` and always filter client-side.
+ */
+async function fetchTrc20FromTronScan(address) {
+  if (!address) return [];
+  const endpoints = [
+    ['/token_trc20/transfers', { relatedAddress: address, start: 0, limit: 200 }],
+  ];
+  const results = await Promise.all(
