@@ -20,6 +20,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/jamejohns/tronsec/releases/tag/v1.3.0"><img src="https://img.shields.io/github/v/release/jamejohns/tronsec?style=flat-square&label=OSS%20release&color=e50914" alt="Latest OSS release v1.3.0"></a>
   <a href="https://github.com/jamejohns/tronsec/actions/workflows/ci.yml"><img src="https://github.com/jamejohns/tronsec/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <img src="https://img.shields.io/github/license/jamejohns/tronsec?style=flat-square" alt="MIT License">
   <img src="https://img.shields.io/badge/read--only-no_wallet_connect-22c55e?style=flat-square" alt="Read-only — no wallet connect">
@@ -34,6 +35,8 @@
   <a href="CONTRIBUTING.md">Contribute</a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/jamejohns/tronsec/releases/tag/v1.3.0">Release v1.3.0</a>
   &nbsp;·&nbsp;
   <a href="ARCHITECTURE.md">Architecture</a>
   &nbsp;·&nbsp;
@@ -216,7 +219,7 @@ The OSS export is maintained so researchers and integrators can **audit and exte
 | **May 2026** | AML + graph, contract audit, TX decoder, URL scanner, 8-language i18n |
 | **Jun 2026** | PWA, vanity workers, approvals monitor, **MIT OSS** [v1.0](https://github.com/jamejohns/tronsec/releases/tag/v1.0) → [v1.1](https://github.com/jamejohns/tronsec/releases/tag/v1.1.0) |
 | **Jul 2026** | Permission auditor, network charts, wallet risk score & PDF — [v1.2.0](https://github.com/jamejohns/tronsec/releases/tag/v1.2.0) |
-| **Aug–Sep 2026** | AML category taxonomy, exposure labels, wallet/AML graph polish, approvals merge logic, extended i18n, CI export guards |
+| **Aug–Sep 2026** | AML category taxonomy, exposure labels, wallet/AML graph polish, approvals merge logic, extended i18n, CI export guards — **[v1.3.0](https://github.com/jamejohns/tronsec/releases/tag/v1.3.0)** |
 
 Full notes: **[CHANGELOG.md](CHANGELOG.md)**
 
@@ -263,6 +266,8 @@ When forking, keep attribution in `app/js/brand.js` and link to [tronsec.io](htt
     <a href="https://tronsec.io">Website</a>
     &nbsp;·&nbsp;
     <a href="https://t.me/tronsec_io">Telegram</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/jamejohns/tronsec/releases/tag/v1.3.0">v1.3.0</a>
     &nbsp;·&nbsp;
     MIT License
   </sub>
