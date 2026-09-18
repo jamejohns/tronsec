@@ -2294,3 +2294,167 @@ function moduleNavStateLabel(state) {
 const MODULE_STATE_TABS = {
   scanner: { result: 'wallet-result', err: 'wallet-err' },
   approvals: { result: 'approvals-result', err: 'approvals-err' },
+  permissions: { result: 'permissions-result', err: 'permissions-err' },
+  'aml-check': { result: 'aml-result', err: 'aml-err' },
+  'scan-url': { result: 'phish-result', err: 'phish-err' },
+  'contract-scan': { result: 'contract-result', err: 'contract-err' },
+  'tx-decoder': { result: 'tx-result', err: 'tx-err' },
+  vanity: { result: 'vanity-result', err: 'vanity-err' },
+};
+
+function setModuleNavState(tabId, state) {
+  if (!MODULE_STATE_TABS[tabId] || !['empty', 'cached', 'error'].includes(state)) return;
+  document.querySelectorAll(`[data-tab-btn="${tabId}"], [data-more-tab="${tabId}"]`).forEach(btn => {
+    btn.dataset.moduleState = state;
+    const dot = btn.querySelector('.sidebar-nav-state:not(.is-spacer)');
+    if (dot) {
+      dot.classList.remove('is-empty', 'is-cached', 'is-error');
+      dot.classList.add(`is-${state}`);
+      dot.dataset.moduleState = state;
+      dot.setAttribute('aria-label', moduleNavStateLabel(state));
+    }
+    if (btn.closest('.mobile-bottom-nav') || btn.classList.contains('mobile-more-item')) {
+      const name = btn.querySelector('span')?.textContent?.trim() || tabId;
+      if (state === 'empty') btn.removeAttribute('aria-label');
+      else btn.setAttribute('aria-label', `${name} — ${moduleNavStateLabel(state)}`);
+    }
+  });
+}
+
+function wireMobileMoreItemStates() {
+  document.querySelectorAll('.mobile-more-item').forEach(item => {
+    if (item.dataset.moreTab) return;
+    const onclick = item.getAttribute('onclick') || '';
+    const m = onclick.match(/switchTab\(["']([^"']+)["']\)/);
+    if (m) item.dataset.moreTab = m[1];
+    if (!item.dataset.moduleState) item.dataset.moduleState = 'empty';
+  });
+}
+
+function syncMobileMoreActiveItem(tabId) {
+  const active = tabId || document.querySelector('.tab-content.active')?.id?.slice(4) || '';
+  document.querySelectorAll('.mobile-more-item[data-more-tab]').forEach(item => {
+    item.classList.toggle('is-more-active', item.dataset.moreTab === active);
+  });
+}
+
+function syncModuleNavState(tabId) {
+  const cfg = MODULE_STATE_TABS[tabId];
+  if (!cfg) return;
+  const err = document.getElementById(cfg.err);
+  const result = document.getElementById(cfg.result);
+  if (err && err.innerHTML.trim()) {
+    setModuleNavState(tabId, 'error');
+    syncMoreMenuBadge();
+    return;
+  }
+  if (!result || !result.innerHTML.trim()) {
+    setModuleNavState(tabId, 'empty');
+    syncMoreMenuBadge();
+    return;
+  }
+  if (result.querySelector('.sk')) return;
+  setModuleNavState(tabId, 'cached');
+  syncMoreMenuBadge();
+}
+
+function refreshModuleNavStateAria() {
+  document.querySelectorAll('.sidebar-nav-state[data-module-state]').forEach(dot => {
+    dot.setAttribute('aria-label', moduleNavStateLabel(dot.dataset.moduleState));
+  });
+}
+
+function injectModuleNavStateDots() {
+  Object.keys(MODULE_STATE_TABS).forEach(tabId => {
+    document.querySelectorAll(`[data-tab-btn="${tabId}"]`).forEach(btn => {
+      if (btn.getAttribute('data-tab-btn') === 'more') return;
+      if (btn.closest('.mobile-bottom-nav')) {
+        if (!btn.dataset.moduleState) btn.dataset.moduleState = 'empty';
+        return;
+      }
+      if (btn.querySelector('.sidebar-nav-state:not(.is-spacer)')) return;
+      const dot = document.createElement('span');
+      dot.className = 'sidebar-nav-state is-empty';
+      dot.setAttribute('role', 'img');
+      dot.setAttribute('aria-label', moduleNavStateLabel('empty'));
+      dot.dataset.moduleState = 'empty';
+      const label = btn.querySelector('.module-file');
+      if (label) label.insertAdjacentElement('afterend', dot);
+      else btn.appendChild(dot);
+    });
+  });
+}
+
+let _moduleResultObserver = null;
+function observeModuleResultNodes() {
+  if (_moduleResultObserver) return;
+  const tabByNodeId = {};
+  Object.entries(MODULE_STATE_TABS).forEach(([tabId, cfg]) => {
+    tabByNodeId[cfg.result] = tabId;
+    tabByNodeId[cfg.err] = tabId;
+  });
+  _moduleResultObserver = new MutationObserver(muts => {
+    const touched = new Set();
+    muts.forEach(m => {
+      let node = m.target;
+      while (node && node !== document.body) {
+        if (node.id && tabByNodeId[node.id]) {
+          touched.add(tabByNodeId[node.id]);
+          break;
+        }
+        node = node.parentNode;
+      }
+    });
+    touched.forEach(tabId => {
+      syncModuleNavState(tabId);
+      const cfg = MODULE_STATE_TABS[tabId];
+      const result = cfg && document.getElementById(cfg.result);
+      if (result) bindScanHeadOverflow(result);
+    });
+  });
+  const opts = { childList: true, subtree: true, characterData: true };
+  Object.values(MODULE_STATE_TABS).forEach(cfg => {
+    const result = document.getElementById(cfg.result);
+    const err = document.getElementById(cfg.err);
+    if (result) _moduleResultObserver.observe(result, opts);
+    if (err) _moduleResultObserver.observe(err, opts);
+  });
+}
+
+function initModuleNavStates() {
+  wireMobileMoreItemStates();
+  injectModuleNavStateDots();
+  observeModuleResultNodes();
+  initA11yShell();
+  Object.keys(MODULE_STATE_TABS).forEach(syncModuleNavState);
+  syncMoreMenuBadge();
+  syncMobileMoreActiveItem();
+}
+
+const SCAN_EMPTY_HIDE_MS = 150;
+
+function lockScanInput(input, locked) {
+  if (!input) return;
+  input.disabled = !!locked;
+  if (locked) input.setAttribute('aria-busy', 'true');
+  else input.removeAttribute('aria-busy');
+}
+
+function hideScanEmpty(emptyEl, opts = {}) {
+  if (!emptyEl || emptyEl.style.display === 'none') {
+    opts.onDone?.();
+    return;
+  }
+  const instant = opts.instant === true;
+  const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  if (instant || reduced) {
+    emptyEl.style.display = 'none';
+    emptyEl.classList.remove('is-hiding');
+    opts.onDone?.();
+    return;
+  }
+  emptyEl.classList.add('is-hiding');
+  setTimeout(() => {
+    emptyEl.style.display = 'none';
+    emptyEl.classList.remove('is-hiding');
+    opts.onDone?.();
