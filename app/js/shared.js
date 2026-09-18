@@ -162,3 +162,167 @@ function permKeyWeight(key) {
 }
 
 function isExternalPermKey(address, selfAddr) {
+  return address && !sameTronAddr(address, selfAddr);
+}
+
+function externalCanActAlone(key, threshold) {
+  return permKeyWeight(key) >= (Number(threshold) || 1);
+}
+
+function classifyPermissionKeys(keys, selfAddr, threshold, signerMeta = {}) {
+  const external = (keys || []).filter(k => isExternalPermKey(k.address, selfAddr));
+  const soloExternal = external.filter(k => externalCanActAlone(k, threshold));
+  const contractExternal = external.filter(k => signerMeta[k.address]?.isContract);
+  const coSigners = external.filter(k =>
+    !signerMeta[k.address]?.isContract && !externalCanActAlone(k, threshold),
+  );
+  const riskyAddresses = new Set([
+    ...soloExternal.map(k => k.address),
+    ...contractExternal.map(k => k.address),
+  ]);
+  return { external, soloExternal, contractExternal, coSigners, riskyAddresses };
+}
+
+function summarizeWalletPermissionLayout(addr, owner, actives, witness) {
+  const activeList = Array.isArray(actives) ? actives : (actives ? [actives] : []);
+  const blocks = [owner, ...activeList, witness].filter(Boolean);
+  const riskyExternal = new Set();
+  const coSigners = new Set();
+  let multisigGroups = 0;
+  blocks.forEach(b => {
+    const threshold = b.threshold || 1;
+    const keys = b.keys || [];
+    if (keys.length > 1 || threshold > 1) multisigGroups++;
+    const cls = classifyPermissionKeys(keys, addr, threshold, {});
+    cls.riskyAddresses.forEach(a => riskyExternal.add(a));
+    cls.coSigners.forEach(k => coSigners.add(k.address));
+  });
+  return {
+    isMultisig: multisigGroups > 0,
+    multisigGroups,
+    hasRiskyExternal: riskyExternal.size > 0,
+    riskyExternalCount: riskyExternal.size,
+    coSignerCount: coSigners.size,
+  };
+}
+
+const isTronHexAddr = s => /^0?x?41[0-9a-f]{40}$/i.test(String(s || ''));
+const addrLookupKey = a => {
+  const s = String(a || '').trim();
+  if (!s) return '';
+  if (isTronHexAddr(s)) return 'h:' + s.replace(/^0x/i, '').toLowerCase();
+  return 'b:' + s.toLowerCase();
+};
+function trackResolveAddr(set, addr) {
+  if (!addr) return;
+  const s = String(addr);
+  set.add(isTronHexAddr(s) ? s.replace(/^0x/i, '').toLowerCase() : s);
+}
+function lookupResolvedAddr(map, addr, hintAddr) {
+  if (!addr) return null;
+  let v = map.get(addrLookupKey(addr)) || addr;
+  if (hintAddr && sameTronAddr(v, hintAddr)) return hintAddr;
+  return v;
+}
+const short = a => a ? `${a.slice(0,6)}?${a.slice(-4)}` : '—';
+/** Human-readable address or tx hash for prose (ellipsis, not "?"). */
+const addrLabel = a => {
+  if (!a || a === '—') return '—';
+  const s = String(a).trim();
+  if (isValidTron(s) && s.length > 13) return `${s.slice(0, 6)}…${s.slice(-4)}`;
+  if (/^[0-9a-fA-F]{64}$/.test(s)) return `${s.slice(0, 6)}…${s.slice(-4)}`;
+  return s;
+};
+
+function openContractScan(addr) {
+  if (!addr) return;
+  switchTab('contract-scan');
+  setTimeout(() => {
+    const input = document.getElementById('contract-input');
+    if (input) input.value = addr;
+    if (typeof contractScan === 'function') contractScan();
+  }, 0);
+}
+
+function openWalletScan(addr) {
+  if (!addr) return;
+  switchTab('scanner');
+  setTimeout(() => {
+    const input = document.getElementById('wallet-input');
+    if (input) input.value = addr;
+    if (typeof walletScan === 'function') walletScan();
+  }, 0);
+}
+
+function openApprovalsScan(addr, { autoRun = true, force = false } = {}) {
+  if (!addr) return;
+  switchTab('approvals');
+  setTimeout(() => {
+    const input = document.getElementById('approvals-input');
+    if (input) input.value = addr;
+    if (autoRun && typeof approvalsScan === 'function') approvalsScan({ force });
+  }, 0);
+}
+
+function openAmlScan(addr, { autoRun = true, force = false } = {}) {
+  if (!addr) return;
+  switchTab('aml-check');
+  setTimeout(() => {
+    const input = document.getElementById('aml-input');
+    if (input) input.value = addr;
+    if (autoRun && typeof amlScan === 'function') amlScan({ force });
+  }, 0);
+}
+
+function openPermissionsScan(addr, { autoRun = true, force = false } = {}) {
+  if (!addr) return;
+  switchTab('permissions');
+  setTimeout(() => {
+    const input = document.getElementById('permissions-input');
+    if (input) input.value = addr;
+    if (autoRun && typeof permissionsScan === 'function') permissionsScan({ force });
+  }, 0);
+}
+
+const _contractProbeCache = new Map();
+
+async function probeTronContract(addr) {
+  if (!addr || !isValidTron(addr)) return false;
+  if (_contractProbeCache.has(addr)) return _contractProbeCache.get(addr);
+
+  let ok = false;
+  try {
+    const contractData = await gridPost('/wallet/getcontract', { value: addr, visible: true });
+    const abiEntries = contractData?.abi?.entrys || contractData?.abi?.entries;
+    ok = !!(contractData && !contractData.Error && (contractData.bytecode || (abiEntries && abiEntries.length)));
+  } catch (_) {}
+
+  if (!ok) {
+    try {
+      const info = await gridPost('/wallet/getcontractinfo', { value: addr, visible: true });
+      ok = !!(info && !info.Error && (info.contract_address || info.name));
+    } catch (_) {}
+  }
+
+  if (!ok) {
+    try {
+      const wrap = await scanGet('/contract', { contract: addr });
+      const meta = wrap?.data?.[0];
+      ok = !!(meta && (meta.bytecode || meta.contract_type != null || meta.verify_status != null));
+    } catch (_) {}
+  }
+
+  _contractProbeCache.set(addr, ok);
+  return ok;
+}
+
+async function fetchTronContractLabel(addr) {
+  try {
+    const wrap = await scanGet('/contract', { contract: addr });
+    const meta = wrap?.data?.[0] || {};
+    return meta.tag1 || meta.name || meta.project_name || '';
+  } catch (_) {
+    return '';
+  }
+}
+
