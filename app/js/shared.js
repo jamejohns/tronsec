@@ -1146,3 +1146,167 @@ async function fetchTrc20FromTronScan(address) {
     ['/token_trc20/transfers', { relatedAddress: address, start: 0, limit: 200 }],
   ];
   const results = await Promise.all(
+    endpoints.map(([path, params]) => scanGet(path, params).catch(() => null)),
+  );
+  for (const res of results) {
+    if (!res) continue;
+    const arr = res.token_transfers || res.data || res.transfers || res.transactions || res.txs || (Array.isArray(res) ? res : null) || res.items;
+    if (!arr || !arr.length) continue;
+    const filtered = arr.filter((row) => scanRowInvolvesAddress(row, address));
+    if (filtered.length) return filtered;
+  }
+  return [];
+}
+
+function scanTransferRows(res) {
+  if (!res) return [];
+  return res.token_transfers || res.data || res.transfers || res.transactions || res.txs || (Array.isArray(res) ? res : null) || res.items || [];
+}
+
+function normalizeScanTransferToGridTx(row) {
+  const from = row.transferFromAddress || row.from_address || row.from || row.fromAddress || row.ownerAddress || '';
+  const to = row.transferToAddress || row.to_address || row.to || row.toAddress || '';
+  const amount = row.amount ?? row.quant ?? row.transfer_amount ?? 0;
+  const ts = row.block_timestamp || row.timestamp || row.block_ts || 0;
+  return {
+    txID: row.transactionHash || row.transaction_id || row.hash || row.txID || '',
+    block_timestamp: ts,
+    raw_data: {
+      contract: [{
+        type: 'TransferContract',
+        parameter: { value: { owner_address: from, to, to_address: to, amount } },
+      }],
+    },
+  };
+}
+
+function normalizeTrc20ToAmlTx(row) {
+  const from = row.from_address || row.from || row.transferFromAddress || row.ownerAddress || row.owner_address || '';
+  const to = row.to_address || row.to || row.transferToAddress || row.toAddress || '';
+  const contract = row.contract_address || row.tokenId || row.tokenAddress || row.token_id || row.token_info?.address || '';
+  const amount = row.quant ?? row.amount ?? row.value ?? row.token_amount ?? 0;
+  const ts = row.block_timestamp || row.block_ts || row.timestamp || 0;
+  const decimals = parseInt(row.token_info?.decimals ?? row.tokenDecimal ?? row.decimals ?? 6, 10) || 6;
+  return {
+    txID: row.transaction_id || row.transactionHash || row.hash || row.txID || '',
+    block_timestamp: ts,
+    _trc20From: from,
+    _trc20To: to,
+    _isTrc20: true,
+    _trc20Decimals: decimals,
+    _trc20Type: row.type || row.event_type || 'Transfer',
+    raw_data: {
+      contract: [{
+        type: 'TriggerSmartContract',
+        parameter: { value: { owner_address: from, to_address: to, contract_address: contract, amount, data: '' } },
+      }],
+    },
+  };
+}
+
+function isAmlTrc20TransferRow(row) {
+  const typ = row?.type || row?.event_type || row?._trc20Type || 'Transfer';
+  if (typ === 'Approval') return false;
+  const amount = row?.quant ?? row?.amount ?? row?.value ?? row?.token_amount ?? 0;
+  const decimals = parseInt(row?.token_info?.decimals ?? row?.tokenDecimal ?? row?._trc20Decimals ?? 6, 10) || 6;
+  if (typeof isUnlimitedApproval === 'function' && isUnlimitedApproval(amount, decimals)) return false;
+  return true;
+}
+
+function normalizeScanTrc20TransferToGridTx(row) {
+  return normalizeTrc20ToAmlTx(row);
+}
+
+async function fetchTronScanNativeTransfers(address, limit = 200) {
+  if (!address) return [];
+  const endpoints = [
+    ['/transfer', { address, start: 0, limit }],
+    ['/transactions', { address, start: 0, limit }],
+  ];
+  const results = await Promise.all(
+    endpoints.map(([path, params]) => scanGet(path, params).catch(() => null)),
+  );
+  for (const res of results) {
+    const rows = scanTransferRows(res);
+    if (!rows.length) continue;
+    const mapped = rows
+      .map(normalizeScanTransferToGridTx)
+      .filter((tx) => {
+        const v = tx.raw_data?.contract?.[0]?.parameter?.value || {};
+        return scanRowInvolvesAddress({
+          from: v.owner_address,
+          to: v.to_address || v.to,
+          ownerAddress: v.owner_address,
+          toAddress: v.to_address || v.to,
+        }, address);
+      });
+    if (mapped.length) return mapped;
+  }
+  return [];
+}
+
+function dedupeTxList(txs) {
+  const seen = new Set();
+  const out = [];
+  for (const tx of txs) {
+    const id = tx.txID || tx.transaction_id || tx.transactionHash
+      || `${tx.block_timestamp || 0}:${tx.raw_data?.contract?.[0]?.type || 'tx'}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(tx);
+  }
+  return out;
+}
+
+const AML_TX_SAMPLE_LIMIT = 1000;
+const AML_GRID_PAGE_SIZE = 200;
+
+function sortAmlTxHistoryDesc(txs) {
+  return txs.sort((a, b) => (b.block_timestamp || 0) - (a.block_timestamp || 0));
+}
+
+function trimAmlTxHistory(txs) {
+  return sortAmlTxHistoryDesc(txs).slice(0, AML_TX_SAMPLE_LIMIT);
+}
+
+function normalizeAmlGridTrc20Rows(rows) {
+  return (rows || [])
+    .filter(isAmlTrc20TransferRow)
+    .map(normalizeTrc20ToAmlTx)
+    .filter(t => t._trc20From || t._trc20To);
+}
+
+async function fetchAmlGridTxPages(address, kind) {
+  const path = kind === 'trc20'
+    ? `/v1/accounts/${address}/transactions/trc20`
+    : `/v1/accounts/${address}/transactions`;
+  const maxPages = Math.ceil(AML_TX_SAMPLE_LIMIT / AML_GRID_PAGE_SIZE);
+  const pageBatch = GRID_PAGE_BATCH;
+  const all = [];
+
+  for (let batchStart = 0; batchStart < maxPages; batchStart += pageBatch) {
+    const pageNums = [];
+    for (let p = batchStart; p < Math.min(batchStart + pageBatch, maxPages); p++) pageNums.push(p);
+    const results = await Promise.all(pageNums.map((page) => gridGet(path, {
+      limit: AML_GRID_PAGE_SIZE,
+      order_by: 'block_timestamp,desc',
+      start: page * AML_GRID_PAGE_SIZE,
+    }).catch(() => ({ data: [] }))));
+
+    let done = false;
+    for (const res of results) {
+      const batch = res?.data || [];
+      if (!batch.length) {
+        done = true;
+        break;
+      }
+      all.push(...batch);
+      if (batch.length < AML_GRID_PAGE_SIZE || all.length >= AML_TX_SAMPLE_LIMIT) {
+        done = true;
+        break;
+      }
+    }
+    if (done) break;
+  }
+
+  return all;
