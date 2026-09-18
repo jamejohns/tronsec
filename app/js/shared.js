@@ -818,3 +818,167 @@ async function fetchActiveOnChainApprovals(addr, trc20TxList, nativeTxList, scan
   const merged = await mergeApprovalEntries(scanCandidates, txCandidates);
   return enrichApprovalsOnChain(addr, merged);
 }
+
+function fmtTokenAmt(raw, decimals = 6) {
+  if (raw == null) return '—';
+  let bigRaw;
+  try { bigRaw = typeof raw === 'bigint' ? raw : BigInt(String(raw)); }
+  catch(_) { return String(raw); }
+  const divisor = BigInt(10 ** decimals);
+
+  if (bigRaw >= UNLIMITED_THRESHOLD) return '≈ Unlimited';
+
+  const whole = bigRaw / divisor;
+  const frac  = bigRaw % divisor;
+  const fracStr = frac.toString().padStart(decimals, '0');
+  const n = Number(whole) + Number('0.' + fracStr);
+
+  if (n >= 1e9)  return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6)  return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3)  return n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  return n.toFixed(n < 1 ? 6 : 2);
+}
+
+const ago = ts => {
+  const d = Date.now() - ts;
+  if (d < 60000)    return `${Math.floor(d/1000)}s ago`;
+  if (d < 3600000)  return `${Math.floor(d/60000)}m ago`;
+  if (d < 86400000) return `${Math.floor(d/3600000)}h ago`;
+  return `${Math.floor(d/86400000)}d ago`;
+};
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function withProxyHeaders(headers) {
+  return headers || {};
+}
+
+/** Match TronGrid / TronScan key pool size on the API proxy worker. */
+const API_KEY_POOL_SIZE = 9;
+const SCAN_API_MAX_CONCURRENT = API_KEY_POOL_SIZE;
+const SCAN_API_START_INTERVAL_MS = 20;
+const GRID_API_MAX_CONCURRENT = API_KEY_POOL_SIZE;
+const GRID_API_START_INTERVAL_MS = 20;
+const GRID_PAGE_BATCH = API_KEY_POOL_SIZE;
+
+// -- TronGrid API rate limiter + in-memory response cache --
+const _gridQueue = [];
+let _gridActive = 0;
+let _gridPumpTimer = null;
+const _gridApiCache = new Map();
+const _gridInflightByKey = new Map();
+const GRID_API_CACHE_DEFAULT_TTL = 8 * 60 * 1000;
+
+function gridApiCacheTtl(cacheKey) {
+  if (cacheKey.startsWith('POST:')) {
+    if (cacheKey.includes('/wallet/getcontract')) return 10 * 60 * 1000;
+    if (cacheKey.includes('/wallet/gettransactionbyid')) return 15 * 60 * 1000;
+    if (cacheKey.includes('/wallet/gettransactioninfobyid')) return 15 * 60 * 1000;
+    return 0;
+  }
+  if (cacheKey.includes('/transactions')) return GRID_API_CACHE_DEFAULT_TTL;
+  if (cacheKey.includes('/v1/accounts/')) return 5 * 60 * 1000;
+  return GRID_API_CACHE_DEFAULT_TTL;
+}
+
+function clearGridApiCache() {
+  _gridApiCache.clear();
+  _gridInflightByKey.clear();
+}
+
+function _scheduleGridPump(delay = 0) {
+  if (_gridPumpTimer != null) return;
+  _gridPumpTimer = setTimeout(() => {
+    _gridPumpTimer = null;
+    _gridNext();
+  }, delay);
+}
+
+async function _gridNext() {
+  if (_gridActive >= GRID_API_MAX_CONCURRENT || _gridQueue.length === 0) return;
+  _gridActive++;
+  const { url, init, resolve, reject } = _gridQueue.shift();
+  if (_gridQueue.length && _gridActive < GRID_API_MAX_CONCURRENT) {
+    _scheduleGridPump(GRID_API_START_INTERVAL_MS);
+  }
+  try {
+    const res = await fetch(url, init);
+    if (!res.ok) {
+      let bodyText = '';
+      try { bodyText = await res.text(); } catch (_) { bodyText = ''; }
+      let json = null;
+      try { json = JSON.parse(bodyText); } catch (_) { json = null; }
+      const msg = json && (json.error || json.message) ? (json.error || json.message) : (bodyText || res.statusText || '');
+      const err = new Error(`TronGrid ${res.status}${msg ? ': ' + msg : ''}`);
+      err.status = res.status;
+      err.body = json || bodyText;
+      reject(err);
+    } else {
+      resolve(await res.json());
+    }
+  } catch (e) { reject(e); }
+  finally {
+    _gridActive--;
+    _scheduleGridPump(_gridQueue.length ? GRID_API_START_INTERVAL_MS : 0);
+  }
+}
+
+function _enqueueGrid(url, init) {
+  return new Promise((resolve, reject) => {
+    _gridQueue.push({ url, init, resolve, reject });
+    _scheduleGridPump();
+  });
+}
+
+async function gridGet(path, params = {}, opts = {}) {
+  const url = gridRequestUrl(path, params);
+  const headers = withProxyHeaders(upstreamHeaders('grid'));
+  const cacheKey = `GET:${url}`;
+  if (!opts.bypassCache) {
+    const hit = _gridApiCache.get(cacheKey);
+    if (hit && Date.now() - hit.ts < hit.ttl) return hit.data;
+    const pending = _gridInflightByKey.get(cacheKey);
+    if (pending) return pending;
+  }
+  const flight = _enqueueGrid(url, { method: 'GET', headers }).then((data) => {
+    if (!opts.bypassCache) {
+      const ttl = gridApiCacheTtl(cacheKey);
+      if (ttl > 0) _gridApiCache.set(cacheKey, { data, ts: Date.now(), ttl });
+    }
+    return data;
+  }).finally(() => {
+    _gridInflightByKey.delete(cacheKey);
+  });
+  if (!opts.bypassCache) _gridInflightByKey.set(cacheKey, flight);
+  return flight;
+}
+
+async function gridPost(path, body, opts = {}) {
+  const url = gridRequestUrl(path);
+  const headers = withProxyHeaders({ 'Content-Type': 'application/json', ...upstreamHeaders('grid') });
+  const bodyStr = JSON.stringify(body);
+  const cacheKey = `POST:${url}:${bodyStr}`;
+  if (!opts.bypassCache) {
+    const hit = _gridApiCache.get(cacheKey);
+    if (hit && Date.now() - hit.ts < hit.ttl) return hit.data;
+    const pending = _gridInflightByKey.get(cacheKey);
+    if (pending) return pending;
+  }
+  const flight = _enqueueGrid(url, { method: 'POST', headers, body: bodyStr }).then((data) => {
+    if (!opts.bypassCache) {
+      const ttl = gridApiCacheTtl(cacheKey);
+      if (ttl > 0) _gridApiCache.set(cacheKey, { data, ts: Date.now(), ttl });
+    }
+    return data;
+  }).finally(() => {
+    _gridInflightByKey.delete(cacheKey);
+  });
+  if (!opts.bypassCache) _gridInflightByKey.set(cacheKey, flight);
+  return flight;
+}
+
+// -- Tronscan API rate limiter + in-memory response cache --
+const _scanQueue = [];
+let _scanActive = 0;
