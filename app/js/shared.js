@@ -1474,3 +1474,167 @@ async function fetchTrxQuoteFromCmc() {
     const usd = parseFloat(q?.price || 0) || null;
     if (!usd) return null;
     const change = q?.percent_change_24h;
+    return {
+      usd,
+      change: change != null && Number.isFinite(Number(change)) ? Number(change) : null,
+      marketCap: q?.market_cap ?? null,
+      volume24h: q?.volume_24h ?? null,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function fetchTrxQuoteFromCoingecko() {
+  if (!useApiProxy()) return null;
+  try {
+    const res = await fetchWithTimeout(
+      window.tronsecProxyUrl('/cg/simple/price', {
+        ids: 'tron',
+        vs_currencies: 'usd',
+        include_24hr_change: 'true',
+      }),
+      { cache: 'no-store' },
+      6000,
+    );
+    if (!res.ok) return null;
+    const body = await res.json();
+    const row = body?.tron;
+    const usd = parseFloat(row?.usd || 0) || null;
+    if (!usd) return null;
+    const change = row?.usd_24h_change;
+    return {
+      usd,
+      change: change != null && Number.isFinite(Number(change)) ? Number(change) : null,
+      marketCap: null,
+      volume24h: null,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function fetchTrxQuoteFromScan() {
+  try {
+    const p = await scanFetchDirect('/token/price', { token: 'trx' });
+    if (!p) return null;
+    const usd = parseFloat(p.price_in_usd ?? p.priceInUsd ?? p.price ?? 0) || null;
+    if (!usd) return null;
+    const changeRaw = p.percent_change_24h ?? p.priceChange24h ?? p.percentChangeIn24h ?? p.change24h;
+    const change = changeRaw != null ? parseFloat(changeRaw) : null;
+    const marketCap = parseFloat(p.market_cap ?? p.marketCap ?? 0) || null;
+    const volume24h = parseFloat(p.volume_24h ?? p.volume24h ?? 0) || null;
+    return {
+      usd,
+      change: Number.isFinite(change) ? change : null,
+      marketCap,
+      volume24h,
+    };
+  } catch (_) {}
+  try {
+    const list = await scanFetchDirect('/getAssetWithPriceList', { limit: 20 });
+    const trx = (list?.data || []).find(t => String(t.abbr || '').toLowerCase() === 'trx' || t.id === '_');
+    const usd = parseFloat(trx?.priceInUsd ?? trx?.price_in_usd ?? 0) || null;
+    if (usd) return { usd, change: null, marketCap: null, volume24h: null };
+  } catch (_) {}
+  return null;
+}
+
+function pickTrxMarketQuote(results) {
+  const cmc = results[0]?.status === 'fulfilled' ? results[0].value : null;
+  const scan = results[1]?.status === 'fulfilled' ? results[1].value : null;
+  const cg = results[2]?.status === 'fulfilled' ? results[2].value : null;
+  if (cmc?.usd) return cmc;
+  if (scan?.usd) return scan;
+  if (cg?.usd) return cg;
+  return null;
+}
+
+async function fetchTrxMarketQuote(opts = {}) {
+  const cacheOnly = !!opts.cacheOnly;
+  const cached = readTrxMarketCache();
+
+  if (cached?.usd) {
+    syncTrxPriceGlobals(cached);
+    if (cacheOnly || isTrxMarketCacheFresh(cached)) return cached;
+  }
+  if (cacheOnly) return cached || null;
+
+  const results = await Promise.allSettled([
+    fetchTrxQuoteFromCmc(),
+    fetchTrxQuoteFromScan(),
+    fetchTrxQuoteFromCoingecko(),
+  ]);
+  const quote = pickTrxMarketQuote(results);
+  if (quote?.usd) {
+    writeTrxMarketCache(quote);
+    syncTrxPriceGlobals(quote);
+  }
+  return quote || cached || null;
+}
+
+let _trxPriceInflight = null;
+
+function hydrateTrxPriceFromCache() {
+  const cached = readTrxMarketCache();
+  if (cached?.usd) syncTrxPriceGlobals(cached);
+  return cached;
+}
+
+async function ensureTrxPrice(opts = {}) {
+  const cacheOnly = !!opts.cacheOnly;
+  const cached = hydrateTrxPriceFromCache();
+  if (cached?.usd && (cacheOnly || isTrxMarketCacheFresh(cached))) {
+    return { usd: cached.usd, change: cached.change ?? null };
+  }
+  if (cacheOnly) {
+    return cached?.usd ? { usd: cached.usd, change: cached.change ?? null } : { usd: null, change: null };
+  }
+  if (!_trxPriceInflight) {
+    _trxPriceInflight = fetchTrxMarketQuote().finally(() => { _trxPriceInflight = null; });
+  }
+  const quote = await _trxPriceInflight;
+  if (quote?.usd) return { usd: quote.usd, change: quote.change ?? null };
+  return {
+    usd: TRX_PRICE,
+    change: TRX_CHANGE,
+  };
+}
+
+window.ensureTrxPrice = ensureTrxPrice;
+hydrateTrxPriceFromCache();
+// ==================================
+//  SKELETON LOADERS
+// ==================================
+const sk = (cls = '', w = '') => {
+  const style = w ? ` style="width:${w}"` : '';
+  return `<div class="sk ${cls}"${style}></div>`;
+};
+const skGap = (h = 12) => `<div class="sk-gap" style="height:${h}px"></div>`;
+
+const SK = {
+  status: (label = 'FETCHING DATA', id = '') => `
+    <div class="sk-status"${id ? ` id="${id}"` : ''}>
+      <span class="sk-status-dot"></span>
+      <span class="sk-status-text">[ ${t(label)} ]</span>
+    </div>`,
+
+  statGrid: (count = 4, min = 140) => `
+    <div class="sk-stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(${min}px,1fr))">
+      ${Array.from({ length: count }, (_, i) => `
+        <div class="sk-stat">
+          ${sk('sk-line-xs')}
+          ${sk('sk-line-lg', `${50 + (i % 3) * 12}%`)}
+          ${sk('sk-line-xs', '42%')}
+        </div>`).join('')}
+    </div>`,
+
+  panel: (rows = 4, headW = '38%') => `
+    <div class="sk-panel">
+      <div class="sk-panel-head">${sk('sk-line-xs', headW)}</div>
+      <div class="sk-panel-body">
+        ${Array.from({ length: rows }, (_, i) => `
+          <div class="sk-kv-row">
+            ${sk('sk-line', `${28 + (i % 2) * 8}%`)}
+            ${sk('sk-line', `${18 + (i % 3) * 6}%`)}
+          </div>`).join('')}
