@@ -1966,3 +1966,167 @@ const SK = {
 
   aml: () => `
     <div class="aml-scan">
+      ${SK.status('RUNNING AML SCREEN', 'aml-skel-status')}
+      ${skGap(12)}
+      ${SK.scanHeadCard(4)}
+      ${skGap(10)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">
+        ${SK.analyticsGrid(4)}
+      </div>
+      ${skGap(10)}
+      <div class="aml-assessment">${SK.assessmentSk()}</div>
+      ${skGap(10)}
+      <div class="aml-grid-2">
+        ${SK.amlBlockSk('36%', SK.amlSignalRowsSk(5), '18%')}
+        ${SK.amlBlockSk('30%', SK.amlKvRowsSk(5), '22%')}
+      </div>
+      ${skGap(10)}
+      <div class="aml-grid-2">
+        ${SK.amlBlockSk('34%', SK.amlKvRowsSk(3), '20%')}
+        ${SK.amlBlockSk('32%', SK.amlKvRowsSk(4), '24%')}
+      </div>
+      ${skGap(10)}
+      ${SK.amlBlockSk('38%', '<div class="sk" style="height:200px;border-radius:0"></div>', '28%')}
+      ${skGap(10)}
+      ${SK.amlBlockSk('42%', SK.amlRowsSk(4), '12%')}
+      ${skGap(10)}
+      ${sk('sk-line-xs', '88%')}
+    </div>`,
+
+  txDecoder: () => `
+    <div class="tx-scan">
+      ${SK.status('DECODING TRANSACTION', 'tx-skel-status')}
+      ${skGap(12)}
+      ${SK.scanHeadCard(3)}
+      ${skGap(10)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">
+        ${SK.analyticsGrid(4)}
+      </div>
+      ${skGap(10)}
+      <div class="tx-assessment">${SK.assessmentSk()}</div>
+      ${skGap(10)}
+      ${SK.amlBlockSk('34%', SK.amlSignalRowsSk(3), '14%')}
+      ${skGap(10)}
+      <div class="aml-grid-2">
+        ${SK.amlBlockSk('38%', SK.amlKvRowsSk(5), '18%')}
+        ${SK.amlBlockSk('30%', SK.amlKvRowsSk(6), '20%')}
+      </div>
+      ${skGap(10)}
+      ${sk('sk-line-xs', '80%')}
+    </div>`,
+
+  phishCheck: () => `
+    <div class="phish-scan" id="phish-skel">
+      ${SK.status('RUNNING SCAN', 'phish-skel-status')}
+      ${skGap(12)}
+      ${SK.scanHeadCard(3)}
+      ${skGap(10)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">
+        ${SK.analyticsGrid(4)}
+      </div>
+      ${skGap(10)}
+      <div class="phish-assessment">${SK.assessmentSk()}</div>
+      ${skGap(10)}
+      <div class="aml-grid-2">
+        ${SK.amlBlockSk('34%', SK.phishFlagRowsSk(3), '14%')}
+        ${SK.amlBlockSk('36%', SK.amlKvRowsSk(3), '18%')}
+      </div>
+      ${skGap(10)}
+      ${SK.amlBlockSk('28%', SK.amlKvRowsSk(5), '22%')}
+      ${skGap(10)}
+      ${sk('sk-line-xs', '76%')}
+    </div>`,
+
+  vanity: () => `
+    <div class="vanity-scan-skel">
+      ${SK.status('SEARCHING PATTERN', 'vanity-skel-status')}
+      ${skGap(12)}
+      <div class="vanity-searching-card sk-wallet-block">
+        <div class="wallet-head-top" style="margin-bottom:12px">
+          ${sk('sk-line-sm', '42%')}
+          ${sk('sk-line-xs', '72px')}
+        </div>
+        <div class="sk" style="height:8px;border-radius:999px;width:100%;margin-bottom:14px"></div>
+        <div class="an-stat-grid an-stat-grid--3" style="gap:10px">
+          ${SK.analyticsCell()}${SK.analyticsCell()}${SK.analyticsCell()}
+        </div>
+        ${skGap(10)}
+        ${sk('sk-line-xs', '68%')}
+      </div>
+    </div>`,
+};
+
+// ==================================
+//  HTML HELPERS
+// ==================================
+const icSVG = (d, size=13) =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
+
+const IC = {
+  alert: "M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z M12 9v4 M12 17h.01",
+  check: "M20 6L9 17l-5-5",
+  x:     "M18 6L6 18M6 6l12 12",
+  link:  "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6 M15 3h6v6 M10 14L21 3",
+  copy:  "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2 M15 2H9a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1z",
+  qr:    "M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M16 16h4v4h-4z M18 18h2v2h-2z",
+  external: "M15 3h6v6 M10 14L21 3 M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8",
+  trash: "M3 6h18 M19 6l-1 14H6L5 6 M8 6V4h8v2",
+  arrowDown: "M12 5v14M19 12l-7 7-7-7",
+  arrowUp: "M12 19V5M5 12l7-7 7 7",
+  activity: "M22 12h-4l-3 9L9 3l-3 9H2",
+  download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3",
+  refresh: "M23 4v6h-6 M1 20v-6h6 M3.51 9a9 9 0 0 1 14.13-3.36L23 10M1 14l5.36 4.36A9 9 0 0 0 20.49 15",
+};
+
+function badge(cls, text) {
+  return `<span class="badge ${cls}">${esc(t(text))}</span>`;
+}
+
+function scanActionBtn({ id, label, icon, href, variant }) {
+  const cls = `wallet-action-btn${variant ? ` wallet-action-btn--${variant}` : ''}`;
+  const lbl = esc(t(label));
+  const inner = `${icSVG(icon, 14)}<span>${lbl}</span>`;
+  const aria = ` aria-label="${lbl}"`;
+  if (href) return `<a class="${cls}" id="${id}" href="${esc(href)}" target="_blank" rel="noopener"${aria}>${inner}</a>`;
+  return `<button type="button" class="${cls}" id="${id}"${aria}>${inner}</button>`;
+}
+
+function scanHeadCard({ leadHtml, actionsHtml = '', tagsHtml = '', extraClass = '', variant = '' }) {
+  const cardCls = ['scan-head-card', variant && `scan-head-card--${variant}`, extraClass].filter(Boolean).join(' ');
+  const tagsBlock = tagsHtml ? `<div class="wallet-head-tags">${tagsHtml}</div>` : '';
+  const actionsBlock = actionsHtml ? `<div class="wallet-head-actions">${actionsHtml}</div>` : '';
+  return `<div class="${cardCls}">
+    <div class="wallet-head-top">
+      ${leadHtml}
+      ${actionsBlock}
+    </div>
+    ${tagsBlock}
+  </div>`;
+}
+
+function amlAlertInline(type, html) {
+  return `<div class="aml-alert aml-alert--${type} aml-alert--inline">
+    ${icSVG(IC.alert, 14)}
+    <div class="aml-alert-body">${html}</div>
+  </div>`;
+}
+
+function alertBox(type, html) {
+  return amlAlertInline(type, html);
+}
+
+const SCAN_HEAD_OVERFLOW_PRIMARY = 2;
+const _scanHeadOverflowMq = typeof window !== 'undefined'
+  ? window.matchMedia('(max-width: 767px)')
+  : null;
+
+function scanHeadActionButtons(actionsEl) {
+  return [...actionsEl.children].filter(el =>
+    (el.classList.contains('wallet-action-btn') || el.tagName === 'A')
+    && !el.classList.contains('scan-head-overflow-btn')
+    && !el.classList.contains('scan-head-overflow-menu')
+  );
+}
+
+function bindScanHeadOverflow(scope) {
+  const roots = [];
