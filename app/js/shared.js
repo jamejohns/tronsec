@@ -2130,3 +2130,167 @@ function scanHeadActionButtons(actionsEl) {
 
 function bindScanHeadOverflow(scope) {
   const roots = [];
+  if (scope?.classList?.contains('wallet-head-actions')) roots.push(scope);
+  else if (scope?.querySelectorAll) roots.push(...scope.querySelectorAll('.wallet-head-actions'));
+
+  roots.forEach(actionsEl => {
+    if (!actionsEl || actionsEl.dataset.headOverflowInit === '1') return;
+    actionsEl.dataset.headOverflowInit = '1';
+
+    let moreBtn = null;
+    let menu = null;
+
+    const closeMenu = () => {
+      if (!menu || menu.hidden) return;
+      menu.hidden = true;
+      moreBtn?.setAttribute('aria-expanded', 'false');
+      actionsEl.classList.remove('is-overflow-open');
+    };
+
+    const teardownOverflow = () => {
+      closeMenu();
+      if (menu) {
+        [...menu.children].forEach(btn => actionsEl.insertBefore(btn, moreBtn));
+        menu.remove();
+        menu = null;
+      }
+      if (moreBtn) {
+        moreBtn.remove();
+        moreBtn = null;
+      }
+    };
+
+    const layout = () => {
+      teardownOverflow();
+      const buttons = scanHeadActionButtons(actionsEl);
+      if (!_scanHeadOverflowMq?.matches || buttons.length <= 3) return;
+
+      const extra = buttons.slice(SCAN_HEAD_OVERFLOW_PRIMARY);
+      if (!extra.length) return;
+
+      moreBtn = document.createElement('button');
+      moreBtn.type = 'button';
+      moreBtn.className = 'wallet-action-btn scan-head-overflow-btn';
+      moreBtn.setAttribute('aria-expanded', 'false');
+      moreBtn.setAttribute('aria-haspopup', 'true');
+      moreBtn.innerHTML = `${icSVG('M6 12h.01M12 12h.01M18 12h.01', 14)}<span>${esc(t('More'))}</span>`;
+      actionsEl.appendChild(moreBtn);
+
+      menu = document.createElement('div');
+      menu.className = 'scan-head-overflow-menu';
+      menu.setAttribute('role', 'menu');
+      menu.hidden = true;
+      actionsEl.appendChild(menu);
+      extra.forEach(btn => {
+        btn.setAttribute('role', 'menuitem');
+        menu.appendChild(btn);
+      });
+
+      const focusMenuItem = (idx) => {
+        const items = [...menu.querySelectorAll('[role="menuitem"]')];
+        if (!items.length) return;
+        const i = ((idx % items.length) + items.length) % items.length;
+        items[i].focus();
+      };
+
+      const openMenu = () => {
+        if (!menu) return;
+        menu.hidden = false;
+        moreBtn?.setAttribute('aria-expanded', 'true');
+        actionsEl.classList.add('is-overflow-open');
+        focusMenuItem(0);
+      };
+
+      moreBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (menu.hidden) openMenu();
+        else closeMenu();
+      });
+
+      moreBtn.addEventListener('keydown', e => {
+        if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (menu.hidden) openMenu();
+          else focusMenuItem(0);
+        } else if (e.key === 'Escape') {
+          closeMenu();
+        }
+      });
+
+      menu.addEventListener('keydown', e => {
+        const items = [...menu.querySelectorAll('[role="menuitem"]')];
+        const idx = items.indexOf(document.activeElement);
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeMenu();
+          moreBtn?.focus();
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          focusMenuItem(idx + 1);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          focusMenuItem(idx - 1);
+        } else if (e.key === 'Home') {
+          e.preventDefault();
+          focusMenuItem(0);
+        } else if (e.key === 'End') {
+          e.preventDefault();
+          focusMenuItem(items.length - 1);
+        }
+      });
+    };
+
+    layout();
+    _scanHeadOverflowMq?.addEventListener('change', layout);
+    document.addEventListener('click', () => closeMenu());
+  });
+}
+
+function scanKvBlock(title, rowsHtml) {
+  const titleHtml = /<[^>]+>/.test(title) ? title : esc(t(title));
+  return `<div class="aml-block wallet-kv-block">
+    <div class="aml-block-head">
+      <span class="aml-block-title">${titleHtml}</span>
+    </div>
+    <div class="aml-block-body aml-block-body--flush">
+      <div class="aml-kv-list">${rowsHtml}</div>
+    </div>
+  </div>`;
+}
+
+function initModuleDescTags() {
+  document.querySelectorAll('.module-desc-tags').forEach(tags => {
+    const parent = tags.parentElement;
+    if (!parent || parent.querySelector('.module-desc-tags-toggle')) return;
+    const count = tags.querySelectorAll('.module-desc-tag').length;
+    if (!count) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'module-desc-tags-toggle';
+    btn.setAttribute('aria-expanded', 'false');
+    btn.innerHTML = `<span class="module-desc-tags-toggle-label">${esc(t('Module features'))}</span><span class="module-desc-tags-toggle-meta">${count}</span>`;
+    parent.insertBefore(btn, tags);
+
+    btn.addEventListener('click', () => {
+      const open = tags.classList.toggle('is-open');
+      btn.classList.toggle('is-open', open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  });
+}
+
+const MODULE_STATE_ARIA = {
+  empty: 'No scan yet',
+  cached: 'Cached result in module',
+  error: 'Last scan failed',
+};
+
+function moduleNavStateLabel(state) {
+  const key = MODULE_STATE_ARIA[state];
+  return key ? t(key) : state;
+}
+
+const MODULE_STATE_TABS = {
+  scanner: { result: 'wallet-result', err: 'wallet-err' },
+  approvals: { result: 'approvals-result', err: 'approvals-err' },
