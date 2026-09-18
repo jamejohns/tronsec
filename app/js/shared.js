@@ -2622,3 +2622,167 @@ function syncMoreMenuBadge() {
     const result = document.getElementById(cfg.result);
     if (err?.innerHTML?.trim()) { state = 'error'; break; }
     if (result?.innerHTML?.trim() && !result.querySelector('.sk')) state = 'cached';
+  }
+  moreBtn.dataset.moduleState = state;
+  const name = moreBtn.querySelector('span')?.textContent?.trim() || 'More';
+  if (state === 'empty') moreBtn.removeAttribute('aria-label');
+  else moreBtn.setAttribute('aria-label', `${name} — ${moduleNavStateLabel(state)}`);
+}
+
+function trapFocus(container, opts = {}) {
+  if (!container) return () => {};
+  const prev = document.activeElement;
+  const sel = opts.selector || 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+  const getFocusable = () => [...container.querySelectorAll(sel)].filter(el =>
+    !el.disabled && el.offsetParent !== null && !el.hidden && el.getAttribute('aria-hidden') !== 'true'
+  );
+
+  const onKey = (e) => {
+    if (e.key === 'Escape' && typeof opts.onEscape === 'function') {
+      e.preventDefault();
+      opts.onEscape();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const nodes = getFocusable();
+    if (!nodes.length) return;
+    const first = nodes[0];
+    const last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  document.addEventListener('keydown', onKey);
+  const nodes = getFocusable();
+  (opts.initialFocus || nodes[0] || container)?.focus?.();
+
+  return () => {
+    document.removeEventListener('keydown', onKey);
+    if (prev && typeof prev.focus === 'function') prev.focus();
+  };
+}
+
+function navigateToTab(tabId, opts = {}) {
+  if (typeof switchTab === 'function') switchTab(tabId, opts);
+  const prefill = opts.prefill;
+  const selector = opts.prefillSelector || TAB_PREFILL?.[tabId]?.inputId;
+  if (!prefill || !selector) return;
+  const apply = () => {
+    const inp = document.getElementById(selector);
+    if (!inp) return;
+    let val = prefill;
+    if (tabId === 'scan-url' && val && !/^https?:\/\//i.test(val)) val = 'https://' + val;
+    inp.value = val;
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    if (opts.autoScan) inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  };
+  apply();
+  requestAnimationFrame(apply);
+}
+
+function initA11yShell() {
+  document.querySelectorAll('[data-tab-btn]').forEach(btn => {
+    const tabId = btn.getAttribute('data-tab-btn');
+    if (!tabId || tabId === 'more') return;
+    btn.setAttribute('role', 'tab');
+    btn.id = btn.id || `tabbtn-${tabId}`;
+    btn.setAttribute('aria-controls', `tab-${tabId}`);
+    btn.setAttribute('aria-selected', btn.classList.contains('tab-nav-active') ? 'true' : 'false');
+  });
+  document.querySelectorAll('.tab-content').forEach(panel => {
+    const tabId = panel.id?.replace(/^tab-/, '');
+    if (!tabId) return;
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', `tabbtn-${tabId}`);
+    panel.setAttribute('tabindex', '-1');
+  });
+  Object.values(MODULE_STATE_TABS).forEach(cfg => {
+    const result = document.getElementById(cfg.result);
+    const err = document.getElementById(cfg.err);
+    if (result && !result.getAttribute('aria-live')) {
+      result.setAttribute('aria-live', 'polite');
+      result.setAttribute('aria-relevant', 'additions');
+    }
+    if (err && !err.getAttribute('role')) err.setAttribute('role', 'alert');
+  });
+  const menu = document.getElementById('mobile-more-menu');
+  const sheet = menu?.querySelector('.wc-sheet');
+  if (sheet && !sheet.getAttribute('aria-label')) {
+    sheet.setAttribute('aria-label', t('More tools'));
+  }
+}
+
+function setError(el, msg) {
+  if (!el) return;
+  el.innerHTML = msg ? alertBox('red', esc(msg)) : '';
+  const panel = el.closest('.module-panel') || el.closest('.vanity-panel') || el.closest('.report-panel');
+  const empty = panel?.querySelector('[id$="-empty"]');
+  const result = panel?.querySelector('[id$="-result"]');
+  if (empty) {
+    if (msg) empty.style.display = 'none';
+    else if (!result?.innerHTML?.trim()) empty.style.display = '';
+  }
+  if (el.id) {
+    for (const [tabId, cfg] of Object.entries(MODULE_STATE_TABS)) {
+      if (cfg.err === el.id) {
+        syncModuleNavState(tabId);
+        break;
+      }
+    }
+  }
+}
+function flashInput(el) {
+  if (!el) return;
+  el.classList.add('input-flash');
+  setTimeout(() => el.classList.remove('input-flash'), 500);
+}
+function spinBtn(btn, spin) {
+  btn.disabled = spin;
+  const txt = btn.querySelector('.scan-btn-text');
+  const ldr = btn.querySelector('.scan-btn-loader');
+  if (txt || ldr) {
+    if (txt) txt.textContent = spin ? (txt.dataset.busy || '[ SCANNING ]') : (txt.dataset.idle || '[ SCAN ]');
+    if (ldr) { if (spin) ldr.classList.remove('hidden'); else ldr.classList.add('hidden'); }
+    return;
+  }
+  const svgChild = btn.querySelector('svg');
+  let spinEl = btn.querySelector('.spin');
+  if (spin) {
+    if (svgChild) svgChild.style.display='none';
+    if (!spinEl) { spinEl = document.createElement('span'); spinEl.className='spin'; btn.prepend(spinEl); }
+  } else {
+    if (svgChild) svgChild.style.display='';
+    if (spinEl) spinEl.remove();
+  }
+}
+
+
+// ==================================
+//  GLOSSARY ? technical term tooltips
+// ==================================
+const GLOSSARY = {
+  aml:              { lbl:'AML',              desc:'Anti-Money Laundering — automated blockchain risk screening.' },
+  trc20:            { lbl:'TRC20',            desc:'Token standard on TRON, analogous to ERC-20 on Ethereum.' },
+  trx:              { lbl:'TRX',              desc:'Native cryptocurrency of the TRON blockchain.' },
+  dex:              { lbl:'DEX',              desc:'Decentralized Exchange — peer-to-peer marketplace without intermediaries.' },
+  router:           { lbl:'Router',           desc:'Smart contract that routes trades between liquidity pools.' },
+  pool:             { lbl:'Pool',             desc:'Liquidity pool — a collection of funds locked in a smart contract for trading.' },
+  counterparty:     { lbl:'Counterparty',     desc:'The other address involved in a transaction.' },
+  concentration:    { lbl:'Concentration',    desc:'Portion of all transactions sent to a single address — high values may indicate wash trading.' },
+  heuristic:        { lbl:'Heuristic',        desc:'Rule-based pattern detection used to flag suspicious activity.' },
+  allowance:        { lbl:'Allowance',        desc:'Approval granted to a smart contract to spend your tokens.' },
+  revoke:           { lbl:'Revoke',           desc:'Cancel a previously granted token allowance.' },
+  unlimited:        { lbl:'Unlimited',        desc:'An allowance with no cap — the contract can spend all your tokens.' },
+  spender:          { lbl:'Spender',          desc:'The address or contract authorized to use your tokens.' },
+  abi:              { lbl:'ABI',              desc:'Application Binary Interface — describes how to call a contract\'s functions.' },
+  selector:         { lbl:'Selector',         desc:'First 4 bytes of a keccak256 hash of a function signature — identifies which function is called.' },
+  payable:          { lbl:'Payable',          desc:'A function that can receive TRX or tokens along with the call.' },
+  unverified:       { lbl:'Unverified',       desc:'Source code not published on-chain — higher risk, cannot verify what the contract actually does.' },
+  blacklisted:      { lbl:'Blacklisted',      desc:'Address blocked by stablecoin issuers (USDT/USDC) from sending or receiving.' },
+  flagged:          { lbl:'Flagged',          desc:'Marked as potentially malicious by security databases or heuristic analysis.' },
+  sanctioned:       { lbl:'Sanctioned',       desc:'Address targeted by international financial sanctions.' },
