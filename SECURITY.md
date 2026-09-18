@@ -26,7 +26,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 **Please do not open public issues for security bugs.**
 
-1. Contact via [Telegram community](https://t.me/tronsec_chat) (maintainer).
+1. Contact via [Telegram community](https://t.me/tronsec_io) (maintainer).
 2. Include steps to reproduce, impact, and affected module.
 3. Allow up to **7 business days** for an initial response.
 

@@ -17,13 +17,6 @@ const APPROVALS_CACHE_TTL = 12 * 60 * 1000;
 
 const EXCHANGE_OWNER_TAG_RE = /exchange|binance|okx|bybit|huobi|htx|kucoin|gate\.?io|coinbase|bitfinex|kraken|mexc|bitrue|poloniex|crypto\.com|\bcex\b|hot\s*wallet|deposit|withdraw/i;
 
-function demoApprovalInjectConfig() {
-  if (typeof window.tronsecDemoApprovalInject === 'function') {
-    return window.tronsecDemoApprovalInject();
-  }
-  return { enabled: true, minUsd: 400, maxUsd: 1_500_000 };
-}
-
 function serializeApprovalsList(list) {
   return (list || []).map(a => ({
     ...a,

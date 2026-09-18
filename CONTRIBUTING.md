@@ -55,5 +55,5 @@ The public tree is periodically synced from the main application sources. Your P
 
 ## Questions
 
-- [Telegram community](https://t.me/tronsec_chat)
+- [Telegram community](https://t.me/tronsec_io)
 - [tronsec.io](https://tronsec.io)

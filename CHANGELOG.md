@@ -41,18 +41,37 @@ GitHub release tags begin at **v1.0.0** (June 2026). The product itself shipped 
 - **2026-07-12** — **[v1.2.0]** — **Permission auditor**, AML v2 lite, approvals UI refresh, risk-shield color alignment
 - **2026-07-15** — **Product demo video** — [6-minute YouTube walkthrough](https://www.youtube.com/watch?v=AwwVFx8PJgc) of all app modules
 
+### August–September 2026 — AML taxonomy & module refresh
+
+- **AML category taxonomy** (`aml-categories.js`) — sanctions, mixer, scam, exchange, DeFi, spam/dust exposure labels
+- **Wallet / AML graph** — counterparty layout polish, exposure scoring hooks
+- **Approvals monitor** — TronGrid + TronScan merge, summary bar, unknown-spender rows
+- **Vanity generator** — local Web Workers only in OSS export (no server-side assist)
+- **i18n** — extended strings for AML categories, approvals UI, wallet risk copy (8 locales)
+- **CI** — readable JS guards, syntax check, risk-logic unit tests on every push
+- **2026-09-18** — **[v1.3.0]** — full module export refresh (see release notes)
+
 ---
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-18
+
 ### Added
-- **Product demo** — [YouTube walkthrough](https://www.youtube.com/watch?v=AwwVFx8PJgc) (wallet, AML, approvals, permissions, phishing, contracts, TX decoder, vanity, PWA UX)
-- **Wallet scanner** — smart contract detection (not only token contracts) with redirect callout to Contract Scan
+- **`aml-categories.js`** — shared risk category taxonomy and exposure labels for AML + wallet modules
+- **Product demo** — [YouTube walkthrough](https://www.youtube.com/watch?v=AwwVFx8PJgc) linked from README
+- **Pet OSS:** [**tron-drainer-tracker**](https://github.com/jamejohns/tron-drainer-tracker) — chain watcher for new TRC-20 drainer contracts
+- **Wallet scanner** — smart contract detection with redirect callout to Contract Scan
 - **Command palette** — file-style module labels (`scanner.sh`, `vanity.gen`, …), open animation, keyboard hint styling
+- **CI export guards** — obfuscation check, `secrets.local.js` block, JS syntax + unit tests
 
 ### Changed
+- **AML module** — category-aware exposure scoring, graph integration with taxonomy labels
+- **Approvals monitor** — risk-tier sections, summary bar, merged TronScan allowance data
+- **Permissions / TX decoder / phish / contract / vanity** — heuristics and i18n aligned with v1.3 module set
 - Contract redirect UI for Wallet and AML modules (shared callout card)
 - `probeTronContract` — broader detection via `getcontractinfo` and TronScan fallback
+- README — module table, OSS scope, FAQ for search and self-hosting
 
 ## [1.2.0] - 2026-07-12
 
@@ -95,6 +114,7 @@ GitHub release tags begin at **v1.0.0** (June 2026). The product itself shipped 
 - Cloudflare Worker proxy integration (`proxy-config.js`)
 - PWA manifest, brand assets
 
+[1.3.0]: https://github.com/jamejohns/tronsec/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/jamejohns/tronsec/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jamejohns/tronsec/compare/v1.0...v1.1.0
 [1.0.0]: https://github.com/jamejohns/tronsec/releases/tag/v1.0
