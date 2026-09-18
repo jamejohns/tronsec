@@ -490,3 +490,167 @@ function getApprovalRisk(amount, decimals = 6) {
   if (whole >= APPROVAL_RISK_WARN_TOKENS) return 'warn';
   return 'normal';
 }
+
+function isHighRiskApproval(amount, decimals = 6) {
+  const risk = getApprovalRisk(amount, decimals);
+  return risk === 'critical' || risk === 'high';
+}
+
+function approvalRiskRank(amount, decimals = 6) {
+  return { critical: 3, high: 2, warn: 1, normal: 0 }[getApprovalRisk(amount, decimals)] || 0;
+}
+
+const APPROVE_SIG = '095ea7b3';
+const APPROVAL_INCREASE_SIGS = ['095ea7b3', '39509351', 'd73dd623'];
+
+function isApprovalIncreaseCalldata(dataHex) {
+  const dh = String(dataHex || '').toLowerCase().replace(/^0x/, '');
+  return APPROVAL_INCREASE_SIGS.some((sig) => dh.startsWith(sig));
+}
+
+/** Spender contracts tied to active drain kits (IOC list). */
+const KNOWN_DRAINER_SPENDERS = new Set([
+  'TXnDibB9a6wGHJMPxxmXT8mAgQHf4cN3ED', // VerifyAccount drainer
+  'TFLsH1xMPg2g72oEAq4GhoFKm3Wf2fi3cq', // heyue controlAndTransferToken drainer
+]);
+
+function isKnownDrainerSpender(addr) {
+  return !!(addr && KNOWN_DRAINER_SPENDERS.has(String(addr).trim()));
+}
+
+function isDrainerPullMethods(methods) {
+  if (!methods?.length) return false;
+  const joined = methods.join(' ').toLowerCase();
+  return /controlandtransfertoken|transferfromwithapproval|sweeptoken|sweep|draintoken|pulltoken|executetransferfrom/.test(joined);
+}
+
+function isSuspiciousApprovalSpender(addr, methods) {
+  return isKnownDrainerSpender(addr) || isDrainerPullMethods(methods);
+}
+
+function countDistinctApprovals(trc20TxList, nativeTxList) {
+  const approveMap = new Map();
+  (trc20TxList || []).forEach(tx => {
+    if (tx.type !== 'Approval') return;
+    const tokenAddr = tx.token_info?.address || tx.token_info?.contract_address || '';
+    const key = `${tokenAddr}_${tx.to}`;
+    if (!approveMap.has(key)) approveMap.set(key, 1);
+  });
+  if (approveMap.size === 0 && nativeTxList?.length) {
+    nativeTxList.forEach(tx => {
+      const c = tx.raw_data?.contract?.[0];
+      if (c?.type !== 'TriggerSmartContract') return;
+      const dh = c.parameter?.value?.data || '';
+      if (!isApprovalIncreaseCalldata(dh)) return;
+      const spenderHex = dh.slice(34, 74);
+      const contractAddr = c.parameter?.value?.contract_address;
+      const key = `${contractAddr}_${spenderHex}`;
+      if (!approveMap.has(key)) approveMap.set(key, 1);
+    });
+  }
+  return approveMap.size;
+}
+
+function _base58Decode(str) {
+  if (!str) return null;
+  const bytes = [0];
+  for (let i = 0; i < str.length; i++) {
+    const val = BASE58_ALPHABET.indexOf(str[i]);
+    if (val < 0) return null;
+    let carry = val;
+    for (let j = 0; j < bytes.length; j++) {
+      carry += bytes[j] * 58;
+      bytes[j] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  for (let i = 0; i < str.length && str[i] === BASE58_ALPHABET[0]; i++) bytes.push(0);
+  return new Uint8Array(bytes.reverse());
+}
+
+function tronAddressToAbiParam(addr) {
+  if (!addr) return null;
+  if (isValidTron(addr)) {
+    const decoded = _base58Decode(addr);
+    if (!decoded || decoded.length < 21) return null;
+    const hex = Array.from(decoded.slice(0, 21)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return hex.padStart(64, '0');
+  }
+  const clean = String(addr).replace(/^0x/i, '');
+  const hex41 = clean.length === 40 ? '41' + clean : (clean.startsWith('41') ? clean : null);
+  return hex41 ? hex41.padStart(64, '0') : null;
+}
+
+async function fetchOnChainAllowance(owner, tokenContract, spender) {
+  const ownerParam = tronAddressToAbiParam(owner);
+  const spenderParam = tronAddressToAbiParam(spender);
+  if (!ownerParam || !spenderParam) return null;
+  try {
+    const res = await gridPost('/wallet/triggerconstantcontract', {
+      owner_address: owner,
+      contract_address: tokenContract,
+      function_selector: 'allowance(address,address)',
+      parameter: ownerParam + spenderParam,
+      visible: true,
+    });
+    const hex = res?.constant_result?.[0];
+    if (!hex) return null;
+    return BigInt('0x' + hex);
+  } catch (_) {
+    return null;
+  }
+}
+
+function collectApprovalCandidates(trc20TxList, nativeTxList) {
+  const map = new Map();
+  const put = (key, entry) => {
+    if (!map.has(key)) map.set(key, entry);
+  };
+
+  (trc20TxList || []).forEach(tx => {
+    if (tx.type !== 'Approval') return;
+    const tokenAddr = tx.token_info?.address || tx.token_info?.contract_address || '';
+    const spender = tx.to;
+    if (!tokenAddr || !spender) return;
+    const key = `${tokenAddr}_${spender}`;
+    let amount = tx.value;
+    try {
+      const big = typeof amount === 'bigint' ? amount : BigInt(String(amount || 0));
+      if (big === BigInt(0)) return;
+    } catch (_) { return; }
+    put(key, {
+      token: tx.token_info?.symbol || tx.token_info?.name || '—',
+      tokenAddr,
+      spender,
+      amount,
+      decimals: parseInt(tx.token_info?.decimals || 6, 10) || 6,
+      date: tx.block_timestamp || 0,
+    });
+  });
+
+  (nativeTxList || []).forEach(tx => {
+    const c = tx.raw_data?.contract?.[0];
+    if (c?.type !== 'TriggerSmartContract') return;
+    const dh = c.parameter?.value?.data || '';
+    if (!dh.startsWith(APPROVE_SIG)) return;
+    const spenderHex = dh.slice(34, 74);
+    const amountHex = dh.slice(74, 138);
+    const contractAddr = c.parameter?.value?.contract_address;
+    if (!contractAddr || !spenderHex) return;
+    const key = `${contractAddr}_${spenderHex}`;
+    let amount = BigInt(0);
+    try { amount = amountHex ? BigInt('0x' + amountHex) : BigInt(0); } catch (_) { return; }
+    if (amount === BigInt(0)) return;
+    put(key, {
+      token: short(contractAddr),
+      tokenAddr: contractAddr,
+      spender: spenderHex.length === 40 ? '41' + spenderHex : spenderHex,
+      amount,
+      decimals: 6,
+      date: tx.block_timestamp || 0,
+    });
+  });
