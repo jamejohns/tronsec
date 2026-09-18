@@ -326,3 +326,167 @@ async function fetchTronContractLabel(addr) {
   }
 }
 
+async function renderContractScanRedirect(addr, opts = {}) {
+  const idPrefix = opts.idPrefix || 'contract-redirect';
+  const wrapperClass = opts.wrapperClass || 'aml-scan';
+  const hintText = opts.hintText || t('AML screening scores wallet addresses and their transaction patterns. For tokens and smart contracts, use Contract Scan to review bytecode, permissions, and upgrade risks.');
+  const contractLabel = await fetchTronContractLabel(addr);
+  const contractIcon = icSVG('M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M10 13h4 M10 17h7', 26);
+  const labelHtml = contractLabel
+    ? `<span class="contract-redirect-name">${esc(contractLabel)}</span>`
+    : '';
+
+  return `<div class="${wrapperClass}">
+    <div class="contract-redirect-card">
+      <div class="contract-redirect-glow" aria-hidden="true"></div>
+      <div class="contract-redirect-inner">
+        <div class="contract-redirect-meta">
+          ${walletTag(t('Smart contract'), 'info')}
+          ${labelHtml}
+        </div>
+        <div class="contract-redirect-body">
+          <div class="contract-redirect-icon">${contractIcon}</div>
+          <p class="contract-redirect-title">${esc(t('This is a contract, not a wallet'))}</p>
+          <p class="contract-redirect-hint">${esc(hintText)}</p>
+        </div>
+        <div class="contract-redirect-addr">
+          <span class="contract-redirect-addr-text">${esc(addr)}</span>
+        </div>
+        <div class="contract-redirect-actions">
+          <button type="button" class="contract-redirect-btn contract-redirect-btn--primary" id="${idPrefix}-contract-scan-btn" aria-label="${esc(t('Open in Contract Scan'))}">
+            ${icSVG(IC.external, 16)}<span>${esc(t('Open in Contract Scan'))}</span>
+          </button>
+          <button type="button" class="contract-redirect-btn contract-redirect-btn--ghost" id="${idPrefix}-copy-addr-btn" aria-label="${esc(t('Copy'))}">
+            ${icSVG(IC.copy, 16)}<span>${esc(t('Copy'))}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    ${opts.disclaimerHtml || ''}
+  </div>`;
+}
+
+function bindContractScanRedirect(addr, idPrefix = 'contract-redirect') {
+  document.getElementById(`${idPrefix}-contract-scan-btn`)?.addEventListener('click', e => {
+    e.preventDefault();
+    openContractScan(addr);
+  });
+  document.getElementById(`${idPrefix}-copy-addr-btn`)?.addEventListener('click', () => {
+    navigator.clipboard.writeText(addr).then(() => {
+      const btn = document.getElementById(`${idPrefix}-copy-addr-btn`);
+      if (!btn) return;
+      btn.classList.add('is-copied');
+      btn.innerHTML = `${icSVG(IC.check, 16)}<span>${t('Copied')}</span>`;
+      setTimeout(() => {
+        btn.classList.remove('is-copied');
+        btn.innerHTML = `${icSVG(IC.copy, 16)}<span>${t('Copy')}</span>`;
+      }, 2000);
+    });
+  });
+}
+
+async function openAddressScan(addr) {
+  if (!addr) return;
+  const isContract = await probeTronContract(addr);
+  if (isContract) openContractScan(addr);
+  else openWalletScan(addr);
+}
+
+function bindAddressScanButtons(root) {
+  (root || document).querySelectorAll('.wallet-contract-scan-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      openAddressScan(btn.getAttribute('data-addr'));
+    });
+  });
+}
+
+function openTxDecoder(hash) {
+  if (!hash) return;
+  switchTab('tx-decoder');
+  setTimeout(() => {
+    const input = document.getElementById('tx-input');
+    if (input) input.value = hash;
+    if (typeof txDecode === 'function') txDecode();
+  }, 0);
+}
+
+const fmtNum = n => {
+  if (n == null) return '—';
+  if (n >= 1e9) return (n/1e9).toFixed(2)+'B';
+  if (n >= 1e6) return (n/1e6).toFixed(2)+'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
+  return Number(n).toFixed(0);
+};
+const toTRX = sun => sun ? (sun/1_000_000).toFixed(2) : '0.00';
+
+// -- Token amount formatting (shared by tx-decoder & approvals) ------
+const UNLIMITED_THRESHOLD = BigInt('0xfffffffffffffffffffffffffffffff0');
+
+// -- TRON Base58 address conversion ----------------------------------
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function _base58Encode(bytes) {
+  if (!bytes || bytes.length === 0) return '';
+  let n = BigInt(0);
+  for (const b of bytes) n = (n << BigInt(8)) + BigInt(b);
+  if (n === BigInt(0)) return BASE58_ALPHABET[0];
+  let result = '';
+  while (n > 0) {
+    result = BASE58_ALPHABET[Number(n % BigInt(58))] + result;
+    n /= BigInt(58);
+  }
+  for (let i = 0; i < bytes.length && bytes[i] === 0; i++) {
+    result = BASE58_ALPHABET[0] + result;
+  }
+  return result;
+}
+
+async function hexToTronAddress(hex) {
+  if (!hex || typeof hex !== 'string') return hex;
+  if (isValidTron(hex)) return hex;
+  const clean = hex.replace(/^0x/, '');
+  if (clean.length !== 42) return hex;
+  const bytes = new Uint8Array(21);
+  for (let i = 0; i < 42; i += 2) bytes[i >> 1] = parseInt(clean.slice(i, i + 2), 16);
+  try {
+    const hash1 = await crypto.subtle.digest('SHA-256', bytes);
+    const hash2 = await crypto.subtle.digest('SHA-256', hash1);
+    const full = new Uint8Array(25);
+    full.set(bytes, 0);
+    full.set(new Uint8Array(hash2, 0, 4), 21);
+    return _base58Encode(full);
+  } catch (_) {
+    return hex;
+  }
+}
+
+function isUnlimitedApproval(amount, decimals=6) {
+  if (amount == null || amount === '') return false;
+  let big;
+  try { big = typeof amount === 'bigint' ? amount : BigInt(String(amount)); }
+  catch(_) { return false; }
+  return big >= UNLIMITED_THRESHOLD;
+}
+
+const APPROVAL_RISK_HIGH_TOKENS = BigInt(1_000_000);
+const APPROVAL_RISK_WARN_TOKENS = BigInt(100_000);
+
+function approvalTokenWhole(amount, decimals = 6) {
+  if (amount == null || amount === '') return null;
+  let big;
+  try { big = typeof amount === 'bigint' ? amount : BigInt(String(amount)); }
+  catch (_) { return null; }
+  if (big >= UNLIMITED_THRESHOLD) return null;
+  const dec = Math.min(Math.max(parseInt(decimals, 10) || 6, 0), 18);
+  return big / BigInt(10 ** dec);
+}
+
+function getApprovalRisk(amount, decimals = 6) {
+  if (isUnlimitedApproval(amount, decimals)) return 'critical';
+  const whole = approvalTokenWhole(amount, decimals);
+  if (whole == null) return 'normal';
+  if (whole >= APPROVAL_RISK_HIGH_TOKENS) return 'high';
+  if (whole >= APPROVAL_RISK_WARN_TOKENS) return 'warn';
+  return 'normal';
+}
