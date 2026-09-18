@@ -1802,3 +1802,167 @@ const SK = {
     </div>`,
 
   walletActivityRowSk: () => `
+    <div class="wallet-activity-item">
+      <div class="sk sk-avatar" style="width:34px;height:34px;border-radius:9px"></div>
+      <div class="wallet-activity-body" style="display:flex;flex-direction:column;gap:6px">
+        ${sk('sk-line-xs', '50%')}
+        ${sk('sk-line-xs', '38%')}
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        ${sk('sk-line-xs', '48px')}
+        ${sk('sk-line-xs', '36px')}
+      </div>
+    </div>`,
+
+  walletCardSk: (rows = 6, headW = '38%') => `
+    <div class="aml-block wallet-kv-block sk-wallet-block">
+      <div class="aml-block-head">${sk('sk-line-xs', headW)}</div>
+      <div class="aml-block-body aml-block-body--flush">
+        <div class="aml-kv-list">
+      ${Array.from({ length: rows }, (_, i) => `
+        <div class="kv-row sk-wallet-kv">
+          ${sk('sk-line-xs', `${30 + (i % 2) * 6}%`)}
+          ${sk('sk-line-xs', `${18 + (i % 3) * 5}%`)}
+        </div>`).join('')}
+        </div>
+      </div>
+    </div>`,
+
+  wallet: () => `
+    <div class="wallet-scan">
+      ${SK.status('SCANNING WALLET')}
+      ${skGap(14)}
+      <div class="scan-head-card scan-head-card--featured sk-wallet-block">
+        <div class="wallet-head-top">
+          ${sk('sk-line-md', '62%')}
+          <div class="wallet-head-actions" style="display:flex;gap:6px;flex-wrap:wrap">
+            ${Array.from({ length: 6 }, () => sk('sk-line-xs', '68px')).join('')}
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px">
+          ${Array.from({ length: 4 }, () => sk('sk-line-xs', '72px')).join('')}
+        </div>
+      </div>
+      ${skGap(10)}
+      <div class="wallet-risk-grid an-stat-grid an-stat-grid--2">${SK.analyticsGrid(2)}</div>
+      ${skGap(12)}
+      <div class="wallet-hero-grid">
+        <div class="wallet-portfolio-card sk-wallet-block">
+          ${sk('sk-line-xs', '40%')}
+          ${sk('sk-line-xl', '54%')}
+          ${sk('sk-line-sm', '72%')}
+        </div>
+        <div class="wallet-meters-card sk-wallet-block">
+          ${SK.walletMeterSk()}${SK.walletMeterSk()}${SK.walletMeterSk()}
+        </div>
+      </div>
+      ${skGap(12)}
+      <div class="wallet-profile-grid">
+        ${SK.walletCardSk(6, '36%')}
+        ${SK.walletCardSk(6, '42%')}
+      </div>
+      ${skGap(12)}
+      <div>
+        <div class="scan-section-title wallet-section-title">${sk('sk-line-xs', '32%')}</div>
+        <div class="wallet-token-list">${Array.from({ length: 3 }, () => SK.walletTokenRowSk()).join('')}</div>
+      </div>
+      ${skGap(12)}
+      <div>
+        <div class="scan-section-title wallet-section-title">${sk('sk-line-xs', '36%')}</div>
+        <div class="wallet-activity">${Array.from({ length: 4 }, () => SK.walletActivityRowSk()).join('')}</div>
+      </div>
+    </div>`,
+
+  approvals: () => `
+    <div class="appr-scan">
+      ${SK.status('CHECKING APPROVALS')}
+      ${skGap(14)}
+      ${SK.scanHeadCard(3)}
+      ${skGap(10)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">
+        ${SK.analyticsGrid(4)}
+      </div>
+      ${skGap(10)}
+      <div class="appr-assessment">${SK.assessmentSk()}</div>
+      ${skGap(12)}
+      <div class="appr-sections">
+      <div class="appr-section">
+        <div class="appr-section-head scan-section-head">
+          ${sk('sk-line-xs', '32%')}
+          ${sk('sk-badge')}
+        </div>
+        <div class="scan-list appr-list">
+          ${Array.from({ length: 4 }, () => `
+            <div class="appr-row sk-wallet-block">
+              <div class="sk sk-avatar" style="width:38px;height:38px;border-radius:10px"></div>
+              <div class="appr-row-body" style="display:flex;flex-direction:column;gap:6px;flex:1">
+                ${sk('sk-line-xs', '52%')}
+                ${sk('sk-line-xs', '68%')}
+                ${sk('sk-line-xs', '44%')}
+              </div>
+              ${sk('sk-badge')}
+            </div>`).join('')}
+        </div>
+      </div>
+      </div>
+    </div>`,
+
+  permissions: () => `
+    <div class="perm-scan">
+      ${SK.status('AUDITING PERMISSIONS')}
+      ${skGap(14)}
+      ${SK.scanHeadCard(3)}
+      ${skGap(10)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">${SK.analyticsGrid(4)}</div>
+      <div class="perm-assessment">${SK.assessmentSk()}</div>
+      ${SK.amlBlockSk('28%', SK.contractRiskRowsSk(3), '12%')}
+      <div class="perm-sections">
+        ${SK.amlBlockSk('30%', '<div class="perm-signer-list">' + Array.from({ length: 2 }, () => '<div class="perm-signer sk-wallet-block" style="min-height:54px"></div>').join('') + '</div>', '18%')}
+      </div>
+    </div>`,
+
+  contractTableSk: (rows = 6) => `
+    <div class="contract-table-wrap sk-wallet-block">
+      ${SK.tableRows(rows, 4)}
+    </div>`,
+
+  contractRiskRowsSk: (n = 4) => `
+    <div class="contract-risks">
+      ${Array.from({ length: n }, () => `
+        <div class="contract-risk sk-wallet-block">
+          <div class="contract-risk-body" style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:0">
+            ${sk('sk-line-xs', '22%')}
+            ${sk('sk-line-sm', '88%')}
+          </div>
+          ${sk('sk-badge', '56px')}
+        </div>`).join('')}
+    </div>`,
+
+  contract: () => `
+    <div class="contract-scan">
+      ${SK.status('AUDITING CONTRACT', 'contract-skel-status')}
+      ${skGap(12)}
+      ${SK.scanHeadCard(3)}
+      ${skGap(10)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">
+        ${SK.analyticsGrid(4)}
+      </div>
+      ${skGap(10)}
+      <div class="contract-assessment">${SK.assessmentSk()}</div>
+      ${skGap(10)}
+      <div class="aml-grid-2">
+        ${SK.amlBlockSk('34%', SK.amlSignalRowsSk(4), '18%')}
+        ${SK.amlBlockSk('30%', SK.amlKvRowsSk(5), '20%')}
+      </div>
+      ${skGap(10)}
+      ${SK.amlBlockSk('38%', SK.contractRiskRowsSk(4), '12%')}
+      ${skGap(10)}
+      ${SK.amlBlockSk('32%', SK.contractTableSk(6), '24%')}
+      ${skGap(10)}
+      ${sk('sk-line-xs', '82%')}
+    </div>`,
+
+  graph: () => SK.chart(220),
+
+  aml: () => `
+    <div class="aml-scan">
