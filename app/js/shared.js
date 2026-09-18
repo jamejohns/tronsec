@@ -2458,3 +2458,167 @@ function hideScanEmpty(emptyEl, opts = {}) {
     emptyEl.style.display = 'none';
     emptyEl.classList.remove('is-hiding');
     opts.onDone?.();
+  }, SCAN_EMPTY_HIDE_MS);
+}
+
+function showScanEmpty(emptyEl) {
+  if (!emptyEl) return;
+  emptyEl.classList.remove('is-hiding', 'hidden');
+  emptyEl.style.display = '';
+}
+
+const SESSION_CACHE_TTL_MS = 12 * 60 * 1000;
+const SESSION_CACHE_VERSION = 5;
+
+function sessionCacheLang() {
+  if (typeof i18nLang === 'function') return i18nLang();
+  return document.documentElement.getAttribute('lang') || 'en';
+}
+
+function sessionCacheKey(module, id, locale) {
+  const loc = locale != null ? locale : sessionCacheLang();
+  return `tronsec:v${SESSION_CACHE_VERSION}:${module}:${loc}:${id}`;
+}
+
+function legacySessionCacheKey(module, id) {
+  const legacy = {
+    wallet: `tronsec_wallet_scan:${id}`,
+    aml: `tronsec_aml_scan:${id}`,
+    approvals: `tronsec_approvals_scan:${id}`,
+    permissions: `tronsec_permissions_scan:${id}`,
+    contract: `tronsec_contract_scan:${id}`,
+    phish: `tronsec_phish_scan:${id}`,
+    tx: `tronsec_tx_scan:${id}`,
+  };
+  return legacy[module] || null;
+}
+
+function readSessionCache(module, id, options = {}) {
+  const ttl = options.ttl ?? SESSION_CACHE_TTL_MS;
+  const lang = sessionCacheLang();
+  const keys = [sessionCacheKey(module, id, lang)];
+  const legacy = options.legacyKey ? options.legacyKey(id) : legacySessionCacheKey(module, id);
+  if (legacy) keys.push(legacy);
+
+  for (const key of keys) {
+    try {
+      const raw = sessionStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (!parsed?.ts || Date.now() - parsed.ts > ttl) continue;
+      if (options.validate && !options.validate(parsed, id)) continue;
+      if (parsed.html && !options.allowHtml) continue;
+      if (parsed.html && parsed.locale && parsed.locale !== lang && !options.allowStaleHtml) continue;
+      if (options.requirePayload && !parsed.payload && !parsed.report && !parsed.result && !parsed.data && !parsed.list) continue;
+      return parsed;
+    } catch (_) {}
+  }
+  return null;
+}
+
+function writeSessionCache(module, id, snapshot, options = {}) {
+  if (!module || id == null || id === '') return;
+  const lang = sessionCacheLang();
+  const key = sessionCacheKey(module, id, lang);
+  const payload = { ...snapshot, v: SESSION_CACHE_VERSION, locale: lang, ts: Date.now() };
+  try {
+    sessionStorage.setItem(key, JSON.stringify(payload));
+    const legacy = options.legacyKey ? options.legacyKey(id) : legacySessionCacheKey(module, id);
+    if (legacy && legacy !== key) sessionStorage.removeItem(legacy);
+  } catch (_) {}
+}
+
+function clearSessionCache(module, id, options = {}) {
+  if (!module || id == null || id === '') return;
+  const keys = new Set([sessionCacheKey(module, id, sessionCacheLang())]);
+  const legacy = options.legacyKey ? options.legacyKey(id) : legacySessionCacheKey(module, id);
+  if (legacy) keys.add(legacy);
+  keys.forEach((key) => {
+    try { sessionStorage.removeItem(key); } catch (_) {}
+  });
+}
+
+function beginScanUI({ emptyEl, resultEl, errEl, btn, input, skeletonHtml, lockInput = true }) {
+  setError(errEl, '');
+  hideScanEmpty(emptyEl, { instant: true });
+  if (resultEl && skeletonHtml != null) resultEl.innerHTML = skeletonHtml;
+  if (btn) {
+    spinBtn(btn, true);
+    btn.setAttribute('aria-busy', 'true');
+  }
+  if (lockInput) lockScanInput(input, true);
+}
+
+function endScanUI({ btn, input, lockInput = true }) {
+  if (btn) {
+    spinBtn(btn, false);
+    btn.removeAttribute('aria-busy');
+  }
+  if (lockInput) lockScanInput(input, false);
+}
+
+function failScanUI({ resultEl, errEl, msg, btn, input, lockInput = true }) {
+  if (resultEl) resultEl.innerHTML = '';
+  setError(errEl, msg);
+  endScanUI({ btn, input, lockInput });
+}
+
+function animateScore(el, from, to, duration = 600) {
+  if (!el || from === to) return;
+  if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    el.textContent = String(to);
+    return;
+  }
+  const start = performance.now();
+  const tick = (now) => {
+    const p = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = String(Math.round(from + (to - from) * eased));
+    if (p < 1) requestAnimationFrame(tick);
+    else el.textContent = String(to);
+  };
+  requestAnimationFrame(tick);
+}
+
+function mountScanMotion(root, opts = {}) {
+  if (!root) return;
+  if (opts.fromCache) {
+    root.querySelectorAll('[data-score-value]').forEach((el) => {
+      const to = Number(el.dataset.scoreValue);
+      if (Number.isFinite(to)) el.textContent = String(to);
+    });
+    root.querySelectorAll('.aml-risk-meter-fill[data-score-pct]').forEach((el) => {
+      const pct = Number(el.dataset.scorePct);
+      if (Number.isFinite(pct)) el.style.width = `${Math.max(4, pct)}%`;
+    });
+    return;
+  }
+  root.querySelectorAll('[data-score-value]').forEach((el) => {
+    const to = Number(el.dataset.scoreValue);
+    if (!Number.isFinite(to)) return;
+    animateScore(el, 0, to, 600);
+  });
+  root.querySelectorAll('.aml-risk-meter-fill[data-score-pct]').forEach((el) => {
+    const pct = Number(el.dataset.scorePct);
+    if (!Number.isFinite(pct)) return;
+    el.style.width = '4%';
+    requestAnimationFrame(() => {
+      el.classList.add('is-animated');
+      el.style.width = `${Math.max(4, pct)}%`;
+    });
+  });
+}
+
+const MORE_MENU_TABS = ['contract-scan', 'scan-url', 'permissions', 'tx-decoder', 'vanity', 'report'];
+
+function syncMoreMenuBadge() {
+  const moreBtn = document.querySelector('[data-tab-btn="more"]');
+  if (!moreBtn) return;
+  let state = 'empty';
+  for (const tabId of MORE_MENU_TABS) {
+    const cfg = MODULE_STATE_TABS[tabId];
+    if (!cfg) continue;
+    const err = document.getElementById(cfg.err);
+    const result = document.getElementById(cfg.result);
+    if (err?.innerHTML?.trim()) { state = 'error'; break; }
+    if (result?.innerHTML?.trim() && !result.querySelector('.sk')) state = 'cached';
