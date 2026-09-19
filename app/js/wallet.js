@@ -1428,3 +1428,113 @@ function renderWallet() {
       <div class="wallet-hero-grid">
         <div class="wallet-portfolio-card">
           <div class="wallet-portfolio-label">${t('Estimated portfolio')}</div>
+          <div class="wallet-portfolio-value">${totalPortfolioUsd > 0 ? '$' + totalPortfolioUsd.toFixed(2) : trxUsdVal != null ? '$' + trxUsdVal.toFixed(2) : '—'}</div>
+          <div class="wallet-portfolio-sub">
+            <span><strong>${trxBal.toFixed(2)} TRX</strong>${trxUsdVal != null ? ` · $${trxUsdVal.toFixed(2)}` : ''}</span>
+            <span><strong>${trc20.length}</strong> token${trc20.length !== 1 ? 's' : ''}</span>
+            <span><strong>${fmtNum(txCount)}</strong> txs</span>
+            ${TRX_CHANGE != null ? `<span>TRX ${TRX_CHANGE >= 0 ? '+' : ''}${TRX_CHANGE.toFixed(2)}% 24h</span>` : ''}
+          </div>
+        </div>
+        <div class="wallet-meters-card">
+          ${walletMeter('Bandwidth', bwUsed, bwTotal, bwPct > 80 ? 'red' : bwPct > 55 ? 'amber' : 'green')}
+          ${energyLimit > 0
+            ? walletMeter('Energy', energyUsed, energyLimit, energyPct > 80 ? 'amber' : 'info')
+            : `<div class="wallet-meter"><div class="wallet-meter-head"><span class="wallet-meter-label">${t('Energy')}</span><span class="wallet-meter-val">${t('No staked energy')}</span></div></div>`}
+          <div class="wallet-meter">
+            <div class="wallet-meter-head">
+              <span class="wallet-meter-label">${t('Staked TRX')}</span>
+              <span class="wallet-meter-val">${toTRX(staked)} TRX</span>
+            </div>
+            <div style="font-size:11px;color:var(--text-3);margin-top:2px">${frozen.length} lock${frozen.length !== 1 ? 's' : ''}${stakedBw || stakedEnergy ? ` · ${toTRX(stakedBw)} BW · ${toTRX(stakedEnergy)} EN` : ''}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="wallet-profile-grid">
+        ${scanKvBlock('On-chain profile', profileRows)}
+        ${scanKvBlock('Security & signals', securityRows)}
+      </div>
+
+      <div>
+        <div class="scan-section-title wallet-section-title">${t('Token holdings')} <span>· ${tokTitleMeta}</span></div>
+        <div class="wallet-token-list">${tokenHtml}</div>
+      </div>
+
+      ${txs.length > 0 ? `
+      <div>
+        <div class="scan-section-title wallet-section-title">${t('Recent activity')} <span>· ${Math.min(txShowCount, txs.length)} / ${txs.length}${walletHasMore ? '+' : ''}</span></div>
+        <div class="wallet-activity">${activityHtml}</div>
+        ${!allTxShown ? walletLoadMoreBtn(loadMoreBusy) : ''}
+      </div>` : ''}
+
+      <p class="aml-disclaimer">${t('Wallet scan uses public on-chain data and heuristics. It is not AML compliance screening or investment advice.')}</p>
+    </div>`;
+
+  document.getElementById('wallet-export-pdf-btn')?.addEventListener('click', () => {
+    walletExportPdf(window._walletLastReport || buildWalletReportSnapshot());
+  });
+  document.getElementById('wallet-copy-summary-btn')?.addEventListener('click', () => {
+    walletCopySummary(window._walletLastReport || buildWalletReportSnapshot());
+  });
+  document.getElementById('wallet-refresh-btn')?.addEventListener('click', () => walletScan({ force: true }));
+
+  document.getElementById('copy-addr-btn')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(addr).then(() => {
+      const btn = document.getElementById('copy-addr-btn');
+      btn.classList.add('is-copied');
+      btn.innerHTML = `${icSVG(IC.check, 14)}<span>${t('Copied')}</span>`;
+      setTimeout(() => {
+        btn.classList.remove('is-copied');
+        btn.innerHTML = `${icSVG(IC.copy, 14)}<span>${t('Copy')}</span>`;
+      }, 2000);
+    });
+  });
+
+  document.getElementById('qr-addr-btn')?.addEventListener('click', function () { openWalletQr(addr, this); });
+
+  bindWalletGoButtons(walletRes, addr);
+  mountScanMotion(walletRes, { fromCache: walletFromCache });
+
+  walletRes.querySelectorAll('.wallet-contract-scan-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      openAddressScan(btn.getAttribute('data-addr'));
+    });
+  });
+
+  walletRes.querySelectorAll('.wallet-tx-decode-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      openTxDecoder(btn.getAttribute('data-hash'));
+    });
+  });
+}
+
+function getWalletApprovalsSeed(addr) {
+  if (!addr) return null;
+  if (walletData?.addr === addr && Array.isArray(walletData.onChainApprovals)) {
+    return walletData.onChainApprovals;
+  }
+  const cached = readWalletSessionCache(addr);
+  if (cached?.addr === addr && Array.isArray(cached.onChainApprovals)) {
+    return restoreWalletApprovals(cached.onChainApprovals);
+  }
+  return null;
+}
+
+function resetWalletScanCache() {
+  walletScanGen++;
+  if (walletData?.addr) clearWalletSessionCache(walletData.addr);
+  walletData = null;
+  walletTxs = [];
+  walletHasMore = false;
+  walletOldestTs = 0;
+  txShowCount = 10;
+  loadMoreBusy = false;
+  walletFromCache = false;
+  window._walletLastReport = null;
+  setWalletScanLocked(false);
+  if (typeof clearApiCaches === 'function') clearApiCaches();
+  else if (typeof clearScanApiCache === 'function') clearScanApiCache();
+}
