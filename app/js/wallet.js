@@ -1208,3 +1208,113 @@ async function walletScan(opts = {}) {
       secAcc,
       tags,
       approvalCount,
+      onChainApprovals: serializeWalletApprovals(onChainApprovals),
+      riskReport,
+      walletTxs,
+      walletHasMore,
+      walletOldestTs,
+      txShowCount,
+    });
+    renderWallet();
+  } catch (e) {
+    if (gen !== walletScanGen) return;
+    walletRes.innerHTML = '';
+    setError(walletErr, userFriendlyFetchError(e));
+  } finally {
+    if (gen === walletScanGen) setWalletScanLocked(false);
+  }
+}
+
+async function loadMoreTxs() {
+  if (loadMoreBusy) return;
+  loadMoreBusy = true;
+  renderWallet();
+
+  const addr = walletData.addr;
+  const ts = walletOldestTs;
+  if (walletHasMore && ts) {
+    try {
+      const txRes = await gridGet(`/v1/accounts/${addr}/transactions`, { limit: 50, order_by: 'block_timestamp,desc', max_timestamp: ts - 1 });
+      const more = txRes.data || [];
+      walletHasMore = more.length === 50;
+      if (more.length) walletOldestTs = more[more.length - 1].block_timestamp || 0;
+
+      const trc20Cache = walletTxs.filter(t => t._isTrc20);
+      const nativeOld = walletTxs.filter(t => !t._isTrc20);
+      const combined = nativeOld.concat(more).concat(trc20Cache).sort((a, b) => (b.block_timestamp || 0) - (a.block_timestamp || 0));
+      const seen = new Set();
+      walletTxs = [];
+      for (const t of combined) {
+        const key = (t._isTrc20 ? 'T' : 'N') + (t.from || '') + (t.to || '') + (t.block_timestamp || 0) + (t.token_symbol || '');
+        if (!seen.has(key)) { seen.add(key); walletTxs.push(t); }
+      }
+      await walletNormalizeActivityAddrs(more);
+    } catch (_) {}
+  }
+
+  txShowCount += 12;
+  loadMoreBusy = false;
+  renderWallet();
+}
+
+function renderWallet() {
+  const { acc, trc20, addr, scanProfile, secAcc, tags, approvalCount, onChainApprovals } = walletData;
+  const res = acc.account_resource || {};
+  const bwUsed = acc.free_net_usage ?? res.net_usage ?? scanProfile.freeNetUsed ?? 0;
+  const bwTotal = acc.free_net_limit ?? res.free_net_limit ?? scanProfile.freeNetLimit ?? 1500;
+  const bwPct = bwTotal > 0 ? Math.round((bwUsed / bwTotal) * 100) : 0;
+  const energyUsed = acc.EnergyUsed ?? res.energy_used ?? scanProfile.energyUsed ?? 0;
+  const energyLimit = acc.EnergyLimit ?? res.energy_limit ?? scanProfile.energyLimit ?? 0;
+  const energyPct = energyLimit > 0 ? Math.round((energyUsed / energyLimit) * 100) : 0;
+  const frozen = normalizeFrozenV2(acc.frozenV2 ?? acc.frozen);
+  const staked = frozen.reduce((s, f) => s + (f.amount || 0), 0);
+  const stakedBw = frozen.filter(f => (f.type || '').includes('BANDWIDTH') || f.type === undefined).reduce((s, f) => s + (f.amount || 0), 0);
+  const stakedEnergy = frozen.filter(f => (f.type || '').includes('ENERGY')).reduce((s, f) => s + (f.amount || 0), 0);
+  const trxBal = (acc.balance || 0) / 1_000_000;
+  const trxUsdVal = TRX_PRICE != null ? trxBal * TRX_PRICE : null;
+  const tokenUsd = t => (t.priceInUsd > 0) ? t.balance * t.priceInUsd : null;
+  const trc20UsdTotal = trc20.reduce((sum, t) => sum + (tokenUsd(t) || 0), 0);
+  const totalPortfolioUsd = (trxUsdVal || 0) + trc20UsdTotal;
+  const txs = walletTxs;
+  const votes = asArray(acc.votes);
+  const votePower = votes.reduce((s, v) => s + (v.vote_count || 0), 0);
+  const permissionLayout = summarizeWalletPermissionLayout(
+    addr,
+    acc.owner_permission,
+    acc.active_permission,
+    acc.witness_permission,
+  );
+  const txCount = Math.max(
+    txs.length,
+    Number(scanProfile.totalTransactionCount ?? scanProfile.transactions ?? scanProfile.transaction_count) || 0
+  );
+  const createdTs = acc.create_time || scanProfile.date_created || scanProfile.createTime;
+  const lastActiveTs = acc.latest_opration_time || scanProfile.latest_operation_time || scanProfile.latestOperationTime;
+  const created = createdTs ? new Date(createdTs).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  const lastActive = lastActiveTs ? ago(lastActiveTs) : '—';
+  const ageDays = createdTs ? Math.round((Date.now() - createdTs) / 86400000) : null;
+  const addressName = scanProfile.name || scanProfile.addressTag || scanProfile.publicTag || '';
+
+  const heuristics = [];
+  if (acc._inactive) heuristics.push('Unactivated TRX account record');
+  if (txs.length >= 10) {
+    const transfers = txs.filter(t => t.raw_data?.contract?.[0]?.type === 'TransferContract');
+    if (transfers.length >= 5) {
+      const uniq = new Set(transfers.map(t => t.raw_data?.contract?.[0]?.parameter?.value?.to_address)).size;
+      if (uniq === 1) heuristics.push('Recent TRX sweep pattern detected');
+    }
+  }
+  if (bwUsed === 0 && (acc.balance || 0) < 1_000_000) heuristics.push('Dormant / low-activity account');
+
+  const security = buildWalletSecurity(secAcc, tags, heuristics);
+  const riskReport = computeWalletRisk({
+    security,
+    heuristics,
+    onChainApprovals: onChainApprovals || [],
+    ageDays,
+    txCount,
+    isFlagged: security.level === 'bad',
+  });
+  if (walletData) walletData.riskReport = riskReport;
+  const unlimitedCount = riskReport.unlimitedCount || 0;
+  const alertsHtml = security.level === 'bad'
