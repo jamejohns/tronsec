@@ -72,3 +72,77 @@
     if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
     if (n >= 1e3) return '$' + (n / 1e3).toFixed(1) + 'K';
     if (n >= 100) return '$' + Math.round(n);
+    if (n >= 1) return '$' + n.toFixed(0);
+    return '$' + n.toFixed(2);
+  }
+
+  function amlRawAmountToNumber(amount, decimals) {
+    if (amount == null || amount === '') return null;
+    const dec = Math.min(Math.max(parseInt(decimals, 10) || 6, 0), 18);
+    if (typeof isUnlimitedApproval === 'function' && isUnlimitedApproval(amount, dec)) return null;
+    try {
+      const big = typeof amount === 'bigint' ? amount : BigInt(String(amount));
+      if (big <= 0n) return null;
+      const scale = BigInt(10 ** dec);
+      const whole = Number(big / scale);
+      const frac = Number(big % scale) / Number(scale);
+      const out = whole + frac;
+      return Number.isFinite(out) && out > 0 ? out : null;
+    } catch (_) {
+      const n = Number(amount);
+      if (!Number.isFinite(n) || n <= 0) return null;
+      return n / Math.pow(10, dec);
+    }
+  }
+
+  function amlTransferVolumeUsd(dt, trxPriceUsd) {
+    if (!dt) return null;
+    if (dt.isStable) {
+      const usd = amlRawAmountToNumber(dt.amount, dt.tokenDecimals ?? 6);
+      if (usd == null || usd > AML_MAX_SINGLE_TRANSFER_USD) return null;
+      return usd;
+    }
+    if (!dt.isTrc20) {
+      const sun = Number(dt.amount) || 0;
+      if (!sun) return null;
+      const px = Number(trxPriceUsd);
+      if (!Number.isFinite(px) || px <= 0) return null;
+      const usd = (sun / 1e6) * px;
+      if (!Number.isFinite(usd) || usd <= 0 || usd > AML_MAX_SINGLE_TRANSFER_USD) return null;
+      return usd;
+    }
+    return null;
+  }
+
+  function amlCategoryRank(id) {
+    const idx = AML_CATEGORY_ORDER.indexOf(id);
+    return idx >= 0 ? AML_CATEGORY_ORDER.length - idx : 0;
+  }
+
+  function isAmlHighRiskCategory(id) {
+    const sev = amlCategoryMeta(id)?.severity;
+    return sev === 'critical' || sev === 'high';
+  }
+
+  function isAmlKnownEntityCategory(id) {
+    return id === 'exchange' || id === 'defi' || id === 'bridge';
+  }
+
+  function classifyAmlTagText(tagName) {
+    const s = String(tagName || '').trim();
+    if (!s) return null;
+    const tl = s.toLowerCase();
+    if (AML_SANCTION_TAG_RE.test(tl)) return 'sanctions';
+    if (/mixer|tumbler|privacy\s*pool|coinjoin|coin\s*join/i.test(tl)) return 'mixer';
+    if (/scam|phish|fraud|rug|honeypot|drain|drainer|fake/i.test(tl)) return 'scam_fraud';
+    if (/hack|exploit|steal|stolen|malicious/i.test(tl)) return 'hack_exploit';
+    if (/casino|gambl|betting|lottery|wager/i.test(tl)) return 'gambling';
+    if (/blacklist/i.test(tl)) return 'blacklisted';
+    if (/spam|airdrop|advert|memo/i.test(tl)) return 'spam_dust';
+    if (/exchange|cex|hot\s*wallet|deposit|withdraw/i.test(tl)) return 'exchange';
+    if (/bridge|cross.?chain/i.test(tl)) return 'bridge';
+    if (/dex|swap|defi|protocol|liquidity/i.test(tl)) return 'defi';
+    if (AML_RISK_TAG_RE.test(s)) return 'unknown_risk';
+    if (/verified|known|legit/i.test(tl)) return 'exchange';
+    return null;
+  }
