@@ -548,3 +548,113 @@ function buildActivityItem(tx, addr) {
 
     if (isIn) {
       iconCls = isDust ? 'is-warn' : 'is-in';
+      iconPath = IC.arrowDown;
+      title = isDust
+        ? t('Dust / spam TRX')
+        : (type === 'TransferAssetContract' ? t('Received asset') : t('Received TRX'));
+      metaHtml = walletActivityPeerHtml('from {addr}', from);
+    } else if (isOut) {
+      iconCls = 'is-out';
+      iconPath = IC.arrowUp;
+      title = type === 'TransferAssetContract' ? t('Sent asset') : t('Sent TRX');
+      metaHtml = walletActivityPeerHtml('to {addr}', to);
+    } else if (type === 'TriggerSmartContract') {
+      iconCls = 'is-neutral';
+      iconPath = IC.activity;
+      title = t('Contract call');
+      metaHtml = contract
+        ? walletActivityPeerHtml('to {addr}', contract)
+        : walletActivityPeerHtml('', to);
+    } else {
+      iconCls = 'is-neutral';
+      iconPath = IC.activity;
+      title = type.replace('Contract', '').replace(/([A-Z])/g, ' $1').trim() || t('Contract call');
+      metaHtml = walletActivityPeerHtml('', to || contract);
+    }
+
+    const amtTxt = walletFmtActivityTrx(amount, isDust);
+    amountHtml = amtTxt !== '—'
+      ? `<div class="wallet-activity-amt ${isDust ? 'tx-amt-warn' : isIn ? 'tx-amt-in' : isOut ? 'tx-amt-out' : 'tx-amt-neutral'}">${isDust || isIn ? '+' : isOut ? '-' : ''}${amtTxt}</div>`
+      : `<div class="wallet-activity-amt tx-amt-neutral">—</div>`;
+  }
+
+  const hashBtn = walletTxHashBtn(txHash);
+  const routeHtml = hashBtn
+    ? `<span class="wallet-activity-route">${metaHtml}</span><span class="wallet-activity-hash">${hashBtn}</span>`
+    : `<span class="wallet-activity-route">${metaHtml}</span>`;
+  const titleHtml = esc(title) + (isDust ? ' ' + walletActivityDustBadge() : '');
+
+  return `<div class="wallet-activity-item${isDust ? ' is-dust' : ''}">
+    <div class="wallet-activity-icon ${iconCls}">${icSVG(iconPath, 14)}</div>
+    <div class="wallet-activity-body">
+      <div class="wallet-activity-title">${titleHtml}</div>
+      <div class="wallet-activity-meta">${routeHtml}</div>
+    </div>
+    <div>
+      ${amountHtml}
+      <div class="wallet-activity-time">${time}</div>
+    </div>
+  </div>`;
+}
+
+const WALLET_JUNK_TOKEN_RE = /(?:airdrop|claim|bonus|gift|reward|giveaway|visit|www\.?|https?:|\.com\b|\.io\b|\.xyz\b|\.my\b|\bcom\b|\dcom\b|telegram|t\.me\/|@\w|free\s*trx|gas\s*free|gasfree|buy\s*gas|casino|lottery|gambl|win\s*prize|benefits?\s+at|hash\s*gambl)/i;
+
+function isWalletJunkToken(tok) {
+  const label = [tok?.symbol, tok?.name].filter(Boolean).join(' ');
+  if (label && WALLET_JUNK_TOKEN_RE.test(label)) return true;
+  if (!(Number(tok?.priceInUsd) > 0)) return true;
+  return false;
+}
+
+function walletTokenRowHtml(tok) {
+  const uv = tok.priceInUsd > 0 ? tok.balance * tok.priceInUsd : null;
+  const balFmt = tok.balance >= 1e6
+    ? (tok.balance / 1e6).toFixed(2) + 'M'
+    : tok.balance >= 1e3
+      ? (tok.balance / 1e3).toFixed(2) + 'K'
+      : tok.balance.toFixed(Math.min(tok.decimals, 4));
+  const sym = String(tok.symbol || '—');
+  return `<div class="wallet-token-row">
+    <div class="wallet-token-icon">${esc(sym.slice(0, 3))}</div>
+    <div class="wallet-token-body">
+      <div class="wallet-token-name">${esc(sym)}${tok.name ? ` <span style="color:var(--text-4);font-weight:400">${esc(tok.name)}</span>` : ''}</div>
+      <div class="wallet-token-meta">${walletContractScanBtn(tok.contract)}</div>
+    </div>
+    <div class="wallet-token-val">
+      <div class="wallet-token-usd">${uv && uv > 0 ? '$' + uv.toFixed(2) : '—'}</div>
+      <div class="wallet-token-bal">${esc(balFmt)} · ${tok.priceInUsd > 0 ? '$' + Number(tok.priceInUsd).toFixed(4) : t('no price')}</div>
+    </div>
+  </div>`;
+}
+
+function walletTokenHoldingsHtml(tokens, portfolioUsd) {
+  if (!tokens.length) {
+    return '<div class="wallet-empty-block">' + t('No TRC20 tokens with balance') + '</div>';
+  }
+  const sorted = [...tokens].sort((a, b) => {
+    const ua = a.priceInUsd > 0 ? a.balance * a.priceInUsd : 0;
+    const ub = b.priceInUsd > 0 ? b.balance * b.priceInUsd : 0;
+    return ub - ua;
+  });
+  const kept = [];
+  const junk = [];
+  for (const tok of sorted) {
+    (isWalletJunkToken(tok) ? junk : kept).push(tok);
+  }
+  const visible = kept.length ? kept : sorted.slice(0, Math.min(3, sorted.length));
+  const hidden = kept.length ? junk : sorted.slice(visible.length);
+  let html = visible.map(walletTokenRowHtml).join('');
+  if (hidden.length) {
+    const label = hidden.length === 1
+      ? t('1 spam-like token hidden')
+      : t('{count} spam-like tokens hidden', { count: hidden.length });
+    html += `<details class="wallet-token-junk">
+      <summary class="wallet-token-junk-summary">${esc(label)}</summary>
+      <div class="wallet-token-junk-list">${hidden.map(walletTokenRowHtml).join('')}</div>
+    </details>`;
+  }
+  if (portfolioUsd > 0) {
+    html += `<div class="wallet-token-footer"><span>${t('Token holdings')}</span><strong>$${portfolioUsd.toFixed(2)}</strong></div>`;
+  }
+  return html;
+}
