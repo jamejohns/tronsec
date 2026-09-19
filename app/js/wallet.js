@@ -988,3 +988,113 @@ function openWalletQr(addr, triggerEl) {
     }, 280);
     document.removeEventListener('keydown', onEsc);
   };
+
+  const modal = overlay.querySelector('.qr-modal');
+  if (typeof trapFocus === 'function' && modal) {
+    releaseFocus = trapFocus(modal, {
+      initialFocus: document.getElementById('qr-close'),
+      onEscape: close,
+    });
+  }
+
+  document.getElementById('qr-close').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.getElementById('qr-copy-btn').addEventListener('click', () => {
+    navigator.clipboard.writeText(addr).then(() => showToast(t('Address copied')));
+  });
+  const onEsc = (e) => {
+    if (e.key === 'Escape') close();
+  };
+  document.addEventListener('keydown', onEsc);
+}
+
+function kvRow(label, valueHtml, last) {
+  return `<div class="kv-row${last ? ' kv-row--last' : ''}">
+    <span class="kv-label">${kvLabel(label)}</span>
+    <span class="kv-val">${valueHtml}</span>
+  </div>`;
+}
+
+function bindWalletContractRedirect(addr) {
+  bindContractScanRedirect(addr, 'wallet');
+}
+
+async function renderWalletContractRedirect(addr) {
+  return renderContractScanRedirect(addr, {
+    idPrefix: 'wallet',
+    wrapperClass: 'wallet-scan',
+    hintText: t('Wallet scanner profiles user accounts — portfolio, staking, and transfers. For contract addresses, review bytecode, ABI risks, and verification status instead.'),
+    disclaimerHtml: `<p class="aml-disclaimer">${t('Wallet scan uses public on-chain data and heuristics. It is not AML compliance screening or investment advice.')}</p>`,
+  });
+}
+
+async function walletScan(opts = {}) {
+  if (walletScanBusy) return;
+  const force = opts.force === true;
+  const addr = walletInput.value.trim();
+  setError(walletErr, '');
+  if (!addr) { flashInput(walletInput); showToast(t('Enter a TRON address')); return; }
+  if (!isValidTron(addr)) { flashInput(walletInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
+
+  if (!force) {
+    const cached = readWalletSessionCache(addr);
+    if (cached) {
+      hideScanEmpty(walletEmpty, { instant: true });
+      restoreWalletFromCache(cached);
+      renderWallet();
+      showToast(t('Loaded from session cache'));
+      return;
+    }
+  } else {
+    clearWalletSessionCache(addr);
+  }
+
+  const gen = ++walletScanGen;
+  walletFromCache = false;
+  setWalletScanLocked(true);
+  hideScanEmpty(walletEmpty);
+  walletRes.innerHTML = SK.wallet();
+  walletTxs = [];
+  walletHasMore = false;
+  walletOldestTs = 0;
+  txShowCount = 10;
+
+  try {
+    try {
+      if (await probeTronContract(addr)) {
+        walletFromCache = false;
+        hideScanEmpty(walletEmpty);
+        walletRes.innerHTML = await renderWalletContractRedirect(addr);
+        bindWalletContractRedirect(addr);
+        return;
+      }
+    } catch (_) {}
+
+    const [accRes, txRes, trc20TxRes, tokenRes, scanAcc, secAcc, tagAcc, scanApprovalRaw] = await Promise.all([
+      gridGet(`/v1/accounts/${addr}`).catch(() => ({ data: [] })),
+      gridGet(`/v1/accounts/${addr}/transactions`, { limit: 50, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
+      gridGet(`/v1/accounts/${addr}/transactions/trc20`, { limit: 100, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
+      scanGet('/account/tokens', { address: addr, start: 0, limit: 50 }).catch(() => null),
+      scanGet('/account', { address: addr }).catch(() => null),
+      scanGet('/security/account/data', { address: addr }).catch(() => null),
+      scanGet('/account/tag', { address: addr }).catch(() => null),
+      fetchTronScanApprovalList(addr).catch(() => []),
+    ]);
+    if (gen !== walletScanGen) return;
+
+    const scanProfile = scanAcc?.data?.[0] || scanAcc || {};
+
+    let trc20List = trc20TxRes?.data || [];
+    if (!trc20List.length) {
+      try {
+        const scanFound = await fetchTrc20FromTronScan(addr).catch(() => []);
+        if (scanFound.length) trc20List = trc20List.concat(scanFound);
+      } catch (_) {}
+    }
+
+    let acc;
+    if (accRes.data?.length) {
+      acc = normalizeAccountRecord(accRes.data[0]);
+    } else {
+      const hasTrc20Bal = tokenRes?.data?.some(t => parseFloat(t.balance || 0) > 0);
+      const hasNativeTxs = (txRes.data || []).length > 0;
