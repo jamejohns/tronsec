@@ -1098,3 +1098,113 @@ async function walletScan(opts = {}) {
     } else {
       const hasTrc20Bal = tokenRes?.data?.some(t => parseFloat(t.balance || 0) > 0);
       const hasNativeTxs = (txRes.data || []).length > 0;
+      const hasTrc20Txs = trc20List.length > 0;
+      const scanTxCount = Number(scanProfile.totalTransactionCount ?? scanProfile.transactions ?? scanProfile.transaction_count ?? 0) || 0;
+      if (!hasTrc20Bal && !hasNativeTxs && !hasTrc20Txs && scanTxCount <= 0) {
+        walletRes.innerHTML = '';
+        setError(walletErr, t('Address not found or no on-chain activity.'));
+        return;
+      }
+      acc = buildInactiveAccount(scanProfile);
+    }
+
+    const nativeTxs = txRes.data || [];
+    walletHasMore = nativeTxs.length === 50;
+    if (nativeTxs.length) walletOldestTs = nativeTxs[nativeTxs.length - 1].block_timestamp || 0;
+
+    let onChainApprovals = await fetchActiveOnChainApprovals(addr, trc20List, nativeTxs, scanApprovalRaw);
+    if (gen !== walletScanGen) return;
+    const approvalCount = onChainApprovals.length;
+    const MAX_U256 = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
+    const normTrc20 = trc20List.filter(t => {
+      if (t.type === 'Approval' || t.event_type === 'Approval') return false;
+      const val = String(t.value || t.amount || t.quant || t.token_amount || t.transfer_amount || t.transferValue || t['amount_str'] || 0);
+      return val !== MAX_U256;
+    }).map(t => {
+      const owner = t.owner_address || t.ownerAddress || t.owner || t.from || t.from_address || t.fromAddress || t.sender || t.account || null;
+      const toAddr = t.to_address || t.toAddress || t.to || t.receiver || t.to_address_hex || null;
+      let amount = t.value || t.amount || t.quant || t.token_amount || t.transfer_amount || t.transferValue || t['amount_str'] || 0;
+      const tokenInfo = t.token_info || t.tokenInfo || t.token || t.token_data || {};
+      const blockTs = Number(t.block_timestamp || t.block_ts || t.timestamp || t.block || t.date || t.time || 0) || 0;
+      const decimals = parseInt(tokenInfo?.decimals || tokenInfo?.tokenDecimal || t.tokenDecimal || 6);
+      const symbol = tokenInfo?.tokenAbbr || tokenInfo?.symbol || tokenInfo?.tokenName || tokenInfo?.name || t.tokenName || t.tokenAbbr || t.token || 'TOKEN';
+      if (typeof amount === 'string' && amount.startsWith('0x')) {
+        try { amount = parseInt(amount.slice(2), 16); } catch (_) { amount = Number(amount) || 0; }
+      } else { amount = Number(amount || 0); }
+      return {
+        _isTrc20: true, type: t.type || t.event || 'TRC20', token_info: tokenInfo,
+        txID: t.transaction_id || t.transaction_hash || t.hash || t.txID || t.tx_id || '',
+        raw_data: { contract: [{ type: 'TriggerSmartContract', parameter: { value: { owner_address: owner, to_address: toAddr, amount } } }] },
+        block_timestamp: blockTs, ret: [{ contractRet: t.contractRet || t.result || t.status || 'SUCCESS' }],
+        from: owner, to: toAddr, value: amount, token_amount: amount, token_decimals: decimals, token_symbol: symbol,
+      };
+    }).filter(t => {
+      // Drop ghost rows from TronScan global feeds that do not touch this wallet.
+      return !addr || t.from === addr || t.to === addr;
+    });
+
+    walletTxs = nativeTxs.concat(normTrc20).sort((a, b) => (b.block_timestamp || 0) - (a.block_timestamp || 0));
+    await walletNormalizeActivityAddrs(walletTxs);
+
+    let trc20 = [];
+    if (tokenRes?.data?.length) {
+      trc20 = tokenRes.data
+        .filter(t => t.tokenType === 'trc20' && parseFloat(t.balance || 0) > 0)
+        .map(t => {
+          const decimals = parseInt(t.tokenDecimal || 6);
+          const balance = parseFloat(t.balance || 0) / Math.pow(10, decimals);
+          const priceInUsd = parseFloat(t.tokenPriceInUsd || t.priceInUsd || 0) || null;
+          return {
+            contract: t.tokenId || t.tokenContractAddress || '',
+            symbol: t.tokenAbbr || t.tokenName || '—',
+            name: t.tokenName || '',
+            decimals,
+            balance,
+            priceInUsd,
+          };
+        })
+        .filter(t => t.balance > 0);
+    }
+
+    await ensureTrxPrice();
+    if (gen !== walletScanGen) return;
+    const tags = parseAccountTags(tagAcc);
+
+    const heuristics = [];
+    if (acc._inactive) heuristics.push(t('Unactivated TRX account record'));
+    if (walletTxs.length >= 10) {
+      const transfers = walletTxs.filter(tx => tx.raw_data?.contract?.[0]?.type === 'TransferContract');
+      if (transfers.length >= 5) {
+        const uniq = new Set(transfers.map(tx => tx.raw_data?.contract?.[0]?.parameter?.value?.to_address)).size;
+        if (uniq === 1) heuristics.push(t('Recent TRX sweep pattern detected'));
+      }
+    }
+    const bwUsedPreview = acc.free_net_usage ?? acc.account_resource?.net_usage ?? scanProfile.freeNetUsed ?? 0;
+    if (bwUsedPreview === 0 && (acc.balance || 0) < 1_000_000) heuristics.push(t('Dormant / low-activity account'));
+
+    const security = buildWalletSecurity(secAcc, tags, heuristics);
+    const createdTs = acc.create_time || scanProfile.date_created || scanProfile.createTime;
+    const ageDays = createdTs ? Math.round((Date.now() - createdTs) / 86400000) : null;
+    const txCountPreview = Math.max(
+      walletTxs.length,
+      Number(scanProfile.totalTransactionCount ?? scanProfile.transactions ?? scanProfile.transaction_count) || 0
+    );
+    const riskReport = computeWalletRisk({
+      security,
+      heuristics,
+      onChainApprovals,
+      ageDays,
+      txCount: txCountPreview,
+      isFlagged: security.level === 'bad',
+    });
+
+    walletData = { acc, trc20, addr, scanProfile, secAcc, tags, approvalCount, onChainApprovals, riskReport };
+    window._walletLastReport = buildWalletReportSnapshot();
+    writeWalletSessionCache({
+      addr,
+      acc,
+      trc20,
+      scanProfile,
+      secAcc,
+      tags,
+      approvalCount,
