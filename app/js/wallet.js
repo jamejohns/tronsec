@@ -328,3 +328,113 @@ function buildInactiveAccount(scanProfile) {
   let balance = 0;
   if (balRaw != null && balRaw !== '') {
     const n = Number(balRaw);
+    if (Number.isFinite(n)) balance = n;
+  }
+  return {
+    balance,
+    free_net_usage: sp.freeNetUsed ?? bw.freeNetUsed ?? bw.netUsed ?? 0,
+    free_net_limit: sp.freeNetLimit ?? bw.freeNetLimit ?? bw.netLimit ?? 1500,
+    EnergyUsed: sp.energyUsed ?? bw.energyUsed ?? 0,
+    EnergyLimit: sp.energyLimit ?? bw.energyLimit ?? 0,
+    frozenV2: normalizeFrozenV2(sp.frozenV2 ?? sp.frozen),
+    create_time: sp.date_created || sp.createTime || sp.create_time,
+    latest_opration_time: sp.latest_operation_time || sp.latestOperationTime || sp.latest_operation_time,
+    _inactive: true,
+  };
+}
+
+walletInput.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  if (walletScanBusy) return;
+  walletScan();
+});
+walletBtn.addEventListener('click', walletScan);
+
+function addrCell(a, addr) {
+  if (!a) return '<span class="mono" style="font-size:11px;color:var(--text-3)">?</span>';
+  return a === addr
+    ? '<span class="mono" style="font-weight:600;color:var(--info);font-size:11px">You</span>'
+    : `<a class="a-link" style="display:inline-flex;align-items:center;gap:3px;font-size:11px" href="https://tronscan.org/#/address/${esc(a)}" target="_blank">${esc(short(a))} ${icSVG(IC.link, 9)}</a>`;
+}
+
+function walletTag(text, variant) {
+  if (text == null || text === '') {
+    return `<span class="wallet-tag${variant ? ` is-${variant}` : ''}"></span>`;
+  }
+  const s = String(text);
+  const inner = (s.includes('<') || s.includes('class="term"')) ? s : esc(t(s));
+  return `<span class="wallet-tag${variant ? ` is-${variant}` : ''}">${inner}</span>`;
+}
+
+function walletMeter(label, used, total, tone) {
+  const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+  const free = Math.max(0, total - used);
+  return `<div class="wallet-meter">
+    <div class="wallet-meter-head">
+      <span class="wallet-meter-label">${t(label)}</span>
+      <span class="wallet-meter-val">${t('{free} free · {pct}% used', { free: fmtNum(free), pct })}</span>
+    </div>
+    <div class="wallet-meter-track"><div class="wallet-meter-fill is-${tone}" style="width:${pct}%"></div></div>
+  </div>`;
+}
+
+function parseAccountTags(tagAcc) {
+  return normalizeTagList(tagAcc)
+    .map((t) => (typeof t === 'string' ? t : (t.tagName || t.tag || t.label || '')))
+    .filter(Boolean);
+}
+
+function walletFlagLabel(flag) {
+  if (typeof flag === 'string' && flag.startsWith('TronScan tag: ')) {
+    return t('TronScan tag: {tag}', { tag: flag.slice('TronScan tag: '.length) });
+  }
+  return t(flag);
+}
+
+function buildWalletSecurity(secAcc, tags, heuristics) {
+  const flags = [...heuristics];
+  if (secAcc) {
+  if (secAcc.is_black_list) flags.push('Blacklisted by stablecoin issuer');
+  if (secAcc.has_fraud_transaction) flags.push('Flagged fraud transactions');
+  if (secAcc.fraud_token_creator) flags.push('Created fraud tokens');
+  if (secAcc.send_ad_by_memo) flags.push('Spam / ad memo activity');
+  if (secAcc.has_cheat_transaction) flags.push('Suspicious cheat transactions');
+  }
+  for (const tag of tags) {
+    if (/scam|phish|fraud|blacklist|sanction|malicious|hack|exploit/i.test(tag)) {
+      flags.push(`TronScan tag: ${tag}`);
+    }
+  }
+  const hard = flags.filter(f => /blacklist|fraud|scam|phish|sanction|malicious|hack|exploit/i.test(f));
+  const level = hard.length ? 'bad' : flags.length ? 'warn' : 'clean';
+  return { level, flags };
+}
+
+function walletContractScanBtn(addr) {
+  if (!addr || !isValidTron(addr)) {
+    return `<span class="wallet-token-meta-text">${esc(addrLabel(addr) || '—')}</span>`;
+  }
+  return `<button type="button" class="wallet-inline-link wallet-contract-scan-btn" data-addr="${esc(addr)}" title="${esc(addr)}">${esc(addrLabel(addr))}</button>`;
+}
+
+function walletTxHashBtn(hash) {
+  if (!hash || !/^[0-9a-fA-F]{64}$/.test(hash)) return '';
+  return `<button type="button" class="wallet-inline-link wallet-tx-decode-btn" data-hash="${esc(hash)}" title="${esc(hash)}">${esc(addrLabel(hash))}</button>`;
+}
+
+function walletAddrHexKey(addr) {
+  const s = String(addr || '').trim();
+  if (!s) return '';
+  const hex = s.replace(/^0x/i, '');
+  if (/^41[0-9a-fA-F]{40}$/.test(hex)) return hex.toLowerCase();
+  if (typeof isValidTron === 'function' && isValidTron(s) && typeof _base58Decode === 'function') {
+    try {
+      const bytes = _base58Decode(s);
+      if (bytes && bytes.length >= 21) {
+        return Array.from(bytes.subarray(0, 21))
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
+      }
+    } catch (_) {}
+  }
