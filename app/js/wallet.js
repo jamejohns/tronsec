@@ -438,3 +438,113 @@ function walletAddrHexKey(addr) {
       }
     } catch (_) {}
   }
+  return s.toLowerCase();
+}
+
+function walletSameAddr(a, b) {
+  if (!a || !b) return false;
+  if (typeof sameTronAddr === 'function' && sameTronAddr(a, b)) return true;
+  const ka = walletAddrHexKey(a);
+  const kb = walletAddrHexKey(b);
+  return !!ka && ka === kb;
+}
+
+function walletActivityPeerHtml(templateKey, addr) {
+  const btn = walletContractScanBtn(addr);
+  if (!templateKey) return btn;
+  const marker = '\u0000';
+  const labeled = t(templateKey, { addr: marker });
+  const parts = String(labeled).split(marker);
+  if (parts.length < 2) return esc(labeled) + ' ' + btn;
+  return esc(parts[0]) + btn + esc(parts.slice(1).join(marker));
+}
+
+async function walletEnsureBase58(addr) {
+  if (!addr || typeof addr !== 'string') return addr;
+  const s = addr.trim();
+  if (!s) return s;
+  if (typeof isValidTron === 'function' && isValidTron(s)) return s;
+  if (/^0?x?41[0-9a-fA-F]{40}$/.test(s) && typeof hexToTronAddress === 'function') {
+    try { return await hexToTronAddress(s); } catch (_) { return s; }
+  }
+  return s;
+}
+
+async function walletNormalizeActivityAddrs(txs) {
+  if (!Array.isArray(txs) || !txs.length) return;
+  const cache = new Map();
+  const one = async (a) => {
+    if (!a) return a;
+    const k = String(a);
+    if (cache.has(k)) return cache.get(k);
+    const p = walletEnsureBase58(k);
+    cache.set(k, p);
+    return p;
+  };
+  for (const tx of txs) {
+    const val = tx?.raw_data?.contract?.[0]?.parameter?.value;
+    if (val) {
+      if (val.owner_address) val.owner_address = await one(val.owner_address);
+      if (val.to_address) val.to_address = await one(val.to_address);
+      if (val.contract_address) val.contract_address = await one(val.contract_address);
+    }
+    if (tx.from) tx.from = await one(tx.from);
+    if (tx.to) tx.to = await one(tx.to);
+  }
+}
+
+function walletFmtActivityTrx(sun, isDust) {
+  const n = Number(sun) || 0;
+  if (!(n > 0)) return '—';
+  const trx = n / 1e6;
+  if (isDust || trx < 0.01) {
+    const s = trx < 1e-6 ? trx.toExponential(2) : trx.toFixed(6).replace(/\.?0+$/, '');
+    return s + ' TRX';
+  }
+  return toTRX(n) + ' TRX';
+}
+
+function walletActivityDustBadge() {
+  return '<span class="wallet-tag is-warn wallet-activity-dust-tag" title="'
+    + esc(t('Possible dust attack — micro-transfer designed to pollute your transaction history.'))
+    + '">' + esc(t('dust')) + '</span>';
+}
+
+function buildActivityItem(tx, addr) {
+  const c = tx.raw_data?.contract?.[0];
+  const rawVal = c?.parameter?.value || {};
+  const time = tx.block_timestamp ? ago(tx.block_timestamp) : '—';
+  const txHash = tx.txID || tx.transaction_id || tx.hash || tx.tx_id || '';
+  const isTrc20 = tx._isTrc20 || tx.token_info || tx.token_amount != null || (tx.type && String(tx.type).toLowerCase().includes('trc20')) || !!tx.tokenInfo;
+  let iconCls, iconPath, title, metaHtml, amountHtml, isDust = false;
+
+  if (isTrc20) {
+    const tokenInfo = tx.token_info || tx.tokenInfo || {};
+    const decimals = parseInt(tx.token_decimals || tokenInfo.decimals || tokenInfo.tokenDecimal || 6);
+    const symbol = tokenInfo.tokenAbbr || tokenInfo.symbol || tokenInfo.tokenName || tokenInfo.name || tx.token_symbol || 'TOKEN';
+    const amountRaw = Number(tx.token_amount || tx.value || rawVal.amount || 0);
+    const amount = amountRaw / Math.pow(10, decimals || 6);
+    const from = rawVal.owner_address || tx.from || null;
+    const to = rawVal.to_address || tx.to || null;
+    const isIn = walletSameAddr(to, addr);
+    iconCls = isIn ? 'is-in' : 'is-out';
+    iconPath = isIn ? IC.arrowDown : IC.arrowUp;
+    title = isIn ? t('Received {symbol}', { symbol }) : t('Sent {symbol}', { symbol });
+    metaHtml = isIn ? walletActivityPeerHtml('from {addr}', from) : walletActivityPeerHtml('to {addr}', to);
+    amountHtml = `<div class="wallet-activity-amt ${isIn ? 'tx-amt-in' : 'tx-amt-out'}">${isIn ? '+' : '-'}${Number(amount).toLocaleString(undefined, { maximumFractionDigits: 4 })}</div>`;
+  } else {
+    const type = c?.type || 'Unknown';
+    const from = rawVal?.owner_address || null;
+    const to = rawVal?.to_address || null;
+    const contract = rawVal?.contract_address || null;
+    const amount = type === 'TransferAssetContract'
+      ? Number(rawVal?.call_value || 0)
+      : (rawVal?.amount || rawVal?.call_value || 0);
+    const isXfer = type === 'TransferContract' || type === 'TransferAssetContract';
+    const isIn = isXfer && walletSameAddr(to, addr);
+    const isOut = isXfer && walletSameAddr(from, addr);
+    isDust = type === 'TransferContract' && isIn
+      && typeof isMicroTrxSun === 'function' && isMicroTrxSun(amount);
+
+    if (isIn) {
+      iconCls = isDust ? 'is-warn' : 'is-in';
