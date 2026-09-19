@@ -146,3 +146,77 @@
     if (/verified|known|legit/i.test(tl)) return 'exchange';
     return null;
   }
+
+  function isAmlTransferDust(d) {
+    if (!d) return false;
+    if (d.isStable) return false;
+    if (d.isTrc20) return true;
+    return typeof isMicroTrxSun === 'function' && isMicroTrxSun(d.amount);
+  }
+
+  function amlPeerTransferProfile(peerAddr, directTransfers) {
+    const rows = (directTransfers || []).filter((d) => sameTronAddr(d.peer, peerAddr));
+    let inbound = 0;
+    let outbound = 0;
+    let allInboundDust = true;
+    for (const d of rows) {
+      if (d.inbound) {
+        inbound += 1;
+        if (!isAmlTransferDust(d)) allInboundDust = false;
+      }
+      if (d.outbound) outbound += 1;
+    }
+    return {
+      inbound,
+      outbound,
+      inboundOnly: inbound > 0 && outbound === 0,
+      allInboundDust: inbound > 0 && allInboundDust,
+      hasInteraction: rows.length > 0,
+    };
+  }
+
+  /** TronScan has_fraud_transaction often marks mass-dust senders — not a real counterparty risk. */
+  function isAmlPeerLikelyDustSpammer(secAcc, peerAddr, directTransfers) {
+    if (!secAcc) return false;
+    if (secAcc.send_ad_by_memo || secAcc.has_cheat_transaction) return true;
+    if (!secAcc.has_fraud_transaction || secAcc.fraud_token_creator) return false;
+    if (typeof isAmlPeerInboundDustHeavy === 'function' && isAmlPeerInboundDustHeavy(peerAddr, directTransfers)) {
+      return true;
+    }
+    const prof = amlPeerTransferProfile(peerAddr, directTransfers);
+    if (!prof.hasInteraction) return true;
+    if (prof.inboundOnly && prof.allInboundDust) return true;
+    return false;
+  }
+
+  function isAmlSubjectDustVictim(secAcc) {
+    if (!secAcc?.has_fraud_transaction || secAcc.fraud_token_creator) return false;
+    return !!(secAcc.send_ad_by_memo || secAcc.has_cheat_transaction);
+  }
+
+  function classifyAmlSecAccHits(secAcc) {
+    const hits = [];
+    if (!secAcc) return hits;
+    const redTag = String(secAcc.red_tag || secAcc.redTag || '').trim();
+    if (/suspicious/i.test(redTag)) {
+      hits.push({ category: 'scam_fraud', source: 'secAcc', detail: redTag || 'Suspicious' });
+    }
+    if (secAcc.is_black_list) {
+      hits.push({ category: 'blacklisted', source: 'secAcc', detail: 'USDT/USDC blacklist' });
+    }
+    if (secAcc.has_fraud_transaction && !isAmlSubjectDustVictim(secAcc)) {
+      hits.push({ category: 'fraud_onchain', source: 'secAcc', detail: 'fraud transactions' });
+    }
+    if (secAcc.fraud_token_creator) {
+      hits.push({ category: 'fraud_onchain', source: 'secAcc', detail: 'fraud token creator' });
+    }
+    if (secAcc.has_cheat_transaction || secAcc.send_ad_by_memo || isAmlSubjectDustVictim(secAcc)) {
+      hits.push({ category: 'spam_dust', source: 'secAcc', detail: 'spam / ad activity' });
+    }
+    return hits;
+  }
+
+  function classifyAmlPeerSecAccHits(secAcc, peerAddr, directTransfers) {
+    const hits = [];
+    if (!secAcc) return hits;
+    const dustSpammer = isAmlPeerLikelyDustSpammer(secAcc, peerAddr, directTransfers);
