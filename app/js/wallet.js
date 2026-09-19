@@ -658,3 +658,113 @@ function walletTokenHoldingsHtml(tokens, portfolioUsd) {
   }
   return html;
 }
+
+function walletLoadMoreBtn(busy) {
+  if (busy) {
+    return `<button type="button" class="wallet-load-more-btn" disabled><span class="spin"></span><span>${t('Loading...')}</span></button>`;
+  }
+  return `<button type="button" class="wallet-load-more-btn" onclick="loadMoreTxs()">${icSVG(IC.arrowDown, 14)}<span>${t('Load more activity')}</span></button>`;
+}
+
+function walletActionBtn(opts) {
+  return scanActionBtn(opts);
+}
+
+function walletGoBtn({ id, label, go, tone }) {
+  const cls = `wallet-action-btn wallet-go-btn${tone ? ` wallet-go-btn--${tone}` : ''}`;
+  const lbl = esc(t(label));
+  return `<button type="button" class="${cls}" id="${id}" data-wallet-go="${esc(go)}" aria-label="${lbl}">${lbl} ${icSVG(IC.link, 12)}</button>`;
+}
+
+function walletRiskStat(status, statusLabel, finalScore, isFlagged, hasHardSignals) {
+  if (typeof amlRiskClass !== 'function') return '';
+  const cls = amlRiskClass(status, isFlagged);
+  const scoreText = status === 'insufficient' && !hasHardSignals
+    ? '—'
+    : `<span class="score-value" data-score-value="${finalScore}">0</span><span class="aml-score-unit">/100</span>`;
+  const meter = (status !== 'insufficient' || hasHardSignals)
+    ? `<div class="aml-risk-meter"><div class="aml-risk-meter-fill ${cls}" data-score-pct="${finalScore}" style="width:4%"></div></div>`
+    : '';
+  return `<div class="an-stat risk-stat risk-stat--wallet wallet-risk-stat">
+    <div class="an-stat-label">${t('Wallet risk signal')}</div>
+    <div class="wallet-risk-scope">${t('Heuristic score — not an AML check')}</div>
+    <div class="risk-stat__body wallet-risk-body">
+      <div class="risk-stat__text">
+        <div class="an-stat-value ${cls}">${scoreText}</div>
+        <div class="an-stat-sub">${esc(t(statusLabel))}</div>
+        ${meter}
+      </div>
+    </div>
+  </div>`;
+}
+
+function buildWalletNextSteps({ addr, riskReport, approvalCount, unlimitedCount, security, permissionLayout }) {
+  const steps = [];
+  const score = riskReport?.finalScore ?? 0;
+  const perm = permissionLayout || {};
+
+  if (perm.isMultisig) {
+    steps.push({
+      tone: perm.hasRiskyExternal ? 'amber' : undefined,
+      title: perm.hasRiskyExternal
+        ? t('Risky external permission controller')
+        : t('Multisig account permissions'),
+      desc: perm.hasRiskyExternal
+        ? t('An external address can act without this wallet — audit permissions before trusting funds here.')
+        : t('Co-signed layout — open Permission Auditor to review signers and thresholds.'),
+      go: 'permissions',
+      label: 'Audit permissions',
+      primary: !unlimitedCount && !perm.hasRiskyExternal,
+    });
+  }
+
+  if (unlimitedCount > 0) {
+    steps.push({
+      tone: 'red',
+      title: unlimitedCount > 1
+        ? t('{count} unlimited allowances detected', { count: unlimitedCount })
+        : t('1 unlimited allowance detected'),
+      desc: t('Spenders can drain approved tokens at any time. Open Approvals to review and revoke.'),
+      go: 'approvals',
+      label: 'Review approvals',
+      primary: true,
+    });
+  } else if (approvalCount > 0) {
+    steps.push({
+      tone: 'amber',
+      title: approvalCount > 1
+        ? t('{count} active on-chain approvals', { count: approvalCount })
+        : t('1 active on-chain approval'),
+      desc: t('Check who can move tokens from this wallet and revoke unused spenders.'),
+      go: 'approvals',
+      label: 'Open Approvals',
+      primary: true,
+    });
+  }
+
+  if (security?.level === 'bad' || riskReport?.hardFlags?.length) {
+    steps.push({
+      tone: 'red',
+      title: t('Security flags on this address'),
+      desc: t('Run a full AML check for counterparty exposure and transaction patterns.'),
+      go: 'aml',
+      label: 'Run AML check',
+      primary: !steps.length,
+    });
+  } else if (score >= 40) {
+    steps.push({
+      tone: 'amber',
+      title: t('Elevated wallet risk ({score}/100)', { score }),
+      desc: t('AML screening adds peer graph, concentration, and deeper transaction analysis.'),
+      go: 'aml',
+      label: 'Run AML check',
+      primary: !steps.length,
+    });
+  } else if (score >= 15 && approvalCount === 0) {
+    steps.push({
+      tone: 'amber',
+      title: t('Patterns worth a second look'),
+      desc: t('Optional: run AML for a fuller risk picture on this address.'),
+      go: 'aml',
+      label: 'Run AML check',
+      primary: false,
