@@ -1318,3 +1318,113 @@ function renderWallet() {
   if (walletData) walletData.riskReport = riskReport;
   const unlimitedCount = riskReport.unlimitedCount || 0;
   const alertsHtml = security.level === 'bad'
+    ? alertBox('red', `${esc(walletFlagLabel(security.flags[0] || 'Address flagged by security checks'))} <button type="button" class="a-link wallet-inline-cta" data-wallet-go="aml">${t('Run AML check')} →</button>`)
+    : unlimitedCount > 0
+      ? alertBox('red', `${esc(unlimitedCount > 1 ? t('{count} unlimited allowances — revoke in Approvals first', { count: unlimitedCount }) : t('1 unlimited allowance — revoke in Approvals first'))} <button type="button" class="a-link wallet-inline-cta" data-wallet-go="approvals">${t('Open Approvals')} →</button>`)
+      : approvalCount > 0
+        ? alertBox('amber', `${esc(approvalCount > 1 ? t('{count} active approvals on-chain', { count: approvalCount }) : t('1 active approval on-chain'))} <button type="button" class="a-link wallet-inline-cta" data-wallet-go="approvals">${t('Review in Approvals')} →</button>`)
+        : security.level === 'warn' && heuristics.length
+          ? alertBox('amber', esc(t(heuristics[0])))
+          : '';
+
+  const nextStepsHtml = buildWalletNextSteps({ addr, riskReport, approvalCount, unlimitedCount, security, permissionLayout });
+
+  const showTxs = txs.slice(0, txShowCount);
+  const allTxShown = txShowCount >= txs.length && !walletHasMore;
+  const junkTok = trc20.filter(isWalletJunkToken).length;
+  const keepTok = Math.max(0, trc20.length - junkTok);
+  const tokTitleMeta = junkTok > 0 && keepTok > 0 ? String(keepTok) : String(trc20.length);
+
+  const headTags = [
+    acc._inactive ? walletTag(t('inactive account'), 'warn') : walletTag(t('active account'), 'live'),
+    addressName ? walletTag(addressName, 'name') : '',
+    permissionLayout.isMultisig
+      ? `<button type="button" class="wallet-tag ${permissionLayout.hasRiskyExternal ? 'is-warn' : 'is-name'} wallet-inline-cta" data-wallet-go="permissions">${esc(t('multisig'))}</button>`
+      : '',
+    votePower > 0 ? walletTag(`${fmtNum(votePower)} votes · ${votes.length} SR${votes.length !== 1 ? 's' : ''}`) : '',
+    approvalCount > 0 ? walletTag(t('{count} on-chain approvals', { count: approvalCount }), unlimitedCount > 0 ? 'bad' : 'warn') : '',
+    ...tags.slice(0, 4).map(t => walletTag(t, /scam|fraud|phish|black/i.test(t) ? 'bad' : '')),
+  ].filter(Boolean).join('');
+
+  const securityRows = [
+    kvRow(t('TronScan security'), secAcc ? (security.level === 'clean' ? badge('b-green', t('Clean')) : security.level === 'warn' ? badge('b-amber', t('Review')) : badge('b-red', t('Flagged'))) : badge('b-ghost', t('Unavailable'))),
+    kvRow(tt('blacklist'), secAcc?.is_black_list ? badge('b-red', t('Listed')) : badge('b-green', t('Not listed'))),
+    kvRow(t('Fraud transactions'), secAcc?.has_fraud_transaction ? badge('b-red', t('Detected')) : badge('b-green', t('None'))),
+    kvRow(tt('riskScore'), riskReport ? `<span class="mono">${riskReport.finalScore}</span><span class="aml-score-unit">/100</span> · ${esc(t(riskReport.statusLabel))}` : '—'),
+    kvRow(tt('approvals'), approvalCount > 0
+      ? `<span class="mono">${approvalCount}</span>${unlimitedCount > 0 ? ` · <span class="wallet-tag is-bad" style="display:inline-flex;padding:1px 6px;font-size:10px">${unlimitedCount} ${t('unlimited')}</span>` : ''} · <button type="button" class="a-link wallet-inline-cta" data-wallet-go="approvals">${t('Open Approvals')} →</button>`
+      : `<span class="mono">0</span> · <span class="kv-muted">${t('verified on-chain')}</span>`),
+    kvRow(tt('heuristics'), heuristics.length ? esc(t(heuristics[0])) : `<span class="kv-muted">${t('No patterns')}</span>`),
+    kvRow(t('Public tags'), tags.length ? esc(tags.slice(0, 3).join(' · ')) : `<span class="kv-muted">${t('None')}</span>`, true),
+  ].join('');
+
+  const profileRows = [
+    kvRow(t('Account created'), esc(created) + (ageDays != null ? ` · ${ageDays}d` : '')),
+    kvRow(t('Last active'), esc(lastActive)),
+    kvRow(t('Total transactions'), fmtNum(txCount)),
+    kvRow(t('TRX balance'), `${trxBal.toFixed(2)} TRX${trxUsdVal != null ? ` · $${trxUsdVal.toFixed(2)}` : ''}`),
+    kvRow(`${tt('staking')} TRX`, `${toTRX(staked)} TRX · ${frozen.length} lock${frozen.length !== 1 ? 's' : ''}`),
+    stakedBw || stakedEnergy
+      ? kvRow(t('Stake split'), `${toTRX(stakedBw)} BW · ${toTRX(stakedEnergy)} EN`, true)
+      : kvRow(t('Votes'), votePower > 0 ? `${fmtNum(votePower)} to ${votes.length} SR${votes.length !== 1 ? 's' : ''}` : '—', true),
+  ].join('');
+
+  const tokenHtml = walletTokenHoldingsHtml(trc20, trc20UsdTotal);
+
+  const riskStatHtml = typeof walletRiskStat === 'function'
+    ? walletRiskStat(riskReport.status, riskReport.statusLabel, riskReport.finalScore, riskReport.isFlagged, riskReport.hasHardSignals)
+    : '';
+  const signalsHtml = typeof amlSignalsPanel === 'function' && riskReport.scoreFactors?.length
+    ? amlSignalsPanel(riskReport.scoreFactors, riskReport.finalScore, riskReport.status)
+    : '';
+
+  const activityHtml = txs.length === 0
+    ? `<div class="wallet-empty-block">${t('No recent transactions')}</div>`
+    : showTxs.map(tx => buildActivityItem(tx, addr)).join('');
+
+  walletRes.innerHTML = `
+    <div class="wallet-scan">
+      ${alertsHtml}
+
+      ${scanHeadCard({
+        variant: 'featured',
+        leadHtml: `<div class="wallet-head-addr">${esc(addr)}</div>`,
+        actionsHtml: `
+          ${walletActionBtn({ id: 'wallet-export-pdf-btn', label: 'Export PDF', icon: IC.download })}
+          ${walletActionBtn({ id: 'wallet-copy-summary-btn', label: 'Copy summary', icon: IC.copy })}
+          ${walletActionBtn({ id: 'wallet-refresh-btn', label: 'Refresh scan', icon: IC.refresh })}
+          ${walletActionBtn({ id: 'copy-addr-btn', label: 'Copy', icon: IC.copy })}
+          ${walletActionBtn({ id: 'qr-addr-btn', label: 'QR code', icon: IC.qr })}
+          ${walletActionBtn({ id: 'tronscan-addr-btn', label: 'TronScan', icon: IC.external, href: `https://tronscan.org/#/address/${addr}`, variant: 'ext' })}
+        `,
+        tagsHtml: `${headTags}${walletFromCache ? walletTag(t('session cache'), 'name') : ''}`,
+      })}
+
+      ${riskStatHtml ? `<div class="wallet-risk-grid an-stat-grid an-stat-grid--2">${riskStatHtml}
+        ${approvalCount > 0
+          ? `<button type="button" class="an-stat wallet-approvals-stat is-clickable" data-wallet-go="approvals">`
+          : `<div class="an-stat wallet-approvals-stat">`}
+          <div class="an-stat-label">${t('Active on-chain approvals')}</div>
+          <div class="wallet-risk-scope">${approvalCount > 0
+            ? (unlimitedCount > 0
+              ? t('{count} unlimited allowances', { count: unlimitedCount })
+              : t('Token spend permissions'))
+            : t('verified on-chain')}</div>
+          <div class="wallet-approvals-body">
+            <div class="an-stat-value ${approvalCount > 0 ? (unlimitedCount > 0 ? 'is-red' : 'is-amber') : 'is-green'}">
+              <span class="wallet-approvals-count">${approvalCount}</span>
+            </div>
+            <div class="an-stat-sub">${approvalCount > 0 ? `${t('Tap to review')} →` : t('verified on-chain')}</div>
+          </div>
+        ${approvalCount > 0 ? '</button>' : '</div>'}
+      </div>` : ''}
+
+      ${nextStepsHtml}
+
+      ${typeof tronsecDeepAnalysisPromptHtml === 'function' ? tronsecDeepAnalysisPromptHtml('scanner') : ''}
+
+      ${signalsHtml ? `<div class="wallet-signals-wrap">${signalsHtml}</div>` : ''}
+
+      <div class="wallet-hero-grid">
+        <div class="wallet-portfolio-card">
+          <div class="wallet-portfolio-label">${t('Estimated portfolio')}</div>
