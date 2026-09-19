@@ -878,3 +878,113 @@ function drawTronsecShieldMark(ctx, x, y, markSize) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(markSize / 64, markSize / 64);
+  ctx.fillStyle = '#f5f5f7';
+  ctx.fill(TRONSEC_SHIELD_PATH);
+  ctx.restore();
+}
+
+function drawQrLogoPlate(ctx, size) {
+  const box = Math.round(size * 0.19);
+  const x = (size - box) / 2;
+  const y = (size - box) / 2;
+
+  ctx.fillStyle = '#09090a';
+  qrRoundRect(ctx, x - 7, y - 7, box + 14, box + 14, 11);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(255,255,255,.14)';
+  ctx.lineWidth = 1;
+  qrRoundRect(ctx, x - 7.5, y - 7.5, box + 15, box + 15, 11);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(200,206,216,.18)';
+  ctx.lineWidth = 1;
+  qrRoundRect(ctx, x - 3.5, y - 3.5, box + 7, box + 7, 8);
+  ctx.stroke();
+
+  const inset = box * 0.24;
+  drawTronsecShieldMark(ctx, x + inset, y + inset, box - inset * 2);
+}
+
+function renderBrandedQr(wrap, text, opts = {}) {
+  const size = opts.size || 248;
+  const temp = document.createElement('div');
+  temp.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none;';
+  document.body.appendChild(temp);
+
+  const qr = new QRCode(temp, {
+    text,
+    width: size,
+    height: size,
+    colorDark: '#000000',
+    colorLight: '#ffffff',
+    correctLevel: QRCode.CorrectLevel.H,
+  });
+
+  const parsed = readQrMatrix(qr);
+  temp.remove();
+
+  if (!parsed) {
+    wrap.innerHTML = '';
+    new QRCode(wrap, {
+      text,
+      width: size,
+      height: size,
+      colorDark: '#f5f5f7',
+      colorLight: '#111113',
+      correctLevel: QRCode.CorrectLevel.H,
+    });
+    return;
+  }
+
+  const { matrix, modules } = parsed;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  canvas.className = 'qr-branded-canvas';
+  const ctx = canvas.getContext('2d');
+
+  drawBrandedQrCanvas(ctx, matrix, modules, size);
+  drawQrLogoPlate(ctx, size);
+  wrap.innerHTML = '';
+  wrap.appendChild(canvas);
+}
+
+function openWalletQr(addr, triggerEl) {
+  const overlay = document.createElement('div');
+  overlay.className = 'qr-modal-overlay';
+  overlay.innerHTML = `
+    <div class="qr-modal" role="dialog" aria-modal="true" aria-label="${t('Address QR code')}">
+      <button type="button" class="qr-modal-close" id="qr-close" aria-label="${t('Close')}">${icSVG(IC.x, 16)}</button>
+      <div class="qr-modal-brand">
+        ${tronsecShieldMarkSvg(18)}
+        <span>TRONSEC</span>
+      </div>
+      <div class="qr-modal-kicker">[ WALLET QR ]</div>
+      <div class="qr-modal-title">${t('Scan to send TRX or tokens')}</div>
+      <div class="qr-modal-addr">${esc(addr)}</div>
+      <div class="qr-modal-frame">
+        <div class="qr-modal-frame-glow"></div>
+        <div id="qr-canvas-wrap" class="qr-canvas-wrap"></div>
+      </div>
+      <button type="button" class="wallet-action-btn qr-modal-copy" id="qr-copy-btn">${icSVG(IC.copy, 14)}<span>${t('Copy address')}</span></button>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+  requestAnimationFrame(() => requestAnimationFrame(() => overlay.classList.add('is-open')));
+
+  renderBrandedQr(document.getElementById('qr-canvas-wrap'), addr, { size: 248 });
+
+  let releaseFocus = null;
+  const close = () => {
+    releaseFocus?.();
+    releaseFocus = null;
+    overlay.classList.remove('is-open');
+    overlay.classList.add('is-closing');
+    setTimeout(() => {
+      overlay.remove();
+      document.body.style.overflow = '';
+      triggerEl?.focus?.();
+    }, 280);
+    document.removeEventListener('keydown', onEsc);
+  };
