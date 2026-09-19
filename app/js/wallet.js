@@ -218,3 +218,113 @@ function walletBuildSummaryText(report) {
   if (r.hardFlags?.length) lines.push(`Security flags: ${r.hardFlags.map(f => t(f)).join('; ')}`);
   if (r.scoreFactors?.length) {
     lines.push('Signals:');
+    r.scoreFactors.slice(0, 8).forEach(f => lines.push(`  ${t(f.label)} (${f.pts > 0 ? '+' : ''}${f.pts})`));
+  }
+  lines.push('', t('This report summarizes public on-chain data and security heuristics for a TRON wallet. It is not financial or legal advice.'));
+  return lines.join('\n');
+}
+
+async function walletExportPdf(report) {
+  const api = window.tronsecAmlPdf;
+  if (!report || !api?.AmlPdfWriter) {
+    showToast(t('PDF export failed'));
+    return;
+  }
+  const btn = document.getElementById('wallet-export-pdf-btn');
+  if (btn) btn.classList.add('is-busy');
+  try {
+    await api.ensurePdfBrandAssets();
+    const { AmlPdfWriter, AML_PDF, amlPdfStatusColor } = api;
+    const reportId = `WLT-${report.addr.slice(-8).toUpperCase()}`;
+    const pdf = new AmlPdfWriter(reportId);
+    const m = pdf.margin;
+    const r = report.riskReport || {};
+    const scoreColor = amlPdfStatusColor(r.status, r.isFlagged);
+    const stamp = new Date(report.scannedAt).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+
+    pdf.drawReportHeader({
+      title: t('WALLET SCAN REPORT'),
+      moduleLabel: t('Wallet scanner'),
+      stamp,
+      reportId,
+    });
+
+    pdf.drawScoreCard({
+      score: r.finalScore ?? '—',
+      scoreColor,
+      statusLabel: t(r.statusLabel || 'Unknown'),
+      subtitle: t('Wallet risk signal'),
+      meta: t('On-chain profile + security heuristics'),
+      address: report.addr,
+      addressLabel: t('SUBJECT ADDRESS'),
+    });
+
+    if (r.hardFlags?.length) {
+      pdf.section(t('Security flags'));
+      r.hardFlags.forEach(flag => pdf.bullet(t(flag), AML_PDF.red));
+    }
+    if (r.scoreFactors?.length) {
+      pdf.section(t('Signal breakdown'));
+      r.scoreFactors.forEach(f => {
+        const lines = pdf.wrapText(i18nFactorLabel(f), pdf.W - m * 2 - 70, 8.5, 'sans');
+        pdf.need(lines.length * 12 + 4);
+        lines.forEach((line, i) => {
+          pdf.text(m, pdf.cursorY, line, 8.5, 'sans', AML_PDF.text2);
+          if (i === 0) {
+            const ptsColor = f.pts < 0 ? AML_PDF.green : f.pts >= 15 ? AML_PDF.red : AML_PDF.amber;
+            pdf.textRight(pdf.W - m, pdf.cursorY, `${f.pts > 0 ? '+' : ''}${f.pts}`, 8.5, 'mono', ptsColor, true);
+          }
+          pdf.cursorY -= 12;
+        });
+        pdf.cursorY -= 2;
+      });
+    }
+
+    pdf.section(t('On-chain summary'));
+    pdf.row(t('Estimated portfolio'), report.totalPortfolioUsd > 0 ? `$${report.totalPortfolioUsd.toFixed(2)}` : '—');
+    pdf.row(t('TRX balance'), `${report.trxBal?.toFixed(2) || '0'} TRX`);
+    pdf.row(t('Total transactions'), String(report.txCount));
+    pdf.row(t('Active on-chain approvals'), String(report.approvalCount));
+    if (report.ageDays != null) pdf.row(t('Account age'), `${report.ageDays} days`);
+    if (report.trc20?.length) {
+      pdf.section(t('Token holdings'));
+      report.trc20.slice(0, 8).forEach(tok => {
+        pdf.row(tok.symbol, `${tok.balance.toFixed(4)}${tok.priceInUsd > 0 ? ` · $${(tok.balance * tok.priceInUsd).toFixed(2)}` : ''}`);
+      });
+    }
+
+    pdf.disclaimerBox(t('This report summarizes public on-chain data and security heuristics for a TRON wallet. It is not financial or legal advice.'));
+    const fname = `TRONSEC-Wallet-${report.addr.slice(0, 6)}${report.addr.slice(-4)}-${new Date(report.scannedAt).toISOString().slice(0, 10)}.pdf`;
+    pdf.download(fname);
+    showToast(t('PDF report downloaded'));
+  } catch (_) {
+    showToast(t('PDF export failed'));
+  } finally {
+    if (btn) btn.classList.remove('is-busy');
+  }
+}
+
+function walletCopySummary(report) {
+  const text = walletBuildSummaryText(report);
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => showToast(t('Summary copied'))).catch(() => showToast(t('Copy failed')));
+}
+
+function setWalletScanLocked(locked) {
+  walletScanBusy = locked;
+  if (locked) {
+    spinBtn(walletBtn, true);
+    if (walletBtn) walletBtn.setAttribute('aria-busy', 'true');
+    lockScanInput(walletInput, true);
+  } else {
+    endScanUI({ btn: walletBtn, input: walletInput });
+  }
+}
+
+function buildInactiveAccount(scanProfile) {
+  const sp = scanProfile || {};
+  const bw = sp.bandwidth || {};
+  const balRaw = sp.balance ?? sp.trxBalance;
+  let balance = 0;
+  if (balRaw != null && balRaw !== '') {
+    const n = Number(balRaw);
