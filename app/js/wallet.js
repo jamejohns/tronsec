@@ -768,3 +768,113 @@ function buildWalletNextSteps({ addr, riskReport, approvalCount, unlimitedCount,
       go: 'aml',
       label: 'Run AML check',
       primary: false,
+    });
+  }
+
+  if (!steps.length) return '';
+
+  const rows = steps.map((step, i) => `
+    <div class="wallet-next-step${step.tone ? ` is-${step.tone}` : ''}${step.primary ? ' is-primary' : ''}">
+      <div class="wallet-next-step-body">
+        <div class="wallet-next-step-title">${esc(step.title)}</div>
+        <div class="wallet-next-step-desc">${esc(step.desc)}</div>
+      </div>
+      ${walletGoBtn({ id: `wallet-go-${step.go}-${i}`, label: step.label, go: step.go, tone: step.tone })}
+    </div>`).join('');
+
+  return `<div class="wallet-next-steps">
+    <div class="wallet-next-steps-head">
+      <span class="wallet-next-steps-title">${t('Recommended next steps')}</span>
+      <span class="wallet-next-steps-hint">${t('Opens the module and runs the scan for this address')}</span>
+    </div>
+    <div class="wallet-next-steps-list">${rows}</div>
+  </div>`;
+}
+
+function bindWalletGoButtons(root, addr) {
+  (root || document).querySelectorAll('[data-wallet-go]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      const go = btn.getAttribute('data-wallet-go');
+      if (go === 'approvals') openApprovalsScan(addr);
+      else if (go === 'aml') openAmlScan(addr);
+      else if (go === 'permissions') openPermissionsScan(addr);
+    });
+  });
+}
+
+function qrRoundRect(ctx, x, y, w, h, r) {
+  if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); return; }
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function readQrMatrix(qrInstance) {
+  const model = qrInstance?._oQRCode;
+  if (!model?.getModuleCount || !model?.isDark) return null;
+  const modules = model.getModuleCount();
+  const matrix = [];
+  for (let r = 0; r < modules; r++) {
+    matrix[r] = [];
+    for (let c = 0; c < modules; c++) {
+      matrix[r][c] = model.isDark(r, c);
+    }
+  }
+  return { matrix, modules };
+}
+
+function isFinderCell(r, c, modules) {
+  if (r < 7 && c < 7) return true;
+  if (r < 7 && c >= modules - 7) return true;
+  if (r >= modules - 7 && c < 7) return true;
+  return false;
+}
+
+function isLogoCell(r, c, modules) {
+  const center = (modules - 1) / 2;
+  const radius = Math.floor(modules * 0.1);
+  return Math.abs(r - center) <= radius && Math.abs(c - center) <= radius;
+}
+
+function drawBrandedQrCanvas(ctx, matrix, modules, size) {
+  const pad = 14;
+  const area = size - pad * 2;
+  const cell = area / modules;
+
+  const grad = ctx.createLinearGradient(0, 0, size, size);
+  grad.addColorStop(0, '#141416');
+  grad.addColorStop(1, '#09090a');
+  ctx.fillStyle = grad;
+  qrRoundRect(ctx, 0, 0, size, size, 16);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(255,255,255,.09)';
+  ctx.lineWidth = 1;
+  qrRoundRect(ctx, 0.5, 0.5, size - 1, size - 1, 16);
+  ctx.stroke();
+
+  ctx.fillStyle = '#f5f5f7';
+  for (let r = 0; r < modules; r++) {
+    for (let c = 0; c < modules; c++) {
+      if (!matrix[r][c] || isLogoCell(r, c, modules)) continue;
+      const x = pad + c * cell;
+      const y = pad + r * cell;
+      const radius = isFinderCell(r, c, modules) ? cell * 0.42 : cell * 0.36;
+      ctx.beginPath();
+      ctx.arc(x + cell / 2, y + cell / 2, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+const TRONSEC_SHIELD_PATH = new Path2D('M32 8L12 18v12c0 10.8 8.2 20.8 20 24 11.8-3.2 20-13.2 20-24V18L32 8z');
+
+function drawTronsecShieldMark(ctx, x, y, markSize) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(markSize / 64, markSize / 64);
