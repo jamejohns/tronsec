@@ -2233,3 +2233,155 @@ async function amlScan(opts = {}) {
     let sanctionPeerAddrs = [];
     let indirectSanctionLinks = [];
     let sanctionMeta = null;
+    let sanctionUnavailable = false;
+    const sanctionMerged = mergeAmlScreeningResults({
+      addr,
+      peerAddrs: topPeerAddrs,
+      sanctionRes,
+      subjectCategories: subjectCategoriesFinal,
+      peerCategories,
+      peerFlags,
+      hardFlags: hardFlagsFinal,
+    });
+    subjectCategoriesFinal = sanctionMerged.subjectCategories;
+    peerCategories = sanctionMerged.peerCategories;
+    peerFlags = sanctionMerged.peerFlags;
+    hardFlagsFinal = sanctionMerged.hardFlags;
+    screenEntries = sanctionMerged.screenEntries;
+    sanctionPeerAddrs = sanctionMerged.sanctionPeerAddrs;
+    sanctionMeta = sanctionMerged.sanctionMeta;
+    sanctionUnavailable = sanctionMerged.sanctionUnavailable;
+
+    const indirectMerged = mergeAmlIndirectSanctionExposure({
+      indirectLinks,
+      peerCategories,
+      sanctionPeerAddrs,
+    });
+    peerCategories = indirectMerged.peerCategories;
+    indirectSanctionLinks = indirectMerged.indirectSanctionLinks;
+    isFlagged = hardFlagsFinal.length > 0;
+
+    const finalScoreResult = computeAmlActivityScore({
+      dtCount: analysis.dtCount,
+      txCount: analysis.txCount,
+      ageDays,
+      concentration: analysis.concentration,
+      uniquePeers: analysis.uniquePeers,
+      knownEntityCount,
+      peerFlags,
+      dustPeers,
+      directTransfers: analysis.directTransfers,
+      hardFlags: hardFlagsFinal,
+      isFlagged,
+      inboundCount: analysis.inboundCount,
+      outboundCount: analysis.outboundCount,
+      stableInbound: analysis.stableInbound,
+      stableOutbound: analysis.stableOutbound,
+    });
+
+    const exposureBreakdown = typeof buildAmlExposureBreakdown === 'function'
+      ? buildAmlExposureBreakdown({
+        subjectCategories: subjectCategoriesFinal,
+        peerCategories,
+        directTransfers: analysis.directTransfers,
+        dustPeers,
+        trxPriceUsd,
+      })
+      : [];
+
+    const report = assembleAmlReport({
+      addr,
+      hardFlags: hardFlagsFinal,
+      isFlagged,
+      analysis,
+      score: finalScoreResult,
+      peerFlags,
+      dustPeers,
+      topPeerAddrs,
+      knownEntityCount,
+      parsedTokens: parsedTokensFinal,
+      tronTags,
+      activityWindow,
+      balanceTrx,
+      accCreated,
+      ageDays,
+      secAcc,
+      tagAcc,
+      tokens,
+      scanProfile,
+      peersPending: false,
+      secTokenLevel,
+      peerTagAlerts,
+      tokenHardFlags,
+      subjectCategories: subjectCategoriesFinal,
+      peerCategories,
+      exposureBreakdown,
+      firstFunder: analysis.firstFunder,
+      inboundCount: analysis.inboundCount,
+      outboundCount: analysis.outboundCount,
+      flowRatio: analysis.flowRatio,
+      screenEntries,
+      sanctionPeerAddrs,
+      indirectSanctionLinks,
+      sanctionMeta,
+      sanctionUnavailable,
+    });
+
+    const graphPayload = analysis.topPeers.length > 0
+      ? {
+          addr,
+          topPeers: analysis.topPeers,
+          peerFlags: [...peerFlags],
+          peerCategories: [...peerCategories],
+          directTransfers: analysis.directTransfers,
+          txCount: analysis.txCount,
+          selfFlagged: !!(report.flagSources?.secAcc?.length || report.flagSources?.tags?.length || report.flagSources?.sanctions?.length),
+          trxPriceUsd,
+        }
+      : null;
+
+    if (gen !== amlScanGen) return;
+
+    if (needsPeerIntel || needsTokenIntel) {
+      patchAmlProgressiveFinish(report, graphPayload, gen);
+    } else {
+      window._amlLastReport = report;
+      renderAmlScanFromReport(report, graphPayload, false);
+    }
+
+    writeAmlSessionCache({ addr, report: window._amlLastReport, graphPayload });
+
+
+  } catch (e) {
+    amlRes.innerHTML = '';
+    setError(amlErr, userFriendlyFetchError(e));
+  } finally {
+    if (gen === amlScanGen) setAmlScanLocked(false);
+  }
+  }, () => {
+    if (gen !== amlScanGen) return;
+    amlRes.innerHTML = '';
+    setAmlScanLocked(false);
+    if (!amlRes.innerHTML.trim() && !amlErr?.innerHTML?.trim()) {
+      showScanEmpty(amlEmpty);
+    }
+  });
+}
+
+function resetAmlScanCache() {
+  const addr = amlInput?.value?.trim() || amlLastAddr;
+  if (addr) clearAmlSessionCache(addr);
+  amlLastAddr = '';
+  amlFromCache = false;
+  amlScanBusy = false;
+  amlScanGen++;
+  window._amlLastReport = null;
+  if (amlRes) {
+    delete amlRes.dataset.amlBindAddr;
+    delete amlRes.dataset.amlActionsBound;
+  }
+  setAmlScanLocked(false);
+  if (typeof clearApiCaches === 'function') clearApiCaches();
+  else if (typeof clearScanApiCache === 'function') clearScanApiCache();
+}
+
