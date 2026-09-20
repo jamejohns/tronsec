@@ -1190,3 +1190,152 @@ function mergeAmlScreeningResults({
       }
       continue;
     }
+    const key = String(hit.addr || '').toLowerCase();
+    if (!peerSet.has(key)) continue;
+    if (hit.source === 'tronsec_label') {
+      const cat = hit.category || 'unknown_risk';
+      peerCats.push({
+        addr: hit.addr,
+        category: cat,
+        source: 'tronsec_label',
+        detail: hit.label || hit.entity,
+      });
+      if (typeof isAmlHighRiskCategory === 'function' && isAmlHighRiskCategory(cat) && !flags.includes(hit.addr)) {
+        flags.push(hit.addr);
+      }
+      continue;
+    }
+    if (!isAmlSanctionHit(hit)) continue;
+    const detail = hit.programs?.length
+      ? `${hit.source} · ${hit.programs.join(', ')}`
+      : hit.source;
+    peerCats.push({
+      addr: hit.addr,
+      category: 'sanctions',
+      source: hit.source,
+      detail,
+    });
+    if (!flags.includes(hit.addr)) flags.push(hit.addr);
+    sanctionPeerAddrs.push(hit.addr);
+  }
+
+  return {
+    subjectCategories: subjectCats,
+    peerCategories: peerCats,
+    peerFlags: flags,
+    hardFlags: hard,
+    screenEntries,
+    sanctionPeerAddrs,
+    sanctionMeta: meta,
+    sanctionUnavailable: !!sanctionRes?.unavailable,
+  };
+}
+
+async function fetchAmlIndirectSanctionExposure(subjectAddr, topPeers) {
+  const peerAddrs = topPeers.slice(0, AML_INDIRECT_PEER_LIMIT).map((p) => p[0]).filter(isValidTron);
+  if (!peerAddrs.length || typeof fetchAmlPeerTxSample !== 'function') return [];
+
+  const peerTxBatches = await Promise.all(
+    peerAddrs.map((a) => fetchAmlPeerTxSample(a, AML_INDIRECT_TX_LIMIT).catch(() => [])),
+  );
+  const secondaryAddrs = new Set();
+
+  peerAddrs.forEach((peer, i) => {
+    const analysis = analyzeAmlTransactions(peer, peerTxBatches[i] || []);
+    for (const dt of analysis.directTransfers || []) {
+      if (!dt.peer || sameTronAddr(dt.peer, subjectAddr) || sameTronAddr(dt.peer, peer)) continue;
+      secondaryAddrs.add(dt.peer);
+    }
+  });
+
+  if (!secondaryAddrs.size) return [];
+  const screenRes = await fetchAmlSanctionScreen([...secondaryAddrs].slice(0, 32));
+  const sanctionHits = (screenRes?.hits || []).filter(isAmlSanctionHit);
+  if (!sanctionHits.length) return [];
+
+  const hitByAddr = new Map(sanctionHits.map((h) => [String(h.addr).toLowerCase(), h]));
+  const links = [];
+  const seen = new Set();
+
+  peerAddrs.forEach((peer, i) => {
+    const analysis = analyzeAmlTransactions(peer, peerTxBatches[i] || []);
+    for (const dt of analysis.directTransfers || []) {
+      const sec = dt.peer;
+      if (!sec) continue;
+      const key = `${peer.toLowerCase()}|${sec.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      const hit = hitByAddr.get(String(sec).toLowerCase());
+      if (!hit) continue;
+      seen.add(key);
+      links.push({
+        peer,
+        sanctioned: hit.addr,
+        entity: hit.entity,
+        source: hit.source,
+        programs: hit.programs || [],
+      });
+    }
+  });
+  return links;
+}
+
+function mergeAmlIndirectSanctionExposure({
+  indirectLinks = [],
+  peerCategories = [],
+  sanctionPeerAddrs = [],
+}) {
+  const peerCats = [...peerCategories];
+  const directSanctionSet = new Set((sanctionPeerAddrs || []).map((a) => String(a).toLowerCase()));
+  const out = [];
+
+  for (const link of indirectLinks || []) {
+    if (directSanctionSet.has(String(link.peer).toLowerCase())) continue;
+    out.push(link);
+    peerCats.push({
+      addr: link.peer,
+      category: 'sanctions',
+      source: 'indirect',
+      detail: t('Indirect · counterparty touched {sanctioned}', { sanctioned: addrLabel(link.sanctioned) }),
+    });
+  }
+
+  return { peerCategories: peerCats, indirectSanctionLinks: out };
+}
+
+function amlSanctionsSourceValue(sanctionMeta, sanctionUnavailable, screenEntries = []) {
+  const sanctionEntries = (screenEntries || []).filter((e) => isAmlSanctionSource(e.source));
+  if (sanctionEntries.length) {
+    return `<div class="aml-flag-list">${sanctionEntries.map((e) => esc(typeof e.label === 'string' ? t(e.label) : e.label)).join('<br>')}</div>`;
+  }
+  if (sanctionUnavailable) return amlSourceBadge('unavailable');
+  const parts = [];
+  if (sanctionMeta?.ofac?.version) parts.push(`OFAC ${sanctionMeta.ofac.version}`);
+  if (sanctionMeta?.uk?.count) parts.push(`UK ${sanctionMeta.uk.count}`);
+  if (sanctionMeta?.eu?.count) parts.push(`EU ${sanctionMeta.eu.count}`);
+  return parts.length
+    ? `<span class="kv-muted">${esc(parts.join(' · '))} · ${esc(t('No match'))}</span>`
+    : amlSourceBadge('clean');
+}
+
+function amlSecAccFlagEntries(secAcc) {
+  const entries = [];
+  if (!secAcc) return entries;
+  const redTag = String(secAcc.red_tag || secAcc.redTag || '').trim();
+  if (/suspicious/i.test(redTag)) {
+    entries.push({
+      label: 'TronScan flagged as Suspicious',
+      hint: 'TronScan red-tag on this scanned address (not a counterparty).',
+    });
+  }
+  if (secAcc.is_black_list) {
+    entries.push({
+      label: 'Blacklisted by stablecoin issuer (USDT/USDC)',
+      hint: 'USDT/USDC issuer blacklist includes this scanned address.',
+    });
+  }
+  if (secAcc.has_fraud_transaction && !(typeof isAmlSubjectDustVictim === 'function' && isAmlSubjectDustVictim(secAcc))) {
+    entries.push({
+      label: 'Has flagged fraud transactions',
+      hint: 'TronScan fraud database links this address to flagged transactions (sent or received). Counterparty screening below is separate.',
+    });
+  }
