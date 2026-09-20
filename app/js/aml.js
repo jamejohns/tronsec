@@ -1786,3 +1786,152 @@ async function fetchAmlPeerIntel(topPeers, tagAcc, directTransfers = []) {
       : [];
     peerCategories.push(...hits);
   }
+
+  const catByAddr = typeof amlPeerCategoryIndex === 'function'
+    ? amlPeerCategoryIndex(peerCategories)
+    : new Map();
+
+  for (const [pAddr, pc] of catByAddr) {
+    if (typeof isAmlKnownEntityCategory === 'function' && isAmlKnownEntityCategory(pc.category)) {
+      knownEntityCount++;
+      continue;
+    }
+    if (pc.category === 'spam_dust') {
+      if (!dustPeers.includes(pAddr)) dustPeers.push(pAddr);
+      continue;
+    }
+    const peerSec = secByAddr.get(pAddr);
+    const dustSpammer = typeof isAmlPeerLikelyDustSpammer === 'function'
+      && isAmlPeerLikelyDustSpammer(peerSec, pAddr, directTransfers);
+    if (dustSpammer && pc.category === 'fraud_onchain' && pc.detail !== 'fraud token creator') {
+      if (!dustPeers.includes(pAddr)) dustPeers.push(pAddr);
+      continue;
+    }
+    if (typeof isAmlHighRiskCategory === 'function' && isAmlHighRiskCategory(pc.category)) {
+      if (dustSpammer || isAmlPeerInboundDustHeavy(pAddr, directTransfers)) {
+        if (!dustPeers.includes(pAddr)) dustPeers.push(pAddr);
+      } else {
+        if (!peerFlags.includes(pAddr)) peerFlags.push(pAddr);
+        if (pc.source === 'tag' && pc.detail) {
+          peerTagAlerts.push({ tag: pc.detail, addr: pAddr, category: pc.category });
+        }
+      }
+    }
+  }
+
+  for (const pAddr of topPeerAddrs) {
+    if (!dustPeers.includes(pAddr) && !peerFlags.includes(pAddr) && isAmlPeerInboundDustHeavy(pAddr, directTransfers)) {
+      dustPeers.push(pAddr);
+      if (typeof buildAmlPeerCategoryHits === 'function') {
+        peerCategories.push({ addr: pAddr, category: 'spam_dust', source: 'heuristic', detail: 'inbound dust' });
+      }
+    }
+  }
+
+  ({ peerFlags, dustPeers } = amlReclassifyInboundDustPeers(peerFlags, dustPeers, directTransfers));
+
+  return { peerFlags, dustPeers, peerTagAlerts, knownEntityCount, topPeerAddrs, peerCategories };
+}
+
+function computeAmlActivityScore({
+  dtCount, txCount, ageDays, concentration, uniquePeers,
+  knownEntityCount = 0, peerFlags = [], dustPeers = [], directTransfers = [],
+  hardFlags = [], isFlagged = false,
+  inboundCount = 0, outboundCount = 0, stableInbound = 0, stableOutbound = 0,
+}) {
+  let score = 0;
+  const scoreFactors = [];
+
+  let activityDtCount = dtCount;
+  let activityConcentration = concentration;
+  let activityUniquePeers = uniquePeers;
+  let activityInbound = inboundCount;
+  let activityOutbound = outboundCount;
+  let activityStableInbound = stableInbound;
+  let activityStableOutbound = stableOutbound;
+
+  if (dustPeers.length && directTransfers.length) {
+    const cleaned = amlMetricsWithoutDust(directTransfers, dustPeers);
+    activityDtCount = cleaned.dtCount;
+    activityConcentration = cleaned.concentration;
+    activityUniquePeers = cleaned.uniquePeers;
+    activityInbound = cleaned.inboundCount;
+    activityOutbound = cleaned.outboundCount;
+    activityStableInbound = cleaned.stableInbound;
+    activityStableOutbound = cleaned.stableOutbound;
+  }
+
+  if (dtCount === 0 && txCount === 0 && ageDays === null) {
+    score = 0;
+  } else {
+    if (dtCount > 0 || txCount > 0) {
+      if (ageDays !== null) {
+        if (ageDays < 7) { score += 10; scoreFactors.push({ label: 'Account age under 7 days', pts: 10 }); }
+        else if (ageDays < 30) { score += 5; scoreFactors.push({ label: 'Account age under 30 days', pts: 5 }); }
+      } else {
+        score += 5;
+        scoreFactors.push({ label: 'Account creation date unknown', pts: 5 });
+      }
+    }
+
+    if (activityDtCount > 50) { score += 15; scoreFactors.push({ label: 'High direct transfer volume (50+)', pts: 15 }); }
+    else if (activityDtCount > 20) { score += 8; scoreFactors.push({ label: 'Elevated direct transfers (20+)', pts: 8 }); }
+    else if (activityDtCount > 10) { score += 3; scoreFactors.push({ label: 'Moderate direct transfers (10+)', pts: 3 }); }
+
+    if (activityConcentration > 0.7 && activityUniquePeers >= 3) {
+      score += 25;
+      scoreFactors.push({ label: `High ${GLOSSARY.concentration?.lbl?.toLowerCase() || 'concentration'} (${(activityConcentration * 100).toFixed(0)}%)`, pts: 25 });
+    } else if (activityConcentration > 0.5 && activityUniquePeers >= 3) {
+      score += 10;
+      scoreFactors.push({ label: `Elevated concentration (${(activityConcentration * 100).toFixed(0)}%)`, pts: 10 });
+    }
+
+    if (activityUniquePeers < 3 && activityDtCount > 10) {
+      score += 15;
+      scoreFactors.push({ label: 'Low counterparty diversity', pts: 15 });
+    }
+
+    if (knownEntityCount > 0) {
+      const pts = knownEntityCount * 8;
+      score -= pts;
+      scoreFactors.push({ label: `${knownEntityCount} known entity peer${knownEntityCount > 1 ? 's' : ''}`, pts: -pts });
+    }
+
+    if (peerFlags.length > 0) {
+      score += peerFlags.length * 12;
+      scoreFactors.push({ label: `${peerFlags.length} flagged counterparty${peerFlags.length > 1 ? ' addresses' : ''}`, pts: peerFlags.length * 12 });
+    }
+
+    if (activityInbound >= 5 && activityOutbound > 0) {
+      const ratio = activityInbound / activityOutbound;
+      if (ratio >= 3) {
+        score += 15;
+        scoreFactors.push({
+          label: 'Heavy inbound flow ({ratio}× more receives than sends)',
+          labelVars: { ratio: ratio.toFixed(1) },
+          pts: 15,
+        });
+      }
+    } else if (activityInbound >= 10 && activityOutbound === 0) {
+      score += 12;
+      scoreFactors.push({ label: 'Inbound-only transfer pattern in sample', pts: 12 });
+    }
+
+    if (activityStableInbound >= 5 && activityStableOutbound <= 1 && activityInbound >= 8) {
+      score += 12;
+      scoreFactors.push({ label: 'Stablecoin inflow without matching outflow', pts: 12 });
+    }
+
+    score = Math.max(0, score);
+  }
+
+  score += amlAddHardSignals(hardFlags, scoreFactors);
+  score = Math.max(0, score);
+
+  const finalScore = Math.min(100, Math.round(score));
+  const hasHardSignals = hardFlags.length > 0;
+
+  let status;
+  let statusLabel;
+  if (isFlagged) {
+    status = 'flagged';
