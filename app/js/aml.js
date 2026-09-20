@@ -1339,3 +1339,152 @@ function amlSecAccFlagEntries(secAcc) {
       hint: 'TronScan fraud database links this address to flagged transactions (sent or received). Counterparty screening below is separate.',
     });
   }
+  if (secAcc.fraud_token_creator) {
+    entries.push({
+      label: 'Created fraud tokens',
+      hint: 'TronScan marks this address as a creator of fraud tokens.',
+    });
+  }
+  return entries;
+}
+
+function amlTagFlagEntries(tagAcc) {
+  const entries = [];
+  if (!tagAcc) return entries;
+  const tags = normalizeTagList(tagAcc);
+  const seen = new Set();
+  for (const tag of tags) {
+    const tagName = (typeof tag === 'string' ? tag : (tag.tagName || tag.tag || tag.label || ''));
+    if (!tagName) continue;
+    const cat = typeof classifyAmlTagText === 'function' ? classifyAmlTagText(tagName) : null;
+    if (cat === 'sanctions') {
+      entries.push({
+        label: t('Sanctioned (public tag): {tag}', { tag: tagName }),
+        hint: 'Public TronScan tag on this scanned address.',
+      });
+      seen.add(cat);
+    } else if (cat && isAmlHighRiskCategory(cat) && !seen.has(cat)) {
+      const catLabel = typeof amlCatLabel === 'function' ? amlCatLabel(cat) : cat;
+      entries.push({
+        label: t('{category} (public tag): {tag}', { category: catLabel, tag: tagName }),
+        hint: 'Public TronScan tag on this scanned address.',
+      });
+      seen.add(cat);
+    } else if (!cat && AML_RISK_TAG_RE.test(tagName)) {
+      entries.push({
+        label: t('Security tag: ') + tagName,
+        hint: 'Public TronScan tag on this scanned address.',
+      });
+    }
+  }
+  return entries;
+}
+
+function buildAmlFlagSources(secAcc, tagAcc, tokenHardFlags = [], screenEntries = []) {
+  const entries = screenEntries || [];
+  return {
+    secAcc: amlSecAccFlagEntries(secAcc),
+    tags: amlTagFlagEntries(tagAcc),
+    tokens: (tokenHardFlags || []).map((label) => ({
+      label,
+      hint: 'TronScan token security flagged a token this address holds.',
+    })),
+    sanctions: entries.filter((e) => isAmlSanctionSource(e.source)),
+    labels: entries.filter((e) => e.source === 'tronsec_label'),
+  };
+}
+
+function amlFlagEntryHtml(entry) {
+  const hint = entry.hint
+    ? `<div class="aml-alert-source">${esc(t(entry.hint))}</div>`
+    : '';
+  return `<li>${esc(typeof entry.label === 'string' ? t(entry.label) : entry.label)}${hint}</li>`;
+}
+
+function amlFlagSourceAlerts(flagSources, peerFlags, peersPending) {
+  const { secAcc = [], tags = [], tokens = [], sanctions = [], labels = [] } = flagSources || {};
+  let html = '';
+  if (sanctions.length) {
+    html += `<div class="aml-alert aml-alert--red">
+      <div class="aml-alert-head">${icSVG(IC.alert, 14)}<span class="aml-alert-title">${esc(t('Scanned address — sanctions lists'))}</span></div>
+      <ul class="aml-alert-list">${sanctions.map(amlFlagEntryHtml).join('')}</ul>
+    </div>`;
+  }
+  if (labels.length) {
+    html += `<div class="aml-alert aml-alert--red">
+      <div class="aml-alert-head">${icSVG(IC.alert, 14)}<span class="aml-alert-title">${esc(t('Scanned address — TRONSEC labels'))}</span></div>
+      <ul class="aml-alert-list">${labels.map(amlFlagEntryHtml).join('')}</ul>
+    </div>`;
+  }
+  if (secAcc.length) {
+    html += `<div class="aml-alert aml-alert--red">
+      <div class="aml-alert-head">${icSVG(IC.alert, 14)}<span class="aml-alert-title">${esc(t('Scanned address — TronScan security'))}</span></div>
+      <ul class="aml-alert-list">${secAcc.map(amlFlagEntryHtml).join('')}</ul>
+    </div>`;
+  }
+  if (tags.length) {
+    html += `<div class="aml-alert aml-alert--red">
+      <div class="aml-alert-head">${icSVG(IC.alert, 14)}<span class="aml-alert-title">${esc(t('Scanned address — public tags'))}</span></div>
+      <ul class="aml-alert-list">${tags.map(amlFlagEntryHtml).join('')}</ul>
+    </div>`;
+  }
+  if (tokens.length) {
+    html += `<div class="aml-alert aml-alert--red">
+      <div class="aml-alert-head">${icSVG(IC.alert, 14)}<span class="aml-alert-title">${esc(t('Scanned address — token holdings'))}</span></div>
+      <ul class="aml-alert-list">${tokens.map(amlFlagEntryHtml).join('')}</ul>
+    </div>`;
+  }
+  const selfFlagged = secAcc.length > 0 || tags.length > 0 || tokens.length > 0 || sanctions.length > 0 || labels.length > 0;
+  if (!peersPending && selfFlagged && peerFlags.length === 0) {
+    html += amlAlertInline('amber', t('No flagged counterparties in the analyzed sample — the flag applies to this address itself (see above).'));
+  }
+  return html;
+}
+
+function amlSourceSecAccValue(secAccLevel, secAccEntries = []) {
+  if (!secAccEntries.length) return amlSourceBadge(secAccLevel);
+  return `${amlSourceBadge(secAccLevel)}<div class="aml-flag-list">${secAccEntries.map((e) => esc(t(e.label))).join('<br>')}</div>`;
+}
+
+function isAmlTrustedIssuerToken(tokMeta = {}) {
+  return AML_STABLE_CONTRACTS.has(String(tokMeta.addr || '').toLowerCase());
+}
+
+function classifyAmlTokenSecurity(secToken, tokMeta = {}) {
+  if (!secToken) return 'unavailable';
+  if (isAmlTrustedIssuerToken(tokMeta)) {
+    // USDT/USDC/etc.: mint + issuer blacklist are normal compliance controls, not holder risk.
+    return 'clean';
+  }
+  const level = secToken.token_level;
+  const usd = tokMeta.usd;
+  const priced = typeof usd === 'number' && Number.isFinite(usd);
+  const dustOrUnpriced = !priced || usd < 1;
+  const spamSymbol = amlLooksLikeSpamTokenSymbol(tokMeta.symbol);
+  if (level === '3' || level === 3) {
+    if (dustOrUnpriced || spamSymbol) {
+      if (secToken.black_list_type || secToken.is_proxy) return 'warnings';
+      return 'spam';
+    }
+    return 'flagged';
+  }
+  if (secToken.increase_total_supply || secToken.black_list_type) return 'warnings';
+  if (level === '2' || level === 2) return 'warnings';
+  return 'clean';
+}
+
+function amlTokenSecurityNote(secToken, tokMeta = {}) {
+  if (!secToken || isAmlTrustedIssuerToken(tokMeta)) return '';
+  const level = classifyAmlTokenSecurity(secToken, tokMeta);
+  if (level === 'spam') return t('Spam / airdrop token');
+  if (secToken.token_level === '3' || secToken.token_level === 3) return t('TronScan level 3');
+  if (secToken.increase_total_supply) return t('Mintable supply');
+  if (secToken.black_list_type) return t('Blacklist function');
+  if (secToken.token_level === '2' || secToken.token_level === 2) return t('TronScan level 2');
+  return '';
+}
+
+async function fetchAmlTokenSecurity(parsedTokens) {
+  const tokens = (parsedTokens || []).slice(0, AML_TOKEN_SECURITY_LIMIT);
+  const addrs = tokens.map(tok => tok.addr).filter(isValidTron);
+  if (!addrs.length) {
