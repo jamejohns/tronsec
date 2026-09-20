@@ -1637,3 +1637,152 @@ async function analyzeAmlTransactions(addr, txs) {
           asset: stableLabel || (m.isTrc20 ? 'TRC20' : 'TRX'),
           isStable: !!stableLabel,
         });
+      }
+
+      if (contractAddr && isValidTron(contractAddr) && !isAmlExcludedPeer(contractAddr)) {
+        const cKey = addrLookupKey(contractAddr);
+        const prev = contractInteractions.get(cKey);
+        contractInteractions.set(cKey, {
+          addr: (prev?.addr && isValidTron(prev.addr)) ? prev.addr : contractAddr,
+          count: (prev?.count || 0) + 1,
+        });
+      }
+    }
+  }
+
+  const peerCounts = {};
+  const peerDisplay = {};
+  for (const d of directTransfers) {
+    const k = addrLookupKey(d.peer);
+    peerCounts[k] = (peerCounts[k] || 0) + 1;
+    if (!peerDisplay[k] || isValidTron(d.peer)) peerDisplay[k] = d.peer;
+  }
+  const uniquePeers = Object.keys(peerCounts).length;
+  const maxToSingle = Math.max(0, ...Object.values(peerCounts));
+  const dtCount = directTransfers.length;
+  const concentration = dtCount > 0 ? (maxToSingle / dtCount) : 0;
+  const topPeers = Object.entries(peerCounts)
+    .map(([k, c]) => [peerDisplay[k], c])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+  const topContracts = [...contractInteractions.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6)
+    .map(v => [v.addr, v.count]);
+
+  let inboundCount = 0;
+  let outboundCount = 0;
+  let stableInbound = 0;
+  let stableOutbound = 0;
+  let firstFunder = null;
+  for (const d of directTransfers) {
+    if (d.inbound) {
+      inboundCount += 1;
+      if (d.isStable) stableInbound += 1;
+      if (d.time && (!firstFunder || d.time < firstFunder.time)) {
+        firstFunder = { addr: d.peer, time: d.time, asset: d.asset || 'TRX' };
+      }
+    }
+    if (d.outbound) {
+      outboundCount += 1;
+      if (d.isStable) stableOutbound += 1;
+    }
+  }
+
+  const flowRatio = outboundCount > 0 ? inboundCount / outboundCount : (inboundCount > 0 ? inboundCount : null);
+
+  return {
+    directTransfers,
+    topPeers,
+    topContracts,
+    dtCount,
+    txCount: txs.length,
+    concentration,
+    uniquePeers,
+    inboundCount,
+    outboundCount,
+    stableInbound,
+    stableOutbound,
+    flowRatio,
+    firstFunder,
+  };
+}
+
+function amlMetricsWithoutDust(directTransfers, dustPeers) {
+  const dustSet = new Set((dustPeers || []).map(a => String(a).toLowerCase()));
+  const rows = (directTransfers || []).filter(d => !dustSet.has(String(d.peer).toLowerCase()));
+  const peerCounts = {};
+  for (const d of rows) {
+    const k = addrLookupKey(d.peer);
+    peerCounts[k] = (peerCounts[k] || 0) + 1;
+  }
+  const uniquePeers = Object.keys(peerCounts).length;
+  const dtCount = rows.length;
+  const maxToSingle = Math.max(0, ...Object.values(peerCounts));
+  const concentration = dtCount > 0 ? maxToSingle / dtCount : 0;
+  let inboundCount = 0;
+  let outboundCount = 0;
+  let stableInbound = 0;
+  let stableOutbound = 0;
+  for (const d of rows) {
+    if (d.inbound) {
+      inboundCount += 1;
+      if (d.isStable) stableInbound += 1;
+    }
+    if (d.outbound) {
+      outboundCount += 1;
+      if (d.isStable) stableOutbound += 1;
+    }
+  }
+  return { dtCount, concentration, uniquePeers, inboundCount, outboundCount, stableInbound, stableOutbound };
+}
+
+function amlReclassifyInboundDustPeers(peerFlags, dustPeers, directTransfers) {
+  const dustSet = new Set((dustPeers || []).map(a => String(a).toLowerCase()));
+  const keptFlags = [];
+  for (const pAddr of peerFlags || []) {
+    if (isAmlPeerInboundDustHeavy(pAddr, directTransfers)) {
+      const k = String(pAddr).toLowerCase();
+      if (!dustSet.has(k)) {
+        dustPeers = [...(dustPeers || []), pAddr];
+        dustSet.add(k);
+      }
+    } else {
+      keptFlags.push(pAddr);
+    }
+  }
+  return { peerFlags: keptFlags, dustPeers: dustPeers || [] };
+}
+
+async function fetchAmlPeerIntel(topPeers, tagAcc, directTransfers = []) {
+  let peerFlags = [];
+  let dustPeers = [];
+  const peerTagAlerts = [];
+  const peerCategories = [];
+  const topPeerAddrs = topPeers.slice(0, AML_PEER_SECURITY_LIMIT).map(p => p[0]).filter(isValidTron);
+  const peerTagAddrs = topPeers.map((p) => p[0]).filter(isValidTron);
+  let knownEntityCount = 0;
+
+  if (topPeerAddrs.length === 0 && peerTagAddrs.length === 0) {
+    return { peerFlags, dustPeers, peerTagAlerts, knownEntityCount, topPeerAddrs, peerCategories };
+  }
+
+  const peerFetchResults = await Promise.all([
+    ...topPeerAddrs.map((pAddr) =>
+      scanGet('/security/account/data', { address: pAddr }).catch(() => null),
+    ),
+    ...peerTagAddrs.map((pAddr) =>
+      scanGet('/account/tag', { address: pAddr }).catch(() => null),
+    ),
+  ]);
+  const peerSecResults = peerFetchResults.slice(0, topPeerAddrs.length);
+  const peerTagResults = peerFetchResults.slice(topPeerAddrs.length);
+  const secByAddr = new Map(topPeerAddrs.map((a, i) => [a, peerSecResults[i]]));
+  const tagByAddr = new Map(peerTagAddrs.map((a, i) => [a, peerTagResults[i]]));
+
+  for (const pAddr of peerTagAddrs) {
+    const hits = typeof buildAmlPeerCategoryHits === 'function'
+      ? buildAmlPeerCategoryHits(pAddr, secByAddr.get(pAddr), tagByAddr.get(pAddr), directTransfers)
+      : [];
+    peerCategories.push(...hits);
+  }
