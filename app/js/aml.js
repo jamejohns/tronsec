@@ -2084,3 +2084,152 @@ async function amlScan(opts = {}) {
 
     const scanProfile = scanAcc?.data?.[0] || scanAcc || {};
     const acc = accRes?.data?.length
+      ? normalizeAccountRecord(accRes.data[0])
+      : buildInactiveAccount(scanProfile);
+    const tokens = (tokenRes?.data || []).filter(tok => tok.tokenType === 'trc20' && parseFloat(tok.balance || 0) > 0);
+    const ageDays = acc.create_time ? Math.round((Date.now() - acc.create_time) / 86400000) : null;
+    const balanceTrx = acc.balance != null ? (acc.balance / 1_000_000) : null;
+    const accCreated = acc.create_time
+      ? new Date(acc.create_time).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      : null;
+
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
+    let hardFlags = buildAmlHardFlags(secAcc, tagAcc);
+    let isFlagged = hardFlags.length > 0;
+    const subjectCategories = typeof buildAmlSubjectCategories === 'function'
+      ? buildAmlSubjectCategories(secAcc, tagAcc)
+      : [];
+    await ensureTrxPrice();
+    const trxPriceUsd = typeof TRX_PRICE === 'number' && TRX_PRICE > 0 ? TRX_PRICE : null;
+    const analysis = await analyzeAmlTransactions(addr, txs);
+    const parsedTokens = parseAmlExposureTokens(tokens);
+    const tronTags = amlExtractTags(tagAcc);
+    const lastTxTs = txs[0]?.block_timestamp || null;
+    const oldestTxTs = txs.length > 1 ? txs[txs.length - 1]?.block_timestamp : lastTxTs;
+    const activityWindow = txs.length >= 2 && lastTxTs && oldestTxTs
+      ? `${ago(oldestTxTs)} → ${ago(lastTxTs)}`
+      : lastTxTs ? ago(lastTxTs) : null;
+
+    const topPeerAddrsPreview = analysis.topPeers.slice(0, AML_PEER_SECURITY_LIMIT).map(p => p[0]).filter(isValidTron);
+    const needsPeerIntel = topPeerAddrsPreview.length > 0 || analysis.topPeers.length > 0;
+    const needsTokenIntel = parsedTokens.length > 0;
+    const sanctionPromise = typeof fetchAmlSanctionScreen === 'function'
+      ? fetchAmlSanctionScreen([addr, ...topPeerAddrsPreview])
+      : Promise.resolve({ hits: [], meta: {}, unavailable: true });
+    const indirectPromise = fetchAmlIndirectSanctionExposure(addr, analysis.topPeers);
+
+    const phase1Score = computeAmlActivityScore({
+      dtCount: analysis.dtCount,
+      txCount: analysis.txCount,
+      ageDays,
+      concentration: analysis.concentration,
+      uniquePeers: analysis.uniquePeers,
+      knownEntityCount: 0,
+      peerFlags: [],
+      hardFlags,
+      isFlagged,
+      inboundCount: analysis.inboundCount,
+      outboundCount: analysis.outboundCount,
+      stableInbound: analysis.stableInbound,
+      stableOutbound: analysis.stableOutbound,
+    });
+
+    const phase1Exposure = typeof buildAmlExposureBreakdown === 'function'
+      ? buildAmlExposureBreakdown({
+        subjectCategories,
+        peerCategories: [],
+        directTransfers: analysis.directTransfers,
+        dustPeers: [],
+        trxPriceUsd,
+      })
+      : [];
+
+    const phase1Report = assembleAmlReport({
+      addr,
+      hardFlags,
+      isFlagged,
+      analysis,
+      score: phase1Score,
+      peerFlags: [],
+      topPeerAddrs: topPeerAddrsPreview,
+      knownEntityCount: 0,
+      parsedTokens,
+      tronTags,
+      activityWindow,
+      balanceTrx,
+      accCreated,
+      ageDays,
+      secAcc,
+      tagAcc,
+      tokens,
+      scanProfile,
+      peersPending: needsPeerIntel || needsTokenIntel,
+      subjectCategories,
+      peerCategories: [],
+      exposureBreakdown: phase1Exposure,
+      firstFunder: analysis.firstFunder,
+      inboundCount: analysis.inboundCount,
+      outboundCount: analysis.outboundCount,
+      flowRatio: analysis.flowRatio,
+    });
+
+    const phase1Graph = analysis.topPeers.length > 0
+      ? {
+          addr,
+          topPeers: analysis.topPeers,
+          peerFlags: [],
+          peerCategories: [],
+          directTransfers: analysis.directTransfers,
+          txCount: analysis.txCount,
+          selfFlagged: hardFlags.length > 0,
+          trxPriceUsd,
+        }
+      : null;
+
+    if (gen !== amlScanGen) return;
+    renderAmlScanFromReport(phase1Report, phase1Graph, false, { peersPending: needsPeerIntel || needsTokenIntel });
+    setAmlScanLocked(false);
+
+    let peerFlags = [];
+    let dustPeers = [];
+    let peerTagAlerts = [];
+    let peerCategories = [];
+    let knownEntityCount = 0;
+    let topPeerAddrs = topPeerAddrsPreview;
+    let parsedTokensFinal = parsedTokens;
+    let secTokenLevel = 'unavailable';
+    let hardFlagsFinal = [...hardFlags];
+    let tokenHardFlags = [];
+
+    const [peerIntel, tokenIntel, sanctionRes, indirectLinks] = await Promise.all([
+      needsPeerIntel ? fetchAmlPeerIntel(analysis.topPeers, tagAcc, analysis.directTransfers) : Promise.resolve(null),
+      needsTokenIntel ? fetchAmlTokenSecurity(parsedTokens) : Promise.resolve(null),
+      sanctionPromise,
+      indirectPromise,
+    ]);
+    if (gen !== amlScanGen) return;
+
+    if (peerIntel) {
+      peerFlags = peerIntel.peerFlags;
+      dustPeers = peerIntel.dustPeers || [];
+      peerTagAlerts = peerIntel.peerTagAlerts;
+      peerCategories = peerIntel.peerCategories || [];
+      knownEntityCount = peerIntel.knownEntityCount;
+      topPeerAddrs = peerIntel.topPeerAddrs;
+    }
+    if (tokenIntel) {
+      parsedTokensFinal = tokenIntel.tokens;
+      secTokenLevel = tokenIntel.level;
+      if (tokenIntel.flags.length) {
+        tokenHardFlags = [...tokenIntel.flags];
+        hardFlagsFinal = [...hardFlagsFinal, ...tokenIntel.flags];
+        isFlagged = hardFlagsFinal.length > 0;
+      }
+    }
+
+    let subjectCategoriesFinal = [...subjectCategories];
+    let screenEntries = [];
+    let sanctionPeerAddrs = [];
+    let indirectSanctionLinks = [];
+    let sanctionMeta = null;
