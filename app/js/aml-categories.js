@@ -442,3 +442,81 @@
   }
 
   function resolveAmlGraphNodeStyle(addr, count, flaggedSet, categoryMap, targetAddr) {
+    if (addr === targetAddr) {
+      return {
+        type: 'center',
+        color: AML_GRAPH_FALLBACK.center,
+        category: null,
+        tag: null,
+        benign: false,
+      };
+    }
+    const catEntry = categoryMap?.get(addr);
+    const category = catEntry?.category || null;
+    if (category) {
+      return {
+        type: 'cat-' + category,
+        color: amlCategoryColor(category),
+        category,
+        tag: amlCatLabel(category),
+        benign: isGraphBenignCategory(category),
+      };
+    }
+    if (flaggedSet.has(addr)) {
+      return {
+        type: 'danger',
+        color: AML_GRAPH_FALLBACK.danger,
+        category: null,
+        tag: t('Flagged'),
+        benign: false,
+      };
+    }
+    if (count > 20) {
+      return {
+        type: 'warn',
+        color: AML_GRAPH_FALLBACK.warn,
+        category: null,
+        tag: t('Watch'),
+        benign: false,
+      };
+    }
+    return {
+      type: 'safe',
+      color: AML_GRAPH_FALLBACK.safe,
+      category: null,
+      tag: t('OK'),
+      benign: true,
+    };
+  }
+
+  function amlPeerCategoryBadge(categoryId) {
+    if (!categoryId) return '';
+    const meta = amlCategoryMeta(categoryId);
+    if (!meta) return '';
+    return `<span class="badge ${meta.badge} aml-peer-cat">${esc(amlCatLabel(categoryId))}</span>`;
+  }
+
+  window.AML_CATEGORY_ORDER = AML_CATEGORY_ORDER;
+  window.AML_CATEGORY_META = AML_CATEGORY_META;
+  window.classifyAmlTagText = classifyAmlTagText;
+  window.classifyAmlSecAccHits = classifyAmlSecAccHits;
+  window.classifyAmlPeerSecAccHits = classifyAmlPeerSecAccHits;
+  window.isAmlPeerLikelyDustSpammer = isAmlPeerLikelyDustSpammer;
+  window.isAmlSubjectDustVictim = isAmlSubjectDustVictim;
+  window.buildAmlSubjectCategories = buildAmlSubjectCategories;
+  window.buildAmlPeerCategoryHits = buildAmlPeerCategoryHits;
+  window.buildAmlExposureBreakdown = buildAmlExposureBreakdown;
+  window.amlPeerCategoryIndex = amlPeerCategoryIndex;
+  window.getAmlAddressBookEntry = getAmlAddressBookEntry;
+  window.isAmlHighRiskCategory = isAmlHighRiskCategory;
+  window.isAmlKnownEntityCategory = isAmlKnownEntityCategory;
+  window.amlExposurePanel = amlExposurePanel;
+  window.amlPeerCategoryBadge = amlPeerCategoryBadge;
+  window.amlCatLabel = amlCatLabel;
+  window.amlCategoryColor = amlCategoryColor;
+  window.amlFormatExposureUsd = amlFormatExposureUsd;
+  window.amlTransferVolumeUsd = amlTransferVolumeUsd;
+  window.isGraphBenignCategory = isGraphBenignCategory;
+  window.resolveAmlGraphNodeStyle = resolveAmlGraphNodeStyle;
+  window.AML_GRAPH_FALLBACK = AML_GRAPH_FALLBACK;
+})();
