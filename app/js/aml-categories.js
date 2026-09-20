@@ -368,3 +368,77 @@
     if (totalVolumeUsd > 0) {
       for (const row of rows) {
         row.volumeShare = row.volumeUsd > 0 ? row.volumeUsd / totalVolumeUsd : 0;
+      }
+    }
+    return rows;
+  }
+
+  function amlExposureSeverityClass(severity) {
+    if (severity === 'critical' || severity === 'high') return 'is-high';
+    if (severity === 'medium') return 'is-med';
+    if (severity === 'info') return 'is-info';
+    return 'is-muted';
+  }
+
+  function amlExposurePanel(breakdown, peersPending) {
+    const subtitle = t('Category breakdown · volume in analyzed sample');
+    if (peersPending) {
+      return amlBlock(
+        t('Risk exposure'),
+        '<div class="aml-empty">' + esc(t('Analyzing counterparties…')) + '</div>',
+        subtitle,
+      );
+    }
+    if (!breakdown?.length) {
+      return amlBlock(
+        t('Risk exposure'),
+        '<div class="aml-empty">' + esc(t('No categorized risk exposure in the analyzed sample')) + '</div>',
+        subtitle,
+      );
+    }
+    const totalVolumeUsd = breakdown.reduce((sum, row) => sum + (row.volumeUsd || 0), 0);
+    const hasVolume = totalVolumeUsd > 0;
+    const rows = breakdown.map((row) => {
+      const sevCls = amlExposureSeverityClass(row.severity);
+      const stats = [];
+      if (row.volumeUsd > 0) stats.push(amlFormatExposureUsd(row.volumeUsd));
+      if (row.subject) stats.push(t('This address'));
+      if (row.peerCount > 0) {
+        stats.push(row.peerCount === 1
+          ? t('1 counterparty')
+          : t('{count} counterparties', { count: row.peerCount }));
+      }
+      if (row.transferCount > 0) {
+        stats.push(row.transferCount === 1
+          ? t('1 transfer')
+          : t('{count} transfers', { count: row.transferCount }));
+      }
+      const barPct = hasVolume && row.volumeShare > 0
+        ? Math.max(4, Math.round(row.volumeShare * 100))
+        : 0;
+      const barHtml = barPct
+        ? `<div class="aml-exposure-bar" aria-hidden="true"><span style="width:${barPct}%;background:${esc(row.color || amlCategoryColor(row.id))}"></span></div>`
+        : '';
+      return `<div class="aml-exposure-row ${sevCls}">
+        <span class="aml-exposure-dot" aria-hidden="true" style="background:${esc(row.color || amlCategoryColor(row.id))}"></span>
+        <div class="aml-exposure-main">
+          <div class="aml-exposure-head">
+            <span class="aml-exposure-label">${esc(row.label)}</span>
+            <span class="aml-exposure-stats">${esc(stats.join(' · ') || '—')}</span>
+          </div>
+          ${barHtml}
+        </div>
+      </div>`;
+    }).join('');
+    return amlBlock(
+      t('Risk exposure'),
+      `<div class="aml-exposure-list">${rows}</div>`,
+      subtitle,
+    );
+  }
+
+  function isGraphBenignCategory(categoryId) {
+    return categoryId === 'exchange' || categoryId === 'defi' || categoryId === 'bridge';
+  }
+
+  function resolveAmlGraphNodeStyle(addr, count, flaggedSet, categoryMap, targetAddr) {
