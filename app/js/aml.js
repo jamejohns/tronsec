@@ -1935,3 +1935,152 @@ function computeAmlActivityScore({
   let statusLabel;
   if (isFlagged) {
     status = 'flagged';
+    statusLabel = 'Flagged';
+  } else if (dtCount === 0 && txCount === 0) {
+    status = 'insufficient';
+    statusLabel = 'Insufficient data';
+  } else if (finalScore >= 40) {
+    status = 'unusual';
+    statusLabel = 'Unusual activity';
+  } else {
+    status = 'clean';
+    statusLabel = 'No flags found';
+  }
+
+  let assessmentText;
+  if (isFlagged) {
+    assessmentText = `${ttLabel('flagged')} - ${t(hardFlags[0] || 'Security flags detected')}`;
+  } else if (status === 'unusual') {
+    assessmentText = t('Unusual activity — review counterparties and transaction history below.');
+  } else if (status === 'insufficient') {
+    assessmentText = t('Insufficient transaction data to evaluate activity risk.');
+  } else {
+    assessmentText = t('No flags found — address appears to be a regular wallet.');
+  }
+
+  return { finalScore, scoreFactors, status, statusLabel, hasHardSignals, assessmentText };
+}
+
+function assembleAmlReport({
+  addr, hardFlags, isFlagged, analysis, score, peerFlags, dustPeers = [], topPeerAddrs,
+  knownEntityCount, parsedTokens, tronTags, activityWindow, balanceTrx,
+  accCreated, ageDays, secAcc, tagAcc, tokens, scanProfile, peersPending = false,
+  secTokenLevel = 'unavailable', peerTagAlerts = [], tokenHardFlags = [],
+  subjectCategories = [], peerCategories = [], exposureBreakdown = [],
+  firstFunder = null, inboundCount = 0, outboundCount = 0, flowRatio = null,
+  screenEntries = [], sanctionPeerAddrs = [], indirectSanctionLinks = [],
+  sanctionMeta = null, sanctionUnavailable = false,
+}) {
+  const secAccRedTag = secAcc && /suspicious/i.test(String(secAcc.red_tag || secAcc.redTag || '').trim());
+  const secAccFraudTx = secAcc?.has_fraud_transaction
+    && !(typeof isAmlSubjectDustVictim === 'function' && isAmlSubjectDustVictim(secAcc));
+  const secAccDanger = secAcc && (secAccRedTag || secAcc.is_black_list || secAccFraudTx || secAcc.fraud_token_creator);
+  const secAccWarn = secAcc && (secAcc.send_ad_by_memo || secAcc.has_cheat_transaction);
+  const dustVictimReceived = !!(secAcc && (secAcc.has_cheat_transaction || secAcc.send_ad_by_memo));
+  const incompleteHistory = !!(isFlagged && analysis.txCount === 0 && (tokens.length > 0 || scanProfile.totalTransactionCount || scanProfile.transactions));
+  const flagSources = buildAmlFlagSources(secAcc, tagAcc, tokenHardFlags, screenEntries);
+
+  return {
+    addr,
+    scannedAt: new Date().toISOString(),
+    finalScore: score.finalScore,
+    status: score.status,
+    statusLabel: score.statusLabel,
+    isFlagged,
+    hasHardSignals: score.hasHardSignals,
+    hardFlags: [...hardFlags],
+    flagSources,
+    peerFlags: [...peerFlags],
+    dustPeers: [...dustPeers],
+    dustVictimReceived,
+    peerTagAlerts: [...peerTagAlerts],
+    peerSecurityScreened: [...topPeerAddrs],
+    peerSecurityLimit: AML_PEER_SECURITY_LIMIT,
+    peersPending: !!peersPending,
+    scoreFactors: score.scoreFactors.map(f => ({ label: f.label, labelVars: f.labelVars, pts: f.pts, tier: f.tier })),
+    txCount: analysis.txCount,
+    dtCount: analysis.dtCount,
+    concentration: analysis.concentration,
+    uniquePeers: analysis.uniquePeers,
+    ageDays,
+    knownEntityCount,
+    balanceTrx,
+    accCreated,
+    activityWindow,
+    tronTags,
+    parsedTokens,
+    topPeers: analysis.topPeers.slice(0, 10),
+    topContracts: analysis.topContracts.slice(0, 5),
+    assessmentText: score.assessmentText,
+    secAccLevel: !secAcc ? 'unavailable' : secAccDanger ? 'flagged' : secAccWarn ? 'warnings' : 'clean',
+    secTokenLevel,
+    firstFunder,
+    inboundCount,
+    outboundCount,
+    flowRatio,
+    incompleteHistory,
+    subjectCategories: [...subjectCategories],
+    peerCategories: [...peerCategories],
+    exposureBreakdown: [...exposureBreakdown],
+    sanctionPeerAddrs: [...sanctionPeerAddrs],
+    indirectSanctionLinks: [...indirectSanctionLinks],
+    sanctionMeta: sanctionMeta ? { ...sanctionMeta } : null,
+    sanctionUnavailable: !!sanctionUnavailable,
+  };
+}
+
+async function amlScan(opts = {}) {
+  if (amlScanBusy) return;
+  const force = opts.force === true;
+  const addr = amlInput.value.trim();
+  setError(amlErr, '');
+  if (!addr) { flashInput(amlInput); showToast(t('Enter a TRON address')); return; }
+  if (!isValidTron(addr)) { flashInput(amlInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
+
+  amlLastAddr = addr;
+
+  if (!force) {
+    const cached = readAmlSessionCache(addr);
+    if (cached) {
+      restoreAmlFromCache(cached);
+      return;
+    }
+  } else {
+    clearAmlSessionCache(addr);
+  }
+
+  const gen = ++amlScanGen;
+  amlFromCache = false;
+  setAmlScanLocked(true);
+  hideScanEmpty(amlEmpty);
+  amlRes.innerHTML = SK.aml();
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+  try {
+    if (await probeTronContract(addr)) {
+      if (gen !== amlScanGen) return;
+      amlRes.innerHTML = await renderAmlContractRedirect(addr);
+      bindAmlContractRedirect(addr);
+      setAmlScanLocked(false);
+      return;
+    }
+  } catch (_) {
+    if (gen !== amlScanGen) return;
+  }
+
+  requireCaptcha(async () => {
+    if (gen !== amlScanGen) return;
+
+    try {
+    const [accRes, tokenRes, secAcc, tagAcc, scanAcc, txs] = await Promise.all([
+      gridGet(`/v1/accounts/${addr}`).catch(() => null),
+      scanGet('/account/tokens', {address: addr, start: 0, limit: 200}).catch(()=>null),
+      scanGet('/security/account/data', {address: addr}).catch(() => null),
+      scanGet('/account/tag', {address: addr}).catch(() => null),
+      scanGet('/account', { address: addr }).catch(() => null),
+      fetchAmlTxHistory(addr),
+    ]);
+    if (gen !== amlScanGen) return;
+
+    const scanProfile = scanAcc?.data?.[0] || scanAcc || {};
+    const acc = accRes?.data?.length
