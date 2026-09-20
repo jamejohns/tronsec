@@ -892,3 +892,152 @@ function renderAmlScanFromReport(report, graphPayload, fromCache = false, opts =
       <div class="aml-assessment" id="aml-live-assessment">${parts.assessmentHtml}</div>
       ${typeof tronsecDeepAnalysisPromptHtml === 'function' ? tronsecDeepAnalysisPromptHtml('aml') : ''}
       ${parts.detailsGrid ? `<div class="aml-grid-2" id="aml-live-details">${parts.detailsGrid}</div>` : ''}
+      <div class="aml-grid-2" id="aml-live-exposure">${parts.exposureGrid}</div>
+      ${parts.graphHtml ? `<div id="aml-live-graph">${parts.graphHtml}</div>` : ''}
+      <div id="aml-live-peers">${parts.peersHtml}</div>
+      ${parts.contractsHtml}
+      <p class="aml-disclaimer">${amlDisclaimerText()}</p>
+    </div>`;
+
+  bindAmlActions(addr);
+  if (graphPayload?.topPeers?.length) {
+    renderAMLGraph(
+      'aml-graph-container',
+      graphPayload.addr,
+      graphPayload.topPeers,
+      graphPayload.peerFlags,
+      graphPayload.directTransfers,
+      graphPayload.txCount,
+      {
+        selfFlagged: !!graphPayload.selfFlagged,
+        peerCategories: graphPayload.peerCategories || [],
+        trxPriceUsd: graphPayload.trxPriceUsd ?? null,
+      },
+    );
+  }
+  if (typeof syncModuleNavState === 'function') syncModuleNavState('aml-check');
+  if (window.lucide) lucide.createIcons();
+  mountScanMotion(amlRes, { fromCache: fromCache || opts.skipMotion });
+  return true;
+}
+
+function patchAmlProgressiveFinish(report, graphPayload, gen) {
+  if (gen !== amlScanGen || !report?.addr || amlLastAddr !== report.addr) return false;
+  window._amlLastReport = report;
+
+  const parts = buildAmlViewParts(report, graphPayload, { peersPending: false });
+  const tagsEl = amlRes?.querySelector('.wallet-head-tags');
+  if (tagsEl) tagsEl.innerHTML = parts.headTagsHtml;
+
+  const alertsEl = document.getElementById('aml-live-alerts');
+  if (alertsEl) {
+    alertsEl.innerHTML = parts.alertsHtml;
+    alertsEl.hidden = !parts.alertsHtml;
+  }
+
+  const heroEl = document.getElementById('aml-live-hero');
+  if (heroEl) {
+    const prevScoreEl = heroEl.querySelector('[data-score-value]');
+    const prevScore = prevScoreEl ? Number(prevScoreEl.textContent) : null;
+    heroEl.innerHTML = parts.heroHtml;
+    const nextScoreEl = heroEl.querySelector('[data-score-value]');
+    if (nextScoreEl) {
+      if (Number.isFinite(prevScore) && prevScore !== report.finalScore) {
+        animateScore(nextScoreEl, prevScore, report.finalScore, 450);
+      } else {
+        nextScoreEl.textContent = String(report.finalScore);
+      }
+    }
+    const meterEl = heroEl.querySelector('.aml-risk-meter-fill[data-score-pct]');
+    if (meterEl) {
+      const pct = Number(meterEl.dataset.scorePct);
+      if (Number.isFinite(pct)) {
+        meterEl.style.width = '4%';
+        requestAnimationFrame(() => {
+          meterEl.classList.add('is-animated');
+          meterEl.style.width = `${Math.max(4, pct)}%`;
+        });
+      }
+    }
+  }
+
+  const assessmentEl = document.getElementById('aml-live-assessment');
+  if (assessmentEl) assessmentEl.innerHTML = parts.assessmentHtml;
+
+  const detailsEl = document.getElementById('aml-live-details');
+  if (detailsEl && parts.detailsGrid) detailsEl.innerHTML = parts.detailsGrid;
+
+  const exposureEl = document.getElementById('aml-live-exposure');
+  if (exposureEl) exposureEl.innerHTML = parts.exposureGrid;
+
+  const peersEl = document.getElementById('aml-live-peers');
+  if (peersEl) peersEl.innerHTML = parts.peersHtml;
+
+  if (graphPayload?.topPeers?.length) {
+    renderAMLGraph(
+      'aml-graph-container',
+      graphPayload.addr,
+      graphPayload.topPeers,
+      graphPayload.peerFlags,
+      graphPayload.directTransfers,
+      graphPayload.txCount,
+      {
+        selfFlagged: !!graphPayload.selfFlagged,
+        peerCategories: graphPayload.peerCategories || [],
+        trxPriceUsd: graphPayload.trxPriceUsd ?? null,
+      },
+    );
+  }
+
+  if (window.lucide) lucide.createIcons();
+  amlRes.dataset.amlBindAddr = report.addr;
+  return true;
+}
+
+
+function escapeToken(t) { return esc(t?.tokenAbbr || t?.tokenName || t?.tokenId || t?.tokenContractAddress || '-'); }
+
+
+// -- Known DEX / CEX / issuer contracts (excluded from concentration heuristics) --
+const AML_STABLE_CONTRACTS = new Set([
+  'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', // USDT
+  'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8', // USDC
+  'TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4', // TUSD
+  'TMwFHYXLJaRUPeW6421aqXL4ZEzPRFGkGT', // USDJ
+].map((a) => a.toLowerCase()));
+
+const AML_EXCLUDED_PEERS = new Set([
+  'TNJVzGqKBWkJxJB5XYSqGAwUTV15U24pPq', // SunSwap V2 Router
+  'TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax', // SunSwap V2 Router (legacy)
+  'TKWJdrQkqHisa1X8HUdHEfREvTzw4pMAaY', // SunSwap V2 Factory
+  'TCFNp179Lg46D16zKoumd4Poa2WFFdtqYj', // SUN.io Smart Router
+  'TSSMHYeV2uE9qYH95DqyoCuNCzEL1NvU3S', // SUN token / pool
+  'TCFLL5dx5ZJdKnWuesXxi1VPwjLVmWZZy9', // JST
+  'TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7', // WIN
+  'TNUC9Qb1rRpN8skWv9nHQLdGAWZWjUEYue', // WTRX
+  'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', // USDT
+  'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8', // USDC
+  'TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4', // TUSD
+  'TMwFHYXLJaRUPeW6421aqXL4ZEzPRFGkGT', // USDJ
+  'TJ4NNy8x6a2KJ4Ap9R9YTkPJ73R2JvN8xq', // Binance hot
+  'THPvaUhoh4q8SF59m74avMWz642aZ6m5c5', // Binance
+  'TKHuVq1oKQLXTkdQ59xKf7g4v6pKgjL1ug', // HTX / Huobi
+  'TQrY8tryqsYHD76AMAxYcVp9dLXqXpU3f', // OKX
+  'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE', // Poloniex
+  'TYASr5UV6HEcXatwdFQfmLVUqQQzvNgz9i', // KuCoin
+  'TAUUPGQqR8WCVL88Ap9qoHk5XGrHsmNGJQ', // Allbridge
+  'TKfjV9RNKJJCqPvBtK8L7Knykh7DNWvnYt', // WBTT
+  'TAFjULxiVgT4qWk6UZwjqwZXTSaGaqnVp4', // BTT
+].map((a) => a.toLowerCase()));
+
+// -- Method signature lookup --
+const SIG_TRANSFER     = 'a9059cbb'; // transfer(address,uint256)
+const SIG_TRANSFER_FROM = '23b872dd'; // transferFrom(address,address,uint256)
+
+function isKnownDex(addrBase58) {
+  return isAmlExcludedPeer(addrBase58);
+}
+
+function isAmlExcludedPeer(addrBase58) {
+  return AML_EXCLUDED_PEERS.has(String(addrBase58 || '').toLowerCase());
+}
