@@ -594,3 +594,152 @@ function amlBlock(titleHtml, bodyHtml, meta = '') {
   </div>`;
 }
 
+function amlPanel(titleHtml, rowsHtml, meta = '') {
+  return amlBlock(titleHtml, `<div class="aml-kv-list">${rowsHtml}</div>`, meta);
+}
+
+function amlRowsBlock(titleHtml, rowsHtml, meta = '', emptyMsg = '', noteHtml = '') {
+  const note = noteHtml ? `<p class="aml-block-note">${noteHtml}</p>` : '';
+  const body = rowsHtml
+    ? `${note}<div class="aml-rows">${rowsHtml}</div>`
+    : `<div class="aml-empty">${esc(t(emptyMsg))}</div>`;
+  return amlBlock(titleHtml, body, meta);
+}
+
+function amlSignalsPanel(factors, finalScore, status) {
+  if (!factors.length) {
+    return amlBlock(t('Signal breakdown'), '<div class="aml-empty">' + esc(t('Not enough data to compute risk factors')) + '</div>');
+  }
+  const body = `<div class="aml-signals">${factors.map(f => `
+      <div class="aml-signal${f.tier === 'hard' ? ' is-hard' : ''}${f.pts < 0 ? ' is-positive' : f.pts >= 15 ? ' is-high' : ''}">
+        <span class="aml-signal-label">${esc(i18nFactorLabel(f))}</span>
+        <span class="aml-signal-pts ${f.pts < 0 ? 'is-green' : f.pts >= 15 ? 'is-red' : 'is-amber'}">${f.pts > 0 ? '+' : ''}${f.pts}</span>
+      </div>`).join('')}
+    </div>`;
+  return amlBlock(t('Signal breakdown'), body, `${finalScore}/100 ${t('composite')}`);
+}
+
+function amlLooksLikeSpamTokenSymbol(symbol) {
+  const s = String(symbol || '').trim();
+  if (!s || s === '—' || s === '-') return false;
+  if (/telegram|t\.me|@\w/i.test(s)) return true;
+  if (/\.com|\.org|\.bi|\.cc|gas\s*free|airdrop|claim|http|www\./i.test(s)) return true;
+  if (/^\d{2,}[A-Z]{2,}/i.test(s) && s.length <= 16) return true;
+  return false;
+}
+
+function amlIsExposureJunk(tok) {
+  if (!tok) return true;
+  if (tok.secLevel === 'spam') return true;
+  if (amlLooksLikeSpamTokenSymbol(tok.symbol)) return true;
+  const usd = tok.usd;
+  if (usd == null || !Number.isFinite(usd) || usd < 1) return true;
+  return false;
+}
+
+function amlTokensPanel(parsedTokens) {
+  const visible = (parsedTokens || []).filter(tok => !amlIsExposureJunk(tok));
+  const junkCount = (parsedTokens || []).length - visible.length;
+  if (!visible.length) {
+    const emptyMsg = junkCount > 0
+      ? t('No significant TRC20 holdings — spam airdrops ignored')
+      : t('No TRC20 balances detected');
+    return amlBlock(t('Token exposure'), '<div class="aml-empty">' + esc(emptyMsg) + '</div>');
+  }
+  const rows = visible.map(tok => {
+    const balFmt = tok.balance >= 1e6 ? (tok.balance / 1e6).toFixed(2) + 'M'
+      : tok.balance >= 1e3 ? (tok.balance / 1e3).toFixed(2) + 'K'
+      : tok.balance.toFixed(Math.min(4, tok.decimals));
+    const usdStr = tok.usd != null ? `$${tok.usd.toFixed(2)}` : '';
+    const secBadge = tok.secLevel === 'flagged'
+      ? `<span class="badge b-red aml-token-sec">${esc(t('High risk'))}</span>`
+      : tok.secLevel === 'warnings'
+        ? `<span class="badge b-amber aml-token-sec">${esc(t('Warnings'))}</span>`
+        : '';
+    return `<div class="aml-row aml-row--compact${tok.secLevel === 'flagged' ? ' is-risk is-high' : ''}">
+      <div class="aml-row-icon aml-row-icon--token">${esc(tok.symbol.slice(0, 3).toUpperCase())}</div>
+      <div class="aml-row-body">
+        <div class="aml-row-title"><span class="aml-token-name">${esc(tok.symbol)}</span>${secBadge}${tok.addr ? amlAddrLink(tok.addr) : ''}</div>
+        <div class="aml-row-meta">${balFmt} tokens${usdStr ? ` · ${usdStr}` : ''}${tok.secNote ? ` · ${esc(tok.secNote)}` : ''}</div>
+      </div>
+    </div>`;
+  }).join('');
+  const note = junkCount > 0
+    ? esc(junkCount === 1
+      ? t('1 spam-like token hidden')
+      : t('{count} spam-like tokens hidden', { count: junkCount }))
+    : '';
+  return amlRowsBlock(
+    `Token exposure <span>· ${visible.length}</span>`,
+    rows,
+    t('TronScan token security'),
+    '',
+    note,
+  );
+}
+
+function amlSourceBadge(level) {
+  switch (level) {
+    case 'flagged': return `<span class="badge b-red">${tt('flagged')}</span>`;
+    case 'warnings': return badge('b-amber', 'Warnings');
+    case 'clean': return badge('b-green', 'No flags');
+    default: return badge('b-ghost', t('Unavailable'));
+  }
+}
+
+function buildAmlViewParts(report, graphPayload, opts = {}) {
+  const peersPending = !!opts.peersPending;
+  const addr = report.addr;
+  const {
+    finalScore, status, statusLabel, isFlagged, hasHardSignals, hardFlags = [], peerFlags = [],
+    dustPeers = [],
+    peerTagAlerts = [],
+    scoreFactors = [], txCount = 0, dtCount = 0, concentration = 0, uniquePeers = 0,
+    ageDays, knownEntityCount = 0, balanceTrx, accCreated, activityWindow,
+    tronTags = [], parsedTokens = [], topPeers = [], topContracts = [],
+    peerSecurityScreened = [],
+    secAccLevel = 'unavailable', secTokenLevel = 'unavailable', incompleteHistory = false,
+    flagSources = { secAcc: [], tags: [], tokens: [], sanctions: [], labels: [] },
+    exposureBreakdown = [], subjectCategories = [], peerCategories = [],
+    firstFunder = null, inboundCount = 0, outboundCount = 0, flowRatio = null,
+    sanctionPeerAddrs = [], indirectSanctionLinks = [],
+    sanctionMeta = null, sanctionUnavailable = false,
+  } = report;
+
+  const peerCatMap = typeof amlPeerCategoryIndex === 'function'
+    ? amlPeerCategoryIndex(peerCategories)
+    : new Map();
+
+  const screenedSet = new Set(
+    (peerSecurityScreened.length
+      ? peerSecurityScreened
+      : topPeers.slice(0, AML_PEER_SECURITY_LIMIT).map((p) => p[0]).filter(isValidTron))
+  );
+
+  const headTagsHtml = [
+    amlStatusBadge(status, isFlagged),
+    ...tronTags.slice(0, 4).map(tag => badge('b-cyan', tag)),
+  ].filter(Boolean).join('');
+
+  let alertsInner = '';
+  if (hardFlags.length) {
+    alertsInner += amlFlagSourceAlerts(flagSources, peerFlags, peersPending);
+  }
+  if (incompleteHistory) {
+    alertsInner += amlAlertInline('amber', t('Security flags detected, but recent transaction history could not be loaded — activity metrics below may be incomplete.'));
+  }
+  const sanctionPeerSet = new Set(sanctionPeerAddrs);
+  const tronScanPeerFlags = peerFlags.filter((a) => !sanctionPeerSet.has(a));
+  if (!peersPending && tronScanPeerFlags.length > 0) {
+    alertsInner += amlAlertList('amber', t('Flagged counterparties (TronScan security)'), tronScanPeerFlags.map(a => amlAddrLink(a)));
+  }
+  if (!peersPending && sanctionPeerAddrs.length > 0) {
+    alertsInner += amlAlertList('red', t('Sanctions list counterparties'), sanctionPeerAddrs.map(a => amlAddrLink(a)));
+  }
+  if (!peersPending && indirectSanctionLinks.length > 0) {
+    alertsInner += amlAlertList('amber', t('Indirect sanctions exposure'), indirectSanctionLinks.map((link) =>
+      esc(t('{peer} · via {sanctioned}', { peer: addrLabel(link.peer), sanctioned: addrLabel(link.sanctioned) }))
+    ));
+  }
+  if (!peersPending && peerTagAlerts.length > 0) {
+    alertsInner += amlAlertList('amber', t('Counterparty public tags'), peerTagAlerts.map(item =>
