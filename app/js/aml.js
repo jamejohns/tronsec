@@ -1041,3 +1041,152 @@ function isKnownDex(addrBase58) {
 function isAmlExcludedPeer(addrBase58) {
   return AML_EXCLUDED_PEERS.has(String(addrBase58 || '').toLowerCase());
 }
+
+function amlStableAssetLabel(contractAddr) {
+  const key = String(contractAddr || '').toLowerCase();
+  if (key === 'tr7nhqjekqxgtci8q8zy4pl8otszgjlj6t') return 'USDT';
+  if (key === 'tekxitehnzsmse2xqrbj4w32run966rdz8') return 'USDC';
+  if (key === 'tupmherzl2fhh4svnulabnkloks4gjc1f4') return 'TUSD';
+  if (key === 'tmwfhyxljarupew6421aqxl4zezprfgkgt') return 'USDJ';
+  return AML_STABLE_CONTRACTS.has(key) ? 'stablecoin' : '';
+}
+
+// Extract hex address from padded 32-byte encoding in calldata
+function decodeAddressFromData(data, byteOffset) {
+  const start = byteOffset * 2 + 24; // skip 12 zero bytes padding
+  return '41' + data.slice(start, start + 40).toLowerCase();
+}
+
+// Try to extract TRC20 transfer recipient from tx data
+function getTRC20Recipient(tx) {
+  const data = tx.raw_data?.contract?.[0]?.parameter?.value?.data || '';
+  const sig = data.slice(0, 8).toLowerCase();
+  if (sig === SIG_TRANSFER) {
+    return decodeAddressFromData(data, 4); // offset 4 bytes = param 1
+  }
+  if (sig === SIG_TRANSFER_FROM) {
+    return decodeAddressFromData(data, 36); // offset 36 bytes = param 2 (to)
+  }
+  return null;
+}
+
+function decodeTrc20AmountFromData(data, sig) {
+  if (!data || data.length < 72) return 0;
+  let hex = '';
+  if (sig === SIG_TRANSFER && data.length >= 136) hex = data.slice(72, 136);
+  else if (sig === SIG_TRANSFER_FROM && data.length >= 200) hex = data.slice(136, 200);
+  if (!hex) return 0;
+  try {
+    return Number(BigInt('0x' + hex));
+  } catch (_) {
+    return parseInt(hex, 16) || 0;
+  }
+}
+
+function amlTriggerTransferAmount(tx, val, isTrc20) {
+  const rawAmt = Number(val?.amount || val?.call_value || 0) || 0;
+  if (isTrc20 && rawAmt > 0) return rawAmt;
+  const data = val?.data || '';
+  const sig = data.slice(0, 8).toLowerCase();
+  if (sig === SIG_TRANSFER || sig === SIG_TRANSFER_FROM) {
+    const decoded = decodeTrc20AmountFromData(data, sig);
+    if (decoded > 0) return decoded;
+  }
+  return rawAmt;
+}
+
+function buildAmlHardFlags(secAcc, tagAcc) {
+  return [
+    ...amlSecAccFlagEntries(secAcc),
+    ...amlTagFlagEntries(tagAcc),
+  ].map((entry) => entry.label);
+}
+
+function amlSanctionHitLabel(hit) {
+  const entity = hit?.entity || t('Listed entity');
+  switch (hit?.source) {
+    case 'uk_ofsi': return t('UK OFSI listed: {entity}', { entity });
+    case 'eu_sanctions': return t('EU sanctions listed: {entity}', { entity });
+    case 'ofac_sdn': return t('OFAC SDN listed: {entity}', { entity });
+    default: return t('Sanctions listed: {entity}', { entity });
+  }
+}
+
+function amlSanctionHitHint(hit) {
+  const programs = (hit?.programs || []).join(', ') || '—';
+  switch (hit?.source) {
+    case 'uk_ofsi': return t('UK OFSI consolidated list · {programs}', { programs });
+    case 'eu_sanctions': return t('EU consolidated sanctions · {programs}', { programs });
+    case 'ofac_sdn': return t('U.S. Treasury SDN · programs: {programs}', { programs });
+    default: return t('Sanctions list · {programs}', { programs });
+  }
+}
+
+function amlLabelHitLabel(hit) {
+  return t('TRONSEC label: {label}', { label: hit?.label || hit?.entity || t('Listed entity') });
+}
+
+function amlLabelHitHint(hit) {
+  return hit?.remarks || t('Internal TRONSEC AML label — not a government sanctions list.');
+}
+
+function amlScreenFlagEntries(hits, subjectAddr) {
+  return (hits || [])
+    .filter((h) => sameTronAddr(h.addr, subjectAddr))
+    .map((h) => {
+      if (h.source === 'tronsec_label') {
+        return {
+          label: amlLabelHitLabel(h),
+          hint: amlLabelHitHint(h),
+          source: h.source,
+          category: h.category,
+        };
+      }
+      return {
+        label: amlSanctionHitLabel(h),
+        hint: amlSanctionHitHint(h),
+        source: h.source,
+      };
+    });
+}
+
+function mergeAmlScreeningResults({
+  addr,
+  peerAddrs = [],
+  sanctionRes,
+  subjectCategories = [],
+  peerCategories = [],
+  peerFlags = [],
+  hardFlags = [],
+}) {
+  const hits = sanctionRes?.hits || [];
+  const meta = sanctionRes?.meta || {};
+  const subjectCats = [...subjectCategories];
+  const peerCats = [...peerCategories];
+  const flags = [...peerFlags];
+  const hard = [...hardFlags];
+  const screenEntries = amlScreenFlagEntries(hits, addr);
+  const sanctionPeerAddrs = [];
+  const peerSet = new Set((peerAddrs || []).map((a) => String(a).toLowerCase()));
+
+  for (const hit of hits || []) {
+    if (sameTronAddr(hit.addr, addr)) {
+      if (hit.source === 'tronsec_label') {
+        const cat = hit.category || 'unknown_risk';
+        if (!subjectCats.some((c) => c.category === cat && c.source === 'tronsec_label')) {
+          subjectCats.push({ category: cat, source: 'tronsec_label', detail: hit.label || hit.entity });
+        }
+        const label = amlLabelHitLabel(hit);
+        if (!hard.includes(label)) hard.push(label);
+      } else if (isAmlSanctionHit(hit)) {
+        const detail = hit.programs?.length
+          ? `${hit.source} · ${hit.programs.join(', ')}`
+          : hit.source;
+        if (!subjectCats.some((c) => c.category === 'sanctions' && c.source === hit.source)) {
+          subjectCats.push({ category: 'sanctions', source: hit.source, detail });
+        }
+        const label = amlSanctionHitLabel(hit);
+        if (!hard.includes(label)) hard.push(label);
+      }
+      continue;
+    }
