@@ -147,3 +147,152 @@ async function renderAmlContractRedirect(addr) {
 
 function bindAmlContractRedirect(addr) {
   bindContractScanRedirect(addr, 'aml');
+}
+
+function bindAmlActions(addr) {
+  if (!amlRes) return;
+  amlRes.dataset.amlBindAddr = addr;
+
+  if (amlRes.dataset.amlActionsBound !== '1') {
+    amlRes.dataset.amlActionsBound = '1';
+    amlRes.addEventListener('click', (e) => {
+      const boundAddr = amlRes.dataset.amlBindAddr;
+      if (!boundAddr) return;
+
+      if (e.target.closest('#aml-refresh-btn')) {
+        e.preventDefault();
+        amlScan({ force: true });
+        return;
+      }
+
+      if (e.target.closest('#aml-copy-addr-btn')) {
+        e.preventDefault();
+        navigator.clipboard.writeText(boundAddr).then(() => {
+          const btn = document.getElementById('aml-copy-addr-btn');
+          if (!btn) return;
+          btn.classList.add('is-copied');
+          btn.innerHTML = `${icSVG(IC.check, 14)}<span>${t('Copied')}</span>`;
+          setTimeout(() => {
+            btn.classList.remove('is-copied');
+            btn.innerHTML = `${icSVG(IC.copy, 14)}<span>${t('Copy')}</span>`;
+          }, 2000);
+        });
+        return;
+      }
+
+      if (e.target.closest('#aml-export-pdf-btn')) {
+        e.preventDefault();
+        if (!window._amlLastReport) { showToast(t('Run a scan first')); return; }
+        amlExportPdf(window._amlLastReport);
+      }
+    });
+  }
+
+  if (typeof bindScanHeadOverflow === 'function') bindScanHeadOverflow(amlRes);
+}
+
+async function amlExportPdf(report) {
+  const api = window.tronsecAmlPdf;
+  if (!report || !api?.AmlPdfWriter) {
+    showToast(t('PDF export failed'));
+    return;
+  }
+  const { AmlPdfWriter, AML_PDF, amlPdfStatusColor } = api;
+  const btn = document.getElementById('aml-export-pdf-btn');
+  if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+  try {
+    await api.ensurePdfBrandAssets();
+    const reportId = `AML-${report.addr.slice(-8).toUpperCase()}`;
+    const pdf = new AmlPdfWriter(reportId);
+    const m = pdf.margin;
+    const scoreColor = amlPdfStatusColor(report.status, report.isFlagged);
+    const stamp = new Date(report.scannedAt).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+
+    pdf.drawReportHeader({
+      title: t('AML SCREENING REPORT'),
+      moduleLabel: t('AML check'),
+      stamp,
+      reportId,
+    });
+
+    pdf.drawScoreCard({
+      score: report.finalScore,
+      scoreColor,
+      statusLabel: t(report.statusLabel),
+      subtitle: report.hasHardSignals ? t('Composite risk signal') : t('Activity risk signal'),
+      meta: t('Sample: latest {count} transactions', { count: amlSampleCount() }),
+      address: report.addr,
+      addressLabel: t('SUBJECT ADDRESS'),
+    });
+
+    if (report.assessmentText) {
+      pdf.section(t('Assessment'));
+      pdf.bullet(t(report.assessmentText), scoreColor);
+    }
+    if (report.hardFlags?.length) {
+      const fs = report.flagSources || {};
+      if (fs.sanctions?.length) {
+        pdf.section(t('Scanned address — sanctions lists'));
+        fs.sanctions.forEach((entry) => pdf.bullet(`${t(entry.label)} — ${t(entry.hint)}`, AML_PDF.red));
+      }
+      if (fs.labels?.length) {
+        pdf.section(t('Scanned address — TRONSEC labels'));
+        fs.labels.forEach((entry) => pdf.bullet(`${t(entry.label)} — ${t(entry.hint)}`, AML_PDF.red));
+      }
+      if (fs.secAcc?.length) {
+        pdf.section(t('Scanned address — TronScan security'));
+        fs.secAcc.forEach((entry) => pdf.bullet(`${t(entry.label)} — ${t(entry.hint)}`, AML_PDF.red));
+      }
+      if (fs.tags?.length) {
+        pdf.section(t('Scanned address — public tags'));
+        fs.tags.forEach((entry) => pdf.bullet(`${t(entry.label)} — ${t(entry.hint)}`, AML_PDF.red));
+      }
+      if (fs.tokens?.length) {
+        pdf.section(t('Scanned address — token holdings'));
+        fs.tokens.forEach((entry) => pdf.bullet(`${t(entry.label)} — ${t(entry.hint)}`, AML_PDF.red));
+      }
+      if (!fs.secAcc?.length && !fs.tags?.length && !fs.tokens?.length && !fs.sanctions?.length && !fs.labels?.length) {
+        pdf.section(t('Security flags'));
+        report.hardFlags.forEach(flag => pdf.bullet(t(flag), AML_PDF.red));
+      }
+    }
+    const sanctionPeerSet = new Set(report.sanctionPeerAddrs || []);
+    const tronScanPeerFlags = (report.peerFlags || []).filter((a) => !sanctionPeerSet.has(a));
+    if (report.sanctionPeerAddrs?.length) {
+      pdf.section(t('Sanctions list counterparties'));
+      report.sanctionPeerAddrs.slice(0, 8).forEach((p) => pdf.bullet(p, AML_PDF.red));
+    }
+    if (report.indirectSanctionLinks?.length) {
+      pdf.section(t('Indirect sanctions exposure'));
+      report.indirectSanctionLinks.slice(0, 8).forEach((link) => {
+        pdf.bullet(t('{peer} · via {sanctioned}', {
+          peer: addrLabel(link.peer),
+          sanctioned: addrLabel(link.sanctioned),
+        }), AML_PDF.amber);
+      });
+    }
+    if (tronScanPeerFlags.length) {
+      pdf.section(t('Flagged counterparties (TronScan security)'));
+      tronScanPeerFlags.slice(0, 8).forEach(p => pdf.bullet(p, AML_PDF.amber));
+    }
+    if (report.scoreFactors?.length) {
+      pdf.section(t('Signal breakdown'));
+      report.scoreFactors.forEach(f => {
+        const lines = pdf.wrapText(i18nFactorLabel(f), pdf.W - m * 2 - 70, 8.5, 'sans');
+        pdf.need(lines.length * 12 + 4);
+        lines.forEach((line, i) => {
+          pdf.text(m, pdf.cursorY, line, 8.5, 'sans', AML_PDF.text2);
+          if (i === 0) {
+            const ptsColor = f.pts < 0 ? AML_PDF.green : f.pts >= 15 ? AML_PDF.red : AML_PDF.amber;
+            pdf.textRight(pdf.W - m, pdf.cursorY, `${f.pts > 0 ? '+' : ''}${f.pts}`, 8.5, 'mono', ptsColor, true);
+          }
+          pdf.cursorY -= 12;
+        });
+        pdf.cursorY -= 2;
+      });
+    }
+
+    pdf.section(t('On-chain summary'));
+    pdf.row(t('Transactions sampled'), `${Math.min(report.txCount, amlSampleCount())} ${t('of latest {count}', { count: amlSampleCount() })}`);
+    pdf.row(t('Direct transfers'), String(report.dtCount));
+    pdf.row(t('Concentration'), report.dtCount > 0 ? `${(report.concentration * 100).toFixed(0)}% / ${report.uniquePeers}${t(' peers')}` : '-');
