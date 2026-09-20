@@ -445,3 +445,152 @@ function amlPeerVolumeUsd(peerAddr, directTransfers, trxPriceUsd) {
       total += usd;
       has = true;
     }
+  }
+  return has ? total : null;
+}
+
+function amlPeerRow(addr, count, opts = {}) {
+  const {
+    rank = 1,
+    maxCount = count,
+    secState = 'unscreened',
+    peerCategory = '',
+    isDust = false,
+    volumeUsd = null,
+  } = opts;
+  const catColor = peerCategory && typeof amlCategoryColor === 'function'
+    ? amlCategoryColor(peerCategory)
+    : '';
+  const catBadge = (typeof amlPeerCategoryBadge === 'function' && peerCategory)
+    ? amlPeerCategoryBadge(peerCategory)
+    : '';
+  const isFlaggedPeer = !isDust && secState === 'flagged';
+  const isWatchPeer = !isDust && !isFlaggedPeer && count > 20;
+  const isHighCat = peerCategory && typeof isAmlHighRiskCategory === 'function' && isAmlHighRiskCategory(peerCategory);
+  const sevCls = isDust ? 'is-dust'
+    : isFlaggedPeer || isHighCat ? 'is-high'
+    : isWatchPeer ? 'is-med'
+    : peerCategory && typeof isAmlKnownEntityCategory === 'function' && isAmlKnownEntityCategory(peerCategory) ? 'is-info'
+    : '';
+  const barPct = maxCount > 0 ? Math.max(4, Math.round((count / maxCount) * 100)) : 0;
+  const volStr = volumeUsd > 0 && typeof amlFormatExposureUsd === 'function'
+    ? amlFormatExposureUsd(volumeUsd)
+    : '';
+
+  let statusPill = '';
+  if (isDust) {
+    statusPill = `<span class="aml-peer-pill is-dust">${esc(t('Spam / dust'))}</span>`;
+  } else if (secState === 'flagged') {
+    statusPill = `<span class="aml-peer-pill is-danger">${esc(t('TronScan flagged'))}</span>`;
+  } else if (secState === 'pending') {
+    statusPill = `<span class="aml-peer-pill is-pending">${esc(t('Checking…'))}</span>`;
+  } else if (secState === 'screened') {
+    statusPill = isWatchPeer
+      ? `<span class="aml-peer-pill is-watch">${esc(t('High volume'))}</span><span class="aml-peer-pill is-clear">${esc(t('TronScan clear'))}</span>`
+      : `<span class="aml-peer-pill is-clear">${esc(t('TronScan clear'))}</span>`;
+  } else {
+    statusPill = `<span class="aml-peer-pill is-muted">${esc(t('Not screened'))}</span>`;
+  }
+
+  const dotStyle = catColor ? ` style="background:${esc(catColor)}"` : '';
+  const barStyle = catColor
+    ? ` style="width:${barPct}%;background:${esc(catColor)}"`
+    : ` style="width:${barPct}%"`;
+
+  return `<div class="aml-peer-row ${sevCls}">
+    <div class="aml-peer-rank">${String(rank).padStart(2, '0')}</div>
+    <div class="aml-peer-dot"${dotStyle} aria-hidden="true"></div>
+    <div class="aml-peer-main">
+      <div class="aml-peer-head">
+        <div class="aml-peer-title">${amlAddrLink(addr)}${catBadge}</div>
+        <div class="aml-peer-stats">${volStr ? `<span class="aml-peer-vol">${esc(volStr)}</span>` : ''}<span class="aml-peer-tx">${t('{count} txs', { count })}</span></div>
+      </div>
+      <div class="aml-peer-bar" aria-hidden="true"><span${barStyle}></span></div>
+      <div class="aml-peer-foot">${statusPill}</div>
+    </div>
+  </div>`;
+}
+
+function amlPeersPanel(topPeers, opts = {}) {
+  const {
+    peersPending = false,
+    peerFlags = [],
+    dustPeers = [],
+    peerCatMap = new Map(),
+    screenedSet = new Set(),
+    directTransfers = [],
+    trxPriceUsd = null,
+    peerSecurityLimit = AML_PEER_SECURITY_LIMIT,
+    noteHtml = '',
+    meta = '',
+    emptyMsg = 'No direct transfers found in analyzed history',
+  } = opts;
+
+  if (!topPeers.length) {
+    return amlRowsBlock(
+      `${esc(t('Top counterparties (security screened)'))} <span>· 0</span>`,
+      '',
+      meta,
+      emptyMsg,
+      noteHtml,
+    );
+  }
+
+  const dustSet = new Set((dustPeers || []).map((a) => String(a).toLowerCase()));
+  const maxCount = Math.max(1, ...topPeers.map((p) => p[1]));
+  const flaggedCount = topPeers.filter(([a]) => peerFlags.includes(a)).length;
+  const dustCount = topPeers.filter(([a]) => dustSet.has(String(a).toLowerCase())).length;
+  const knownCount = topPeers.filter(([a]) => {
+    const cat = peerCatMap.get(a)?.category;
+    return typeof isAmlKnownEntityCategory === 'function' && isAmlKnownEntityCategory(cat);
+  }).length;
+
+  const summaryHtml = peersPending ? '' : `<div class="aml-peer-summary">
+    <span class="aml-peer-chip">${topPeers.length} ${esc(t('peers'))}</span>
+    ${flaggedCount ? `<span class="aml-peer-chip is-danger">${flaggedCount} ${esc(tt('flagged'))}</span>` : ''}
+    ${dustCount ? `<span class="aml-peer-chip is-muted">${dustCount} ${esc(t('dust'))}</span>` : ''}
+    ${knownCount ? `<span class="aml-peer-chip is-info">${knownCount} ${esc(t('known entities'))}</span>` : ''}
+  </div>`;
+
+  const rows = topPeers.map(([a, c], idx) => {
+    const isDust = dustSet.has(String(a).toLowerCase());
+    const secState = peersPending
+      ? 'pending'
+      : peerFlags.includes(a)
+        ? 'flagged'
+        : (screenedSet.has(a) ? 'screened' : 'unscreened');
+    const peerCat = peerCatMap.get(a)?.category || '';
+    const volumeUsd = amlPeerVolumeUsd(a, directTransfers, trxPriceUsd);
+    return amlPeerRow(a, c, {
+      rank: idx + 1,
+      maxCount,
+      secState,
+      peerCategory: peerCat,
+      isDust,
+      volumeUsd,
+    });
+  }).join('');
+
+  const note = noteHtml ? `<p class="aml-block-note">${noteHtml}</p>` : '';
+  const body = `${summaryHtml}${note}<div class="aml-peer-list">${rows}</div>`;
+  const title = `${esc(t('Top counterparties (security screened)'))} <span>· ${topPeers.length}</span>`;
+  const metaOut = peersPending
+    ? t('Security screening…')
+    : (typeof meta === 'object' && meta?.key
+      ? t(meta.key, meta.vars || {})
+      : meta);
+  return amlBlock(title, body, metaOut || t('Top {count} by direct transfers · TronScan security API', { count: peerSecurityLimit }));
+}
+
+function amlBlock(titleHtml, bodyHtml, meta = '') {
+  const metaHtml = scanBlockMeta(meta);
+  const title = /<[^>]+>/.test(titleHtml) ? titleHtml : esc(t(titleHtml));
+  return `<div class="aml-block">
+    <div class="aml-block-head">
+      <span class="aml-block-title">${title}</span>
+      ${metaHtml}
+    </div>
+    <div class="aml-block-body">${bodyHtml}</div>
+  </div>`;
+}
+
