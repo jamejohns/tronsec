@@ -296,3 +296,152 @@ async function amlExportPdf(report) {
     pdf.row(t('Transactions sampled'), `${Math.min(report.txCount, amlSampleCount())} ${t('of latest {count}', { count: amlSampleCount() })}`);
     pdf.row(t('Direct transfers'), String(report.dtCount));
     pdf.row(t('Concentration'), report.dtCount > 0 ? `${(report.concentration * 100).toFixed(0)}% / ${report.uniquePeers}${t(' peers')}` : '-');
+    pdf.row(t('Account age'), report.ageDays !== null ? `${report.ageDays} days` : t('Unknown'));
+    if (report.balanceTrx !== null) pdf.row(t('Balance'), `${report.balanceTrx.toFixed(2)} TRX`, AML_PDF.info);
+    if (report.accCreated) pdf.row(t('Created'), report.accCreated);
+    if (report.activityWindow) pdf.row(t('Activity window'), report.activityWindow);
+    if (report.inboundCount > 0 || report.outboundCount > 0) {
+      const ratioStr = report.flowRatio != null && report.outboundCount > 0
+        ? ` (${Number(report.flowRatio).toFixed(1)}×)`
+        : '';
+      pdf.row(t('Inbound/outbound ratio'), `${report.inboundCount} / ${report.outboundCount}${ratioStr}`);
+    }
+    if (report.firstFunder?.addr) {
+      pdf.row(t('First funder'), `${addrLabel(report.firstFunder.addr)} · ${report.firstFunder.asset || 'TRX'}`);
+    }
+
+    if (report.exposureBreakdown?.length) {
+      pdf.section(t('Risk exposure'));
+      report.exposureBreakdown.forEach((row) => {
+        const stats = [];
+        if (row.volumeUsd > 0 && typeof amlFormatExposureUsd === 'function') {
+          stats.push(amlFormatExposureUsd(row.volumeUsd));
+        }
+        if (row.subject) stats.push(t('This address'));
+        if (row.peerCount > 0) {
+          stats.push(row.peerCount === 1
+            ? t('1 counterparty')
+            : t('{count} counterparties', { count: row.peerCount }));
+        }
+        if (row.transferCount > 0) {
+          stats.push(row.transferCount === 1
+            ? t('1 transfer')
+            : t('{count} transfers', { count: row.transferCount }));
+        }
+        pdf.row(row.label, stats.join(' · ') || '—');
+      });
+    }
+    if (report.topPeers?.length) {
+      pdf.section(t('Top counterparties (security screened)'));
+      const screened = new Set(report.peerSecurityScreened || []);
+      report.topPeers.slice(0, AML_PEER_SECURITY_LIMIT).forEach(([a, c]) => {
+        let status = '';
+        if (report.peerFlags?.includes(a)) status = ` · ${t('TronScan security · flagged')}`;
+        else if (screened.has(a)) status = ` · ${t('TronScan security · no flags')}`;
+        pdf.row(addrLabel(a), t('{count} direct transfers', { count: c }) + status);
+      });
+    }
+
+    pdf.section(t('Sources checked'));
+    pdf.row(t('TronScan account security'), report.secAccLevel || t('Unavailable'));
+    const sm = report.sanctionMeta || {};
+    const sanctionSummary = report.flagSources?.sanctions?.length
+      ? t('Match found')
+      : report.sanctionUnavailable
+        ? t('Unavailable')
+        : [sm.ofac?.version ? `OFAC ${sm.ofac.version}` : null, sm.uk?.count ? `UK ${sm.uk.count}` : null].filter(Boolean).join(' · ') || t('No match');
+    pdf.row(t('Sanctions lists'), sanctionSummary);
+    pdf.row(t('TRONSEC labels'), report.flagSources?.labels?.length ? t('Match found') : t('No match'));
+    pdf.row(t('TronScan token security'), report.secTokenLevel || t('Unavailable'));
+
+    pdf.disclaimerBox(amlDisclaimerText());
+
+    const fname = `TRONSEC-AML-${report.addr.slice(0, 6)}${report.addr.slice(-4)}-${new Date(report.scannedAt).toISOString().slice(0, 10)}.pdf`;
+    pdf.download(fname);
+    showToast(t('PDF report downloaded'));
+  } catch (e) {
+    showToast(t('PDF export failed'));
+    console.error(e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('is-busy'); }
+  }
+}
+
+function amlShieldTier(status, isFlagged) {
+  if (isFlagged || status === 'flagged') return 'high';
+  if (status === 'unusual') return 'med';
+  if (status === 'insufficient') return 'low';
+  return 'low';
+}
+
+function amlShieldIcon(riskScore, size, isFlagged, status) {
+  return riskShieldIcon(riskScore, size, {
+    flagged: isFlagged,
+    tier: amlShieldTier(status, isFlagged),
+    className: 'risk-shield-icon aml-risk-icon',
+  });
+}
+
+function isAmlSanctionHit(hit) {
+  return AML_SANCTION_SOURCES.has(hit?.source);
+}
+
+function isAmlSanctionSource(source) {
+  return AML_SANCTION_SOURCES.has(source);
+}
+
+function amlHardFlagPoints(label) {
+  if (/OFAC SDN listed|UK OFSI listed|EU sanctions listed|Sanctions listed|TRONSEC label/i.test(label)) return 50;
+  if (/Suspicious|blacklist|Blacklisted/i.test(label)) return 50;
+  if (/fraud|scam|phish|Suspicious|malicious|hack|exploit|sanction|Security tag|Sanctioned/i.test(label)) return 40;
+  if (/High-risk token/i.test(label)) return 35;
+  if (/spam|advertising/i.test(label)) return 12;
+  if (/mintable|blacklist function|Unknown|Neutral/i.test(label)) return 18;
+  return 30;
+}
+
+function amlAddHardSignals(hardFlags, scoreFactors) {
+  let add = 0;
+  for (const label of hardFlags) {
+    const pts = amlHardFlagPoints(label);
+    add += pts;
+    scoreFactors.unshift({ label, pts, tier: 'hard' });
+  }
+  return add;
+}
+
+function amlRiskStat(status, statusLabel, finalScore, isFlagged, hasHardSignals) {
+  const cls = amlRiskClass(status, isFlagged);
+  const icon = status === 'insufficient' && !hasHardSignals
+    ? riskShieldIcon(0, 40, { muted: true, className: 'risk-shield-icon aml-risk-icon aml-risk-icon--muted' })
+    : amlShieldIcon(finalScore, 40, isFlagged, status);
+  const scoreText = status === 'insufficient' && !hasHardSignals
+    ? '—'
+    : `<span class="score-value" data-score-value="${finalScore}">0</span><span class="aml-score-unit">/100</span>`;
+  const meter = (status !== 'insufficient' || hasHardSignals)
+    ? `<div class="aml-risk-meter"><div class="aml-risk-meter-fill ${cls}" data-score-pct="${finalScore}" style="width:4%"></div></div>`
+    : '';
+  const statLabel = hasHardSignals ? t('Composite risk signal') : t('Activity risk signal');
+  return `<div class="an-stat risk-stat risk-stat--aml aml-risk-stat">
+    <div class="an-stat-label">${statLabel}</div>
+    <div class="risk-stat__body aml-risk-body">
+      ${icon}
+      <div class="risk-stat__text aml-risk-text">
+        <div class="an-stat-value ${cls}">${scoreText}</div>
+        <div class="an-stat-sub">${esc(t(statusLabel))}</div>
+        ${meter}
+      </div>
+    </div>
+  </div>`;
+}
+
+function amlPeerVolumeUsd(peerAddr, directTransfers, trxPriceUsd) {
+  let total = 0;
+  let has = false;
+  for (const d of directTransfers || []) {
+    if (!sameTronAddr(d.peer, peerAddr)) continue;
+    const usd = typeof amlTransferVolumeUsd === 'function' ? amlTransferVolumeUsd(d, trxPriceUsd) : null;
+    if (usd != null && usd > 0) {
+      total += usd;
+      has = true;
+    }
