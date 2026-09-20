@@ -743,3 +743,152 @@ function buildAmlViewParts(report, graphPayload, opts = {}) {
   }
   if (!peersPending && peerTagAlerts.length > 0) {
     alertsInner += amlAlertList('amber', t('Counterparty public tags'), peerTagAlerts.map(item =>
+      esc(t('Peer flagged by public tag: {tag} — {addr}', { tag: item.tag, addr: addrLabel(item.addr) }))
+    ));
+  }
+  const alertsHtml = alertsInner ? `<div class="aml-alerts">${alertsInner}</div>` : '';
+
+  const concCls = concentration > 0.7 ? 'is-red' : concentration > 0.5 ? 'is-amber' : 'is-info';
+  const ageSub = knownEntityCount > 0
+    ? `${knownEntityCount} known ${tt('entity')}${knownEntityCount > 1 ? 's' : ''}`
+    : peersPending
+      ? t('Checking counterparties…')
+      : t('latest {count} transactions', { count: amlSampleCount() });
+
+  const heroHtml = `
+    ${amlRiskStat(status, statusLabel, finalScore, isFlagged, hasHardSignals)}
+    <div class="an-stat">
+      <div class="an-stat-label">${t('Transactions')}</div>
+      <div class="an-stat-value is-info">${txCount}</div>
+      <div class="an-stat-sub">${dtCount} ${t('direct')} · ${txCount - dtCount} ${t('contract')}</div>
+    </div>
+    <div class="an-stat">
+      <div class="an-stat-label">${tt('concentration')}</div>
+      <div class="an-stat-value ${dtCount > 0 ? concCls : 'is-neutral'}">${dtCount > 0 ? (concentration * 100).toFixed(0) : '—'}${dtCount > 0 ? '<span class="aml-score-unit">%</span>' : ''}</div>
+      <div class="an-stat-sub">${uniquePeers} ${tt('counterparty')}s</div>
+    </div>
+    <div class="an-stat">
+      <div class="an-stat-label">${t('Account age')}</div>
+      <div class="an-stat-value is-amber">${ageDays !== null && ageDays !== undefined ? ageDays + '<span class="aml-score-unit">d</span>' : '—'}</div>
+      <div class="an-stat-sub">${ageSub}</div>
+    </div>`;
+
+  let assessmentHtml;
+  if (isFlagged) {
+    assessmentHtml = amlAlertInline('red', `<strong>${tt('flagged')}</strong> — ${esc(t(hardFlags[0] || 'Security flags detected'))}`);
+  } else if (status === 'unusual') {
+    assessmentHtml = amlAlertInline('amber', t('Unusual activity — review counterparties and transaction history below.'));
+  } else if (status === 'insufficient') {
+    assessmentHtml = amlAlertInline('amber', t('Insufficient transaction data to evaluate activity risk.'));
+  } else {
+    assessmentHtml = amlAlertInline('green', t('No flags found — address appears to be a regular wallet.'));
+  }
+
+  const sourceRows = [
+    amlKvRow(tt('aml'), amlSourceSecAccValue(secAccLevel, flagSources.secAcc)),
+    amlKvRow(t('Sanctions lists'), amlSanctionsSourceValue(sanctionMeta, sanctionUnavailable, flagSources.sanctions)),
+    amlKvRow(t('TRONSEC labels'), flagSources.labels?.length
+      ? `<div class="aml-flag-list">${flagSources.labels.map((e) => esc(typeof e.label === 'string' ? t(e.label) : e.label)).join('<br>')}</div>`
+      : amlSourceBadge('clean')),
+    amlKvRow(tt('shield'), amlSourceBadge(secTokenLevel), true),
+  ];
+  const sourcesHtml = amlPanel(t('Sources checked'), sourceRows.join(''));
+
+  const flowRatioHtml = (inboundCount > 0 || outboundCount > 0)
+    ? amlKvRow(t('Inbound/outbound ratio'), `<span class="kv-muted">${inboundCount} / ${outboundCount}${flowRatio != null && outboundCount > 0 ? ` (${Number(flowRatio).toFixed(1)}×)` : ''}</span>`)
+    : '';
+  const firstFunderHtml = firstFunder?.addr
+    ? amlKvRow(t('First funder'), `${amlAddrLink(firstFunder.addr)} <span class="kv-muted">· ${esc(firstFunder.asset || 'TRX')}${firstFunder.time ? ` · ${ago(firstFunder.time)}` : ''}</span>`)
+    : '';
+
+  const onchainHtml = balanceTrx !== null || txCount > 0 || accCreated || activityWindow || flowRatioHtml || firstFunderHtml
+    ? amlPanel(t('On-chain data'), `
+        ${balanceTrx !== null ? amlKvRow(t('Balance'), `<span class="is-info">${balanceTrx.toFixed(2)} TRX</span>`) : ''}
+        ${amlKvRow(t('Sample analyzed'), `${fmtNum(txCount)} txs`)}
+        ${flowRatioHtml}
+        ${firstFunderHtml}
+        ${activityWindow ? amlKvRow(t('Activity window'), `<span class="kv-muted">${activityWindow}</span>`) : ''}
+        ${accCreated ? amlKvRow(t('Account created'), esc(accCreated), true) : amlKvRow(t('Account created'), `<span class="kv-muted">${t('Unknown')}</span>`, true)}
+      `)
+    : '';
+
+  const signalsHtml = amlSignalsPanel(scoreFactors, finalScore, status);
+  const exposureCatsHtml = typeof amlExposurePanel === 'function'
+    ? amlExposurePanel(exposureBreakdown, peersPending)
+    : '';
+  const peersMeta = peersPending
+    ? t('Security screening…')
+    : { key: 'Top {count} by direct transfers · TronScan security API', vars: { count: AML_PEER_SECURITY_LIMIT } };
+  const peersNoteBase = t('These addresses sent or received the most direct TRX/TRC-20 transfers in the analyzed sample. Each is checked against TronScan security data (blacklist, fraud, token abuse).');
+  const peersNote = !peersPending && peerFlags.length === 0 && (flagSources.secAcc?.length || flagSources.tags?.length)
+    ? `${peersNoteBase} ${t('No flagged counterparties here — risk comes from the scanned address itself (TronScan account security).')}`
+    : peersNoteBase;
+  const directTransfers = graphPayload?.directTransfers || [];
+  const trxPriceUsd = graphPayload?.trxPriceUsd ?? (typeof TRX_PRICE === 'number' ? TRX_PRICE : null);
+  const peersHtml = amlPeersPanel(topPeers, {
+    peersPending,
+    peerFlags,
+    dustPeers,
+    peerCatMap,
+    screenedSet,
+    directTransfers,
+    trxPriceUsd,
+    peerSecurityLimit: AML_PEER_SECURITY_LIMIT,
+    noteHtml: esc(peersNote),
+    meta: peersMeta,
+  });
+
+  const contractsHtml = topContracts.length > 0
+    ? amlRowsBlock(
+        `Top contracts <span>· ${topContracts.length}</span>`,
+        topContracts.map(([a, c]) => `
+          <div class="aml-row aml-row--compact">
+            <div class="aml-row-body">
+              <div class="aml-row-title">${amlAddrLink(a)}</div>
+              <div class="aml-row-meta">${c} contract calls</div>
+            </div>
+          </div>`).join('')
+      )
+    : '';
+
+  const graphHtml = topPeers.length > 0
+    ? amlBlock(`${tt('counterparty')} graph`, '<div class="aml-graph-root"><div class="aml-graph-wrap" id="aml-graph-container"></div></div>', `${addrLabel(addr)} · last ${txCount} txs`)
+    : '';
+
+  const detailsGrid = [signalsHtml, onchainHtml].filter(Boolean).join('');
+  const exposureGrid = [exposureCatsHtml, sourcesHtml].filter(Boolean).join('');
+
+  return {
+    addr,
+    headTagsHtml,
+    alertsHtml,
+    heroHtml,
+    assessmentHtml,
+    detailsGrid,
+    exposureGrid,
+    graphHtml,
+    peersHtml,
+    contractsHtml,
+    graphPayload,
+  };
+}
+
+function renderAmlScanFromReport(report, graphPayload, fromCache = false, opts = {}) {
+  if (!report?.addr) return false;
+  const addr = report.addr;
+  amlFromCache = fromCache;
+  amlLastAddr = addr;
+  window._amlLastReport = report;
+  hideScanEmpty(amlEmpty, { instant: true });
+
+  const parts = buildAmlViewParts(report, graphPayload, opts);
+  const headHtml = amlHeadCard(addr, parts.headTagsHtml, fromCache);
+
+  amlRes.innerHTML = `
+    <div class="aml-scan">
+      ${headHtml}
+      <div id="aml-live-alerts"${parts.alertsHtml ? '' : ' hidden'}>${parts.alertsHtml}</div>
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid" id="aml-live-hero">${parts.heroHtml}</div>
+      <div class="aml-assessment" id="aml-live-assessment">${parts.assessmentHtml}</div>
+      ${typeof tronsecDeepAnalysisPromptHtml === 'function' ? tronsecDeepAnalysisPromptHtml('aml') : ''}
+      ${parts.detailsGrid ? `<div class="aml-grid-2" id="aml-live-details">${parts.detailsGrid}</div>` : ''}
