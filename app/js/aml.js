@@ -1488,3 +1488,152 @@ async function fetchAmlTokenSecurity(parsedTokens) {
   const tokens = (parsedTokens || []).slice(0, AML_TOKEN_SECURITY_LIMIT);
   const addrs = tokens.map(tok => tok.addr).filter(isValidTron);
   if (!addrs.length) {
+    return { level: 'unavailable', flags: [], tokens: parsedTokens || [] };
+  }
+
+  const results = await Promise.all(
+    addrs.map(addr => scanGet('/security/token/data', { address: addr }).catch(() => null)),
+  );
+
+  const rank = { clean: 0, unavailable: 0, spam: 1, warnings: 2, flagged: 3 };
+  let worstLevel = 'clean';
+  const flags = [];
+  const enriched = (parsedTokens || []).map(tok => {
+    const idx = addrs.indexOf(tok.addr);
+    if (idx < 0) return tok;
+    const sec = results[idx];
+    const secLevel = classifyAmlTokenSecurity(sec, tok);
+    const secNote = amlTokenSecurityNote(sec, tok);
+    if ((rank[secLevel] || 0) > (rank[worstLevel] || 0)) worstLevel = secLevel;
+    if (secLevel === 'flagged') {
+      if (!flags.some(f => f.includes(tok.symbol))) {
+        flags.push(t('High-risk token held: {symbol}', { symbol: tok.symbol }));
+      }
+    }
+    return { ...tok, secLevel, secNote, secToken: sec };
+  });
+
+  const levelOut = worstLevel === 'spam' ? 'warnings' : worstLevel;
+  return { level: levelOut, flags, tokens: enriched };
+}
+
+function parseAmlExposureTokens(tokens) {
+  const parsed = (tokens || []).map(tok => {
+    const decimals = parseInt(tok.tokenDecimal || 6);
+    const balance = parseFloat(tok.balance || 0) / Math.pow(10, decimals);
+    const priceInUsd = parseFloat(tok.priceInUsd || tok.tokenPriceInUsd || 0);
+    return {
+      symbol: tok.tokenAbbr || tok.tokenName || '—',
+      decimals,
+      balance,
+      usd: priceInUsd > 0 ? balance * priceInUsd : null,
+      addr: tok.tokenId || tok.tokenContractAddress || '',
+    };
+  }).filter(tok => tok.balance > 0);
+  const meaningful = parsed.filter(tok => !amlIsExposureJunk(tok));
+  return meaningful
+    .sort((a, b) => {
+      const au = a.usd != null ? a.usd : -1;
+      const bu = b.usd != null ? b.usd : -1;
+      if (bu !== au) return bu - au;
+      return b.balance - a.balance;
+    })
+    .slice(0, 5);
+}
+
+async function analyzeAmlTransactions(addr, txs) {
+  const hexSet = new Set();
+  const txMeta = [];
+
+  for (const tx of txs) {
+    const c = tx.raw_data?.contract?.[0];
+    const val = c?.parameter?.value;
+    const tType = c?.type || '';
+    const fromHex = val?.owner_address || val?.from || null;
+    const toHex = val?.to || val?.to_address || null;
+    const contractAddrHex = val?.contract_address || null;
+    const amount = val?.amount || val?.call_value || 0;
+    const time = tx.block_timestamp || 0;
+
+    if (tType === 'TransferContract') {
+      trackResolveAddr(hexSet, fromHex);
+      trackResolveAddr(hexSet, toHex);
+      txMeta.push({ type: 'direct', fromHex, toHex, contractHex: null, isDex: false, amount, time, isTrc20: false });
+    } else if (tType === 'TriggerSmartContract') {
+      if (typeof isApprovalIncreaseCalldata === 'function' && isApprovalIncreaseCalldata(val?.data || '')) {
+        continue;
+      }
+      const isTrc20 = !!tx._isTrc20;
+      const trc20From = tx._trc20From || fromHex || null;
+      const trc20To = tx._trc20To || val?.to_address || getTRC20Recipient(tx) || tx._scanTrc20Peer || null;
+      const trc20Amount = amlTriggerTransferAmount(tx, val, isTrc20);
+      trackResolveAddr(hexSet, contractAddrHex);
+      trackResolveAddr(hexSet, trc20From);
+      trackResolveAddr(hexSet, trc20To);
+      txMeta.push({
+        type: 'trigger',
+        fromHex: trc20From,
+        toHex: trc20To,
+        peerHex: trc20To,
+        contractHex: contractAddrHex,
+        isDex: null,
+        amount: trc20Amount,
+        tokenDecimals: tx._trc20Decimals,
+        time,
+        isTrc20,
+      });
+    }
+  }
+
+  const hexEntries = await Promise.all([...hexSet].map(async h => {
+    const resolved = await hexToTronAddress(h);
+    const final = sameTronAddr(resolved, addr) ? addr : resolved;
+    return [addrLookupKey(h), final];
+  }));
+  const hexMap = new Map(hexEntries);
+  const resolve = (a) => lookupResolvedAddr(hexMap, a, addr);
+
+  const directTransfers = [];
+  const contractInteractions = new Map();
+
+  for (const m of txMeta) {
+    if (m.type === 'direct') {
+      const from = resolve(m.fromHex);
+      const to = resolve(m.toHex);
+      const inbound = sameTronAddr(to, addr);
+      const outbound = sameTronAddr(from, addr);
+      const peer = inbound ? from : (outbound ? to : (to || from));
+      if (peer && !sameTronAddr(peer, addr) && !isAmlExcludedPeer(peer)) {
+        directTransfers.push({
+          peer,
+          amount: Number(m.amount) || 0,
+          time: m.time,
+          isTrc20: false,
+          inbound,
+          outbound,
+          asset: 'TRX',
+        });
+      }
+    } else if (m.type === 'trigger') {
+      const contractAddr = resolve(m.contractHex);
+      const isDex = contractAddr ? isAmlExcludedPeer(contractAddr) : false;
+      m.isDex = isDex;
+
+      const from = resolve(m.fromHex);
+      const to = resolve(m.toHex || m.peerHex);
+      const isInbound = sameTronAddr(to, addr);
+      const isOutbound = sameTronAddr(from, addr);
+      const peer = isInbound ? from : (isOutbound ? to : (to || (m.peerHex ? resolve(m.peerHex) : null)));
+      if (peer && !sameTronAddr(peer, addr) && !isDex && isValidTron(peer) && !isAmlExcludedPeer(peer)) {
+        const stableLabel = amlStableAssetLabel(contractAddr);
+        directTransfers.push({
+          peer,
+          amount: (m.isTrc20 || stableLabel) ? String(m.amount || 0) : (Number(m.amount) || 0),
+          tokenDecimals: m.tokenDecimals ?? (stableLabel ? 6 : undefined),
+          time: m.time,
+          isTrc20: !!m.isTrc20,
+          inbound: isInbound,
+          outbound: isOutbound,
+          asset: stableLabel || (m.isTrc20 ? 'TRC20' : 'TRX'),
+          isStable: !!stableLabel,
+        });
