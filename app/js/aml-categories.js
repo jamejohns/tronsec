@@ -220,3 +220,77 @@
     const hits = [];
     if (!secAcc) return hits;
     const dustSpammer = isAmlPeerLikelyDustSpammer(secAcc, peerAddr, directTransfers);
+    const redTag = String(secAcc.red_tag || secAcc.redTag || '').trim();
+    if (/suspicious/i.test(redTag)) {
+      hits.push({ category: 'scam_fraud', source: 'secAcc', detail: redTag || 'Suspicious' });
+    }
+    if (secAcc.is_black_list) {
+      hits.push({ category: 'blacklisted', source: 'secAcc', detail: 'USDT/USDC blacklist' });
+    }
+    if (secAcc.has_fraud_transaction) {
+      if (dustSpammer && !secAcc.fraud_token_creator) {
+        hits.push({ category: 'spam_dust', source: 'secAcc', detail: 'dust broadcaster' });
+      } else {
+        hits.push({ category: 'fraud_onchain', source: 'secAcc', detail: 'fraud transactions' });
+      }
+    }
+    if (secAcc.fraud_token_creator) {
+      hits.push({ category: 'fraud_onchain', source: 'secAcc', detail: 'fraud token creator' });
+    }
+    if (secAcc.has_cheat_transaction || secAcc.send_ad_by_memo) {
+      if (!hits.some((h) => h.category === 'spam_dust')) {
+        hits.push({ category: 'spam_dust', source: 'secAcc', detail: 'spam / ad activity' });
+      }
+    }
+    return hits;
+  }
+
+  function shouldPreferSpamOverPeerFraud(entry) {
+    return entry?.category === 'fraud_onchain' && entry.detail === 'fraud transactions';
+  }
+
+  function getAmlAddressBookEntry(addr) {
+    const key = String(addr || '').toLowerCase();
+    return AML_ADDRESS_BOOK.get(key) || null;
+  }
+
+  function buildAmlSubjectCategories(secAcc, tagAcc) {
+    const hits = [...classifyAmlSecAccHits(secAcc)];
+    for (const tag of normalizeTagList(tagAcc)) {
+      const tagName = (typeof tag === 'string' ? tag : (tag.tagName || tag.tag || tag.label || ''));
+      const cat = classifyAmlTagText(tagName);
+      if (cat) hits.push({ category: cat, source: 'tag', detail: tagName });
+    }
+    const seen = new Set();
+    return hits.filter((h) => {
+      if (seen.has(h.category)) return false;
+      seen.add(h.category);
+      return true;
+    });
+  }
+
+  function buildAmlPeerCategoryHits(addr, secAcc, tagAcc, directTransfers = []) {
+    const hits = [];
+    const book = getAmlAddressBookEntry(addr);
+    if (book) {
+      hits.push({ addr, category: book.category, source: 'addressBook', detail: book.label });
+    }
+    for (const h of classifyAmlPeerSecAccHits(secAcc, addr, directTransfers)) {
+      hits.push({ addr, category: h.category, source: h.source, detail: h.detail });
+    }
+    for (const tag of normalizeTagList(tagAcc)) {
+      const tagName = (typeof tag === 'string' ? tag : (tag.tagName || tag.tag || tag.label || ''));
+      const cat = classifyAmlTagText(tagName);
+      if (cat) hits.push({ addr, category: cat, source: 'tag', detail: tagName });
+    }
+    return hits;
+  }
+
+  function amlPeerCategoryIndex(peerCategories) {
+    const byAddr = new Map();
+    for (const pc of peerCategories || []) {
+      if (!pc?.addr || !pc.category) continue;
+      const prev = byAddr.get(pc.addr);
+      if (!prev) {
+        byAddr.set(pc.addr, pc);
+        continue;
