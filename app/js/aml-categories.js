@@ -294,3 +294,77 @@
       if (!prev) {
         byAddr.set(pc.addr, pc);
         continue;
+      }
+      if (pc.category === 'spam_dust' && shouldPreferSpamOverPeerFraud(prev)) {
+        byAddr.set(pc.addr, pc);
+        continue;
+      }
+      if (prev.category === 'spam_dust' && shouldPreferSpamOverPeerFraud(pc)) {
+        continue;
+      }
+      if (amlCategoryRank(pc.category) > amlCategoryRank(prev.category)) {
+        byAddr.set(pc.addr, pc);
+      }
+    }
+    return byAddr;
+  }
+
+  function buildAmlExposureBreakdown({
+    subjectCategories = [], peerCategories = [], directTransfers = [], dustPeers = [],
+    trxPriceUsd = null,
+  }) {
+    const buckets = Object.fromEntries(AML_CATEGORY_ORDER.map((id) => [id, {
+      id,
+      peerAddrs: new Set(),
+      transferCount: 0,
+      volumeUsd: 0,
+      subject: false,
+    }]));
+
+    for (const sc of subjectCategories) {
+      if (buckets[sc.category]) buckets[sc.category].subject = true;
+    }
+
+    const peerByAddr = amlPeerCategoryIndex(peerCategories);
+    for (const [addr, pc] of peerByAddr) {
+      if (buckets[pc.category]) buckets[pc.category].peerAddrs.add(addr);
+    }
+
+    for (const addr of dustPeers || []) {
+      if (buckets.spam_dust) buckets.spam_dust.peerAddrs.add(addr);
+    }
+
+    const addrCats = new Map(peerByAddr);
+    for (const dt of directTransfers || []) {
+      const peer = dt?.peer;
+      if (!peer) continue;
+      const pc = addrCats.get(peer);
+      const cat = pc?.category || (dustPeers?.includes(peer) ? 'spam_dust' : null);
+      if (!cat || !buckets[cat]) continue;
+      buckets[cat].transferCount += 1;
+      const usd = amlTransferVolumeUsd(dt, trxPriceUsd);
+      if (usd != null && usd > 0) buckets[cat].volumeUsd += usd;
+    }
+
+    const rows = AML_CATEGORY_ORDER
+      .map((id) => {
+        const b = buckets[id];
+        const meta = amlCategoryMeta(id);
+        return {
+          id,
+          label: amlCatLabel(id),
+          severity: meta?.severity || 'info',
+          badge: meta?.badge || 'b-ghost',
+          color: meta?.color || AML_GRAPH_FALLBACK.safe,
+          peerCount: b.peerAddrs.size,
+          transferCount: b.transferCount,
+          volumeUsd: b.volumeUsd,
+          subject: b.subject,
+        };
+      })
+      .filter((row) => row.subject || row.peerCount > 0 || row.transferCount > 0 || row.volumeUsd > 0);
+
+    const totalVolumeUsd = rows.reduce((sum, row) => sum + (row.volumeUsd || 0), 0);
+    if (totalVolumeUsd > 0) {
+      for (const row of rows) {
+        row.volumeShare = row.volumeUsd > 0 ? row.volumeUsd / totalVolumeUsd : 0;
