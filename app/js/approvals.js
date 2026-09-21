@@ -118,3 +118,43 @@ function apprRenderRow(a) {
     <div class="appr-row-body">
       <div class="appr-row-title">
         ${tokenLink}
+        ${badge(tier.badgeCls, tier.badgeLabel)}
+      </div>
+      <div class="appr-row-grant">
+        <span class="appr-row-amount">${esc(fmtTokenAmt(a.amount, a.decimals))}</span>
+        ${a.date ? `<span class="appr-row-age">${ago(a.date)}</span>` : ''}
+      </div>
+      <div class="appr-row-meta">
+        <span class="appr-kv-label">${ttLabel('spender')}</span>
+        ${a.unknownSpender
+          ? `<span class="wallet-token-meta-text appr-unknown-spender">${esc(t('Unknown spender'))}</span> ${walletContractScanBtn(a.spender)}`
+          : walletContractScanBtn(a.spender)}
+      </div>
+    </div>
+    <div class="appr-row-action">${apprRevokeBtn()}</div>
+  </div>`;
+}
+
+const APPR_GROUP_META = [
+  { key: 'critical', title: 'Unlimited', badgeCls: 'b-red', badgeLabel: () => ttLabel('unlimited') },
+  { key: 'high', title: 'Excessive', badgeCls: 'b-red', badgeLabel: () => t('excessive') },
+  { key: 'warn', title: 'Elevated', badgeCls: 'b-amber', badgeLabel: () => t('elevated') },
+  { key: 'normal', title: 'Limited', badgeCls: 'b-green', badgeLabel: () => t('limited') },
+];
+
+function apprGroupSections(list) {
+  const byRisk = { critical: [], high: [], warn: [], normal: [] };
+  for (const a of apprSortList(list)) byRisk[getApprovalRisk(a.amount, a.decimals)].push(a);
+
+  return APPR_GROUP_META.filter(g => byRisk[g.key].length).map(g => {
+    const rows = byRisk[g.key].map(apprRenderRow).join('');
+    return `<div class="appr-section">
+      <div class="appr-section-head scan-section-head">
+        <span class="scan-section-title appr-section-title">${t(g.title)} <span>· ${byRisk[g.key].length}</span></span>
+        <div class="scan-section-badges">${badge(g.badgeCls, g.badgeLabel())}</div>
+      </div>
+      <div class="scan-list appr-list">${rows}</div>
+    </div>`;
+  }).join('');
+}
+
