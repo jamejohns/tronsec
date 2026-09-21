@@ -457,3 +457,156 @@ function permAssessment(analysis, isContract, stats) {
   if (warn.length) {
     return amlAlertInline('amber', `<strong>${t('Review recommended')}</strong> — ${esc(warn[0].msg)}${warn.length > 1 ? ` (+${warn.length - 1})` : ''}`);
   }
+  if (stats?.multisigGroups) {
+    return amlAlertInline('green', `<strong>${t('Multisig permissions')}</strong> — ${t('Co-signed layout — review signers and thresholds below.')}`);
+  }
+  return amlAlertInline('green', `<strong>${t('Standard permissions')}</strong> — ${t('Only this address controls owner and active keys with threshold 1.')}`);
+}
+
+function permSignerRow(key, selfAddr, signerMeta, threshold) {
+  const self = sameTronAddr(key.address, selfAddr);
+  const meta = signerMeta?.[key.address] || {};
+  const external = !self && !!key.address;
+  const soloRisk = external && externalCanActAlone(key, threshold);
+  const contractRisk = external && meta.isContract;
+  const coSigner = external && !soloRisk && !contractRisk;
+  const tone = soloRisk || contractRisk ? 'is-risk' : (coSigner ? 'is-cosigner' : 'is-ok');
+  const icon = soloRisk || contractRisk
+    ? icSVG('M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01', 18)
+    : coSigner
+      ? icSVG('M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75', 18)
+      : icSVG('M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4', 18);
+  const kind = self
+    ? t('This account')
+    : (meta.isContract ? t('Contract signer') : t('Wallet signer'));
+  const roleNote = soloRisk || contractRisk
+    ? t('External controller')
+    : (coSigner ? t('Co-signer wallet') : '');
+  const addrBtn = typeof walletContractScanBtn === 'function'
+    ? walletContractScanBtn(key.address)
+    : txAddrLink(key.address);
+  const weightPct = threshold > 0 ? Math.min(100, Math.round((key.weight / threshold) * 100)) : 100;
+  return `<div class="perm-signer risk-row ${tone}">
+    <div class="perm-signer-icon">${icon}</div>
+    <div class="perm-signer-body">
+      <div class="perm-signer-addr">${addrBtn}</div>
+      <div class="perm-signer-meta">${esc(kind)}${roleNote ? ` · ${esc(roleNote)}` : ''}</div>
+      ${threshold > 1 ? `<div class="perm-weight-bar" aria-hidden="true"><div class="perm-weight-bar-fill" style="width:${weightPct}%"></div></div>` : ''}
+    </div>
+    <div class="perm-signer-weight">
+      <span class="mono">${esc(String(key.weight))}</span>
+      <span class="perm-signer-weight-label">${t('Weight')}${threshold > 1 ? ` / ${threshold}` : ''}</span>
+    </div>
+  </div>`;
+}
+
+function permOpsSummary(hex, { highlightSensitive = true } = {}) {
+  const summary = summarizeOperations(hex);
+  if (!summary.total) return `<p class="kv-muted perm-ops-empty">${t('No operation scope on record')}</p>`;
+  const rows = summary.groups.map((g, i) => permKvRow(
+    g.label,
+    `<span>${g.count} ${t('ops')}</span>`,
+    i === summary.groups.length - 1,
+  )).join('');
+  const sensitive = summary.risky
+    .filter(n => PERMISSION_OP_SENSITIVE_DISPLAY.has(n))
+    .map(n => PERMISSION_OP_LABELS[n] || n.replace(/Contract$/, ''));
+  const riskyHtml = highlightSensitive && sensitive.length
+    ? `<div class="perm-ops-note">${t('Permission-changing scopes')}: ${sensitive.map(l => `<span class="badge b-ghost">${esc(t(l))}</span>`).join(' ')}</div>`
+    : '';
+  return `<div class="aml-kv-list perm-ops-kv">${rows}</div>${riskyHtml}`;
+}
+
+function permOpsExpandable(hex, sectionId) {
+  const summary = summarizeOperations(hex);
+  const body = permOpsSummary(hex);
+  if (summary.total <= 8) return body;
+  const labels = decodePermissionOperations(hex).labels;
+  const fullList = labels.map(l => `<span class="module-desc-tag">${esc(t(l))}</span>`).join('');
+  return `${body}
+    <button type="button" class="wallet-load-more-btn perm-ops-toggle" data-perm-ops-toggle="${esc(sectionId)}" aria-expanded="false" aria-controls="${esc(sectionId)}">
+      ${icSVG(IC.arrowDown, 14)}<span>${t('Show all {n} operations', { n: summary.total })}</span>
+    </button>
+    <div class="perm-ops-full module-desc-tags" id="${esc(sectionId)}" aria-hidden="true">${fullList}</div>`;
+}
+
+function permThresholdBadge(block) {
+  const keys = block?.keys || [];
+  const threshold = block?.threshold || 1;
+  if (keys.length <= 1 && threshold <= 1) return '';
+  const totalWeight = keys.reduce((sum, k) => sum + (Number(k.weight) || 0), 0);
+  const ok = totalWeight >= threshold;
+  return permTag(
+    ok ? t('Threshold reachable ({w}/{t})', { w: totalWeight, t: threshold }) : t('Below threshold ({w}/{t})', { w: totalWeight, t: threshold }),
+    ok ? 'live' : 'bad',
+  );
+}
+
+function permSectionLabel(baseTitle, block, index) {
+  const idx = index > 0 ? ` ${index}` : '';
+  const name = block?.permission_name;
+  if (name) return `${baseTitle} · ${name}${idx}`;
+  return `${baseTitle}${idx}`;
+}
+
+function permSection(title, block, selfAddr, signerMeta, { showOps = false, index = 0, sectionKey = '' } = {}) {
+  if (!block) return '';
+  const keys = block.keys || [];
+  const threshold = block.threshold || 1;
+  const multisig = keys.length > 1 || threshold > 1;
+  const keyClass = classifyPermissionKeys(keys, selfAddr, threshold, signerMeta);
+  const badgeTone = keyClass.riskyAddresses.size ? 'bad' : (multisig ? 'name' : 'live');
+  const sectionTitle = permSectionLabel(title, block, index);
+  const signers = keys.length
+    ? `<div class="perm-signer-list">${keys.map(k => permSignerRow(k, selfAddr, signerMeta, threshold)).join('')}</div>`
+    : `<p class="kv-muted perm-empty-inline">${t('No signing keys')}</p>`;
+  const opsId = sectionKey ? `perm-ops-${sectionKey}` : '';
+
+  return `<div class="scan-section perm-section">
+    <div class="scan-section-head perm-section-head">
+      <span class="scan-section-title">${esc(sectionTitle)}</span>
+      <div class="scan-section-badges perm-section-badges">
+        ${permTag(multisig ? t('Multisig') : t('Single signer'), badgeTone)}
+        ${permThresholdBadge(block)}
+      </div>
+    </div>
+    <div class="perm-meta-strip">
+      <span>${t('Threshold')}: <strong class="mono">${esc(String(threshold))}</strong></span>
+      <span>${t('Signers')}: <strong class="mono">${keys.length}</strong></span>
+      ${block.permission_name ? `<span>${t('Name')}: <strong class="mono">${esc(block.permission_name)}</strong></span>` : ''}
+      ${block.id != null ? `<span>ID: <strong class="mono">${esc(String(block.id))}</strong></span>` : ''}
+    </div>
+    ${signers}
+    ${showOps ? `<div class="perm-ops-block">
+      <div class="perm-ops-title">${t('Allowed operations')} <span>· ${summarizeOperations(block.operations).total}</span></div>
+      ${permOpsExpandable(block.operations, opsId)}
+    </div>` : ''}
+  </div>`;
+}
+
+function permHistorySection(history) {
+  if (!history?.length) return '';
+  const rows = history.map(row => {
+    const txBtn = typeof walletTxHashBtn === 'function' ? walletTxHashBtn(row.hash) : esc(addrLabel(row.hash));
+    return `<div class="perm-history-row">
+      <div class="perm-history-when">${esc(row.ts ? ago(row.ts) : '—')}</div>
+      <div class="perm-history-tx">${txBtn}</div>
+      <a class="wallet-action-btn wallet-action-btn--ext perm-history-link" href="https://tronscan.org/#/transaction/${esc(row.hash)}" target="_blank" rel="noopener">${icSVG(IC.external, 12)}<span>TronScan</span></a>
+    </div>`;
+  }).join('');
+  return `<div class="aml-block perm-history-block">
+    <div class="aml-block-head">
+      <span class="aml-block-title">${t('Permission changes')}</span>
+      <span class="aml-block-meta">${history.length}</span>
+    </div>
+    <div class="aml-block-body aml-block-body--flush">
+      <div class="perm-history-list">${rows}</div>
+    </div>
+  </div>`;
+}
+
+function permManageBar() {
+  const icon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>';
+  const features = [
+    t('Owner keys'),
+    t('Active scopes'),
