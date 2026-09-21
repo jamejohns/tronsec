@@ -610,3 +610,156 @@ function permManageBar() {
   const features = [
     t('Owner keys'),
     t('Active scopes'),
+    t('Witness / SR'),
+    t('Wallet confirmation'),
+  ];
+  return `<button type="button" class="wc-scan-prompt is-permissions" data-perm-manage>
+    <div class="wc-scan-prompt-main">
+      <span class="wc-scan-prompt-mark" aria-hidden="true">${icon}</span>
+      <div class="wc-scan-prompt-body">
+        <div class="wc-scan-prompt-kicker">${esc(t('Account control'))}</div>
+        <div class="wc-scan-prompt-title">${esc(t('Manage permissions in your wallet'))}</div>
+        <p class="wc-scan-prompt-text">${esc(t('Update owner, active, and witness keys for this address. Every change is confirmed in your wallet — we never ask for your seed.'))}</p>
+        <div class="wc-scan-prompt-features">${features.map((f) => `<span>${esc(f)}</span>`).join('')}</div>
+      </div>
+    </div>
+    <span class="wc-scan-prompt-chevron" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>
+    </span>
+  </button>`;
+}
+
+function openPermissionsManage() {
+  showToast(t('Sign in to manage permissions'));
+}
+
+function buildPermissionNextSteps(addr, stats, history) {
+  const steps = [];
+  const risky = stats?.riskyExternalAddresses || [];
+  if (risky.length) {
+    steps.push({
+      tone: 'red',
+      title: t('External controller detected'),
+      desc: t('A third-party address can act without this wallet — scan it before trusting this account.'),
+      action: 'scan-external',
+      addr: risky[0],
+      label: t('Scan controller'),
+      primary: true,
+    });
+  }
+  if (history?.length) {
+    steps.push({
+      tone: 'amber',
+      title: t('Recent permission update on-chain'),
+      desc: t('Decode the latest AccountPermissionUpdate transaction to see what changed.'),
+      action: 'tx',
+      hash: history[0].hash,
+      label: t('Decode latest TX'),
+      primary: !steps.length,
+    });
+  }
+  if (!steps.length) return '';
+  const rows = steps.map(step => `
+    <div class="wallet-next-step is-${step.tone}${step.primary ? ' is-primary' : ''}">
+      <div class="wallet-next-step-body">
+        <div class="wallet-next-step-title">${esc(step.title)}</div>
+        <div class="wallet-next-step-desc">${esc(step.desc)}</div>
+      </div>
+      <button type="button" class="wallet-action-btn wallet-go-btn wallet-go-btn--${step.tone}" data-perm-step="${step.action}" data-perm-addr="${esc(step.addr || '')}" data-perm-hash="${esc(step.hash || '')}">
+        <span>${esc(step.label)}</span>${icSVG(IC.link, 12)}
+      </button>
+    </div>`).join('');
+  return `<div class="wallet-next-steps perm-next-steps">
+    <div class="wallet-next-steps-head">
+      <span class="wallet-next-steps-title">${t('Recommended next steps')}</span>
+    </div>
+    <div class="wallet-next-steps-list">${rows}</div>
+  </div>`;
+}
+
+function buildPermissionSummaryText(data) {
+  const { addr, owner, actives, witness, analysis, riskScore, stats, history, signerMeta } = data;
+  const lines = [
+    'TRONSEC Permission Audit',
+    `${t('Address')}: ${addr}`,
+    `${t('Permission risk')}: ${riskScore}/100 (${analysis.level})`,
+    '',
+    `${t('Owner signers')}: ${stats.ownerSigners} (${t('Threshold')} ${owner?.threshold || 1})`,
+    `${t('Active groups')}: ${stats.activeGroups}`,
+    `${t('External controllers')}: ${stats.externalSigners}`,
+    `${t('Co-signer wallet')}: ${stats.coSigners || 0}`,
+    '',
+    `${t('Findings')}:`,
+    ...analysis.findings.map(f => `- [${f.lvl}] ${f.msg}`),
+  ];
+  const dumpKeys = (title, block) => {
+    if (!block?.keys?.length) return;
+    lines.push('', `${title}:`);
+    block.keys.forEach(k => {
+      const m = signerMeta?.[k.address] || {};
+      const tag = m.external ? 'external' : (m.isContract ? 'contract' : 'wallet');
+      lines.push(`  - ${k.address} (weight ${k.weight}, ${tag})`);
+    });
+  };
+  dumpKeys('Owner', owner);
+  (actives || []).forEach((ap, i) => dumpKeys(`Active ${i + 1}`, ap));
+  dumpKeys('Witness', witness);
+  if (history?.length) {
+    lines.push('', 'Recent permission updates:');
+    history.forEach(h => lines.push(`  - ${h.hash}`));
+  }
+  lines.push('', 'https://tronsec.io/app/#permissions');
+  return lines.join('\n');
+}
+
+function permRiskStat(score, level) {
+  const cls = level === 'danger' ? 'is-red' : (level === 'warn' ? 'is-amber' : 'is-green');
+  return `<div class="an-stat perm-risk-stat">
+    <div class="an-stat-label">${t('Permission risk')}</div>
+    <div class="an-stat-value ${cls}">${score}<span class="aml-score-unit">/100</span></div>
+    <div class="an-stat-sub">${t('Heuristic score — not an AML check')}</div>
+  </div>`;
+}
+
+function permFindingRows(findings, analysisLevel) {
+  const risks = findings.filter(f => f.lvl === 'danger' || f.lvl === 'warn');
+  let notes = findings.filter(f => f.lvl === 'info');
+  const oks = findings.filter(f => f.lvl === 'ok');
+
+  if (!risks.length && analysisLevel === 'ok') {
+    notes = notes.filter(f => !isMultisigInfoFinding(f.msg));
+  }
+
+  const rows = risks.length ? risks : (oks.length === 1 && !notes.length ? oks : notes);
+  if (!rows.length) return '';
+
+  const blockTitle = risks.length ? t('Findings') : t('Notes');
+  return `<div class="aml-block perm-findings-block${risks.length ? '' : ' perm-notes-block'}">
+    <div class="aml-block-head">
+      <span class="aml-block-title">${blockTitle}</span>
+      ${rows.length > 1 ? `<span class="aml-block-meta">${rows.length}</span>` : ''}
+    </div>
+    <div class="aml-block-body aml-block-body--flush">
+      <div class="contract-risks">
+        ${rows.map(f => {
+          const cls = f.lvl === 'danger' ? 'is-high' : (f.lvl === 'warn' ? 'is-med' : 'is-info');
+          const cat = f.lvl === 'danger' ? t('Risk') : (f.lvl === 'warn' ? t('Warning') : t('Note'));
+          return `<div class="contract-risk ${cls}">
+            <div class="contract-risk-body">
+              <div class="contract-risk-cat">${esc(cat)}</div>
+              <div class="contract-risk-msg">${esc(f.msg)}</div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function bindPermActions(addr) {
+  document.getElementById('perm-refresh-btn')?.addEventListener('click', () => permissionsScan({ force: true }));
+  const summaryBtn = document.getElementById('perm-copy-summary-btn');
+  if (summaryBtn && permissionsData) {
+    summaryBtn.addEventListener('click', () => {
+      const text = buildPermissionSummaryText(permissionsData);
+      navigator.clipboard?.writeText(text).then(() => showToast(t('Summary copied'))).catch(() => showToast(t('Copy failed')));
