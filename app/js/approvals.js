@@ -278,3 +278,43 @@ async function approvalsScan(opts = {}) {
 
   const gen = ++approvalsScanGen;
   setApprovalsScanLocked(true);
+  hideScanEmpty(approvalsEmpty);
+  approvalsRes.innerHTML = SK.approvals();
+  approvalsList = [];
+
+  try {
+    const [trc20Res, nativeRes, scanRaw] = await Promise.all([
+      gridGet(`/v1/accounts/${addr}/transactions/trc20`, { limit: 200, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
+      gridGet(`/v1/accounts/${addr}/transactions`, { limit: 200, only_confirmed: true, order_by: 'block_timestamp,desc' }).catch(() => ({ data: [] })),
+      fetchTronScanApprovalList(addr).catch(() => []),
+    ]);
+    if (gen !== approvalsScanGen) return;
+
+    const scanCandidates = (scanRaw || []).map(normalizeTronScanApprovalItem).filter(i => i.tokenAddr && i.spender);
+    const txCandidates = collectApprovalCandidates(trc20Res?.data || [], nativeRes?.data || []);
+    const merged = await mergeApprovalCandidates(scanCandidates, txCandidates);
+
+    approvalsList = await enrichApprovalsOnChain(addr, merged);
+    if (gen !== approvalsScanGen) return;
+    renderApprovals();
+    writeApprovalsSessionCache(addr, approvalsList);
+    
+  } catch (e) {
+    if (gen !== approvalsScanGen) return;
+    approvalsRes.innerHTML = '';
+    setError(approvalsErr, userFriendlyFetchError(e));
+  } finally {
+    if (gen === approvalsScanGen) setApprovalsScanLocked(false);
+  }
+}
+
+function apprHeadTags(list) {
+  const active = list || [];
+  const counts = apprRiskCounts(active);
+  const highRiskCount = counts.critical + counts.high;
+  const tags = [];
+  if (active.length) tags.push(walletTag(`${active.length} ${ttLabel('allowance')}`, 'info'));
+  if (highRiskCount) tags.push(walletTag(`${highRiskCount} ${t('high-risk allowance')}${highRiskCount > 1 ? 's' : ''}`, 'bad'));
+  else if (counts.warn) tags.push(walletTag(`${counts.warn} ${t('elevated allowance')}${counts.warn > 1 ? 's' : ''}`, 'warn'));
+  if (approvalsFromCache) tags.push(walletTag(t('session cache'), 'name'));
+  return tags.join('');
