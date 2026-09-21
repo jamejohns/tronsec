@@ -160,3 +160,165 @@ const SELECTORS = {
   '38ed1739': { name: 'swapExactTokensForTokens', desc: 'DEX swap: exact input > tokens',       risk: 'low'  },
   '8803dbee': { name: 'swapTokensForExactTokens', desc: 'DEX swap: tokens > exact output',      risk: 'low'  },
   '7ff36ab5': { name: 'swapExactETHForTokens',    desc: 'DEX swap: exact TRX > tokens',         risk: 'low'  },
+  '18cbafe5': { name: 'swapExactTokensForETH',    desc: 'DEX swap: tokens > TRX',               risk: 'low'  },
+  'fb3bdb41': { name: 'swapETHForExactTokens',    desc: 'DEX swap: TRX > exact tokens',         risk: 'low'  },
+  'e8e33700': { name: 'addLiquidity',             desc: 'Add liquidity to DEX pool',            risk: 'low'  },
+  'baa2abde': { name: 'removeLiquidity',          desc: 'Remove liquidity from DEX pool',       risk: 'low'  },
+  'f305d719': { name: 'addLiquidityETH',          desc: 'Add TRX + token liquidity',            risk: 'low'  },
+  '39509351': { name: 'increaseAllowance',        desc: 'Increase token spending allowance',    risk: 'high' },
+  'd73dd623': { name: 'increaseApproval',         desc: 'Increase token spending approval (USDT)', risk: 'high' },
+  '66188463': { name: 'decreaseApproval',         desc: 'Decrease token spending approval (USDT)', risk: 'low'  },
+  'a457c2d7': { name: 'decreaseAllowance',        desc: 'Decrease token spending allowance',    risk: 'low'  },
+  'd505accf': { name: 'permit',                   desc: 'Gasless approval via signed permit',   risk: 'high' },
+  'ac9650d8': { name: 'multicall',                desc: 'Batch multiple contract calls',        risk: 'med'  },
+  '3593564c': { name: 'execute',                  desc: 'Execute swap/route via DEX router',    risk: 'low'  },
+  '704802ad': { name: 'changeAdmin',              desc: 'Transfer proxy admin control',         risk: 'high' },
+  '5c60da1b': { name: 'implementation',           desc: 'Read proxy implementation (view)',     risk: 'none' },
+};
+
+const OFFICIAL_TOKEN_ADDRS = new Set([
+  'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', 'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8',
+  'TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4', 'TMwFHYXLJaRUPeW6421aqXL4ZEzPRFGkGT',
+  'TAFjULxiVgT4qWk6UZwjqwZXTSaGaqnVp4', 'TNUC9Qb1rRpN8skWv9nHQLdGAWZWjUEYue',
+  'TKfjV9RNKJJCqPvBtK8L7Knykh7DNWvnYt', 'TSSMHYeV2uE9qYH95DqyoCuNCzEL1NvU3S',
+  'TCFLL5dx5ZJdKnWuesXxi1VPwjLVmWZZy9', 'TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7',
+  'TN3W4H6rK2ce4vX9YnFQHwKx8Vwhi53ZZZ',
+]);
+
+const TRANSFER_TOPIC = 'ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+const APPROVAL_INCREASE_FNS = new Set(['approve', 'increaseAllowance', 'increaseApproval']);
+const APPROVAL_DECREASE_FNS = new Set(['decreaseAllowance', 'decreaseApproval']);
+const APPROVAL_INCREASE_SELECTORS = new Set(['095ea7b3', '39509351', 'd73dd623']);
+
+function isApprovalIncreaseCall(decodedCall, selector) {
+  return APPROVAL_INCREASE_SELECTORS.has(selector) || APPROVAL_INCREASE_FNS.has(decodedCall?.fn);
+}
+
+function isApprovalDecreaseCall(decodedCall, selector) {
+  return selector === 'a457c2d7' || selector === '66188463' || APPROVAL_DECREASE_FNS.has(decodedCall?.fn);
+}
+
+function approvalIncreaseFnLabel(fn) {
+  return (fn === 'increaseAllowance' || fn === 'increaseApproval')
+    ? t('Increased allowance for')
+    : t('Approved');
+}
+
+// -- Contract type labels ---------------------------------------------
+const CONTRACT_TYPES = {
+  TransferContract:               { label: 'TRX Transfer',         icon: icSVG('M5 12h14M12 5l7 7-7 7'),           risk: 'low' },
+  TransferAssetContract:          { label: 'TRC10 Token Transfer', icon: icSVG('M12 2l10 6v8l-10 6L2 16V8l10-6z'), risk: 'low' },
+  TriggerSmartContract:           { label: 'Smart Contract Call',  icon: icSVG('M16 18l6-6-6-6M8 6l-6 6 6 6'),      risk: 'med' },
+  FreezeBalanceContract:          { label: 'Freeze TRX (stake v1)',icon: icSVG('M8 5V3a4 4 0 0 1 8 0v2M6 21h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2z'), risk: 'low' },
+  UnfreezeBalanceContract:        { label: 'Unfreeze TRX',         icon: icSVG('M6 21h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2z'), risk: 'low' },
+  FreezeBalanceV2Contract:        { label: 'Freeze TRX (stake v2)',icon: icSVG('M8 5V3a4 4 0 0 1 8 0v2M6 21h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2z'), risk: 'low' },
+  UnfreezeBalanceV2Contract:      { label: 'Unfreeze TRX (v2)',    icon: icSVG('M6 21h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2z'), risk: 'low' },
+  DelegateResourceContract:       { label: 'Delegate Energy/BW',   icon: icSVG('M5 12h14M12 5l7 7-7 7'),           risk: 'low' },
+  UnDelegateResourceContract:     { label: 'Undelegate Resource',  icon: icSVG('M19 12H5M12 19l-7-7 7-7'),          risk: 'low' },
+  VoteWitnessContract:            { label: 'Vote for SR',          icon: icSVG('M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM9 12l2 2 4-4'), risk: 'low' },
+  WithdrawBalanceContract:        { label: 'Claim Voting Rewards', icon: icSVG('M12 15V3M8 11l4 4 4-4M2 21h20'),   risk: 'low' },
+  AccountCreateContract:          { label: 'Create Account',       icon: icSVG('M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M16 11h6'), risk: 'low' },
+  AccountUpdateContract:          { label: 'Update Account Name',  icon: icSVG('M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z'), risk: 'low' },
+  CreateSmartContract:            { label: 'Deploy Contract',      icon: icSVG('M21 16v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2M7 10l5 5 5-5M12 15V3'), risk: 'med' },
+  WithdrawExpireUnfreezeContract: { label: 'Withdraw Unfrozen TRX',icon: icSVG('M21 12v-2a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2M7 10l5 5 5-5M12 15V3'), risk: 'low' },
+};
+
+// -- Known TRON token contracts ---------------------------------------
+const KNOWN_TOKENS = {
+  'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t': { symbol: 'USDT',    name: 'Tether USD',          decimals: 6 },
+  'TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8': { symbol: 'USDC',    name: 'USD Coin',             decimals: 6 },
+  'TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7': { symbol: 'WIN',     name: 'WINkLink',             decimals: 6 },
+  'TCFLL5dx5ZJdKnWuesXxi1VPwjLVmWZZy9': { symbol: 'JST',     name: 'JUST',                 decimals: 18 },
+  'TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4': { symbol: 'TUSD',   name: 'TrueUSD',              decimals: 18 },
+  'TMwFHYXLJaRUPeW6421aqXL4ZEzPRFGkGT': { symbol: 'USDJ',   name: 'JUST Stablecoin',      decimals: 18 },
+  'TKfjV9RNKJJCqPvBtK8L7Knykh7DNWvnYt': { symbol: 'WBTT',   name: 'Wrapped BTT',          decimals: 6 },
+  'TNUC9Qb1rRpN8skWv9nHQLdGAWZWjUEYue': { symbol: 'WTRX',   name: 'Wrapped TRX',          decimals: 6 },
+  'TN3W4H6rK2ce4vX9YnFQHwKx8Vwhi53ZZZ': { symbol: 'NFT',    name: 'APENFT',               decimals: 6 },
+  'TFczxzPhnThNSqr5by8tvxsdCFRDHJwEKS': { symbol: 'SUNOLD', name: 'SUN (old)',             decimals: 18 },
+  'TSSMHYeV2uE9qYH95DqyoCuNCzEL1NvU3S': { symbol: 'SUN',    name: 'SUN Token',            decimals: 18 },
+  'TAFjULxiVgT4qWk6UZwjqwZXTSaGaqnVp4': { symbol: 'BTT',    name: 'BitTorrent',           decimals: 18 },
+  'TKkeiboTkxXKJpbmVFbv4a8ov5rAfRDMf9': { symbol: 'SunDrop',name: 'SunDrop',              decimals: 18 },
+};
+
+// -- Helpers ----------------------------------------------------------
+function hexToAddress(hex32) {
+  // ABI-encoded address: 32 bytes, last 21 bytes (42 hex chars) = TRON address
+  // TRON addresses start with 0x41 prefix
+  if (!hex32 || hex32.length < 40) return null;
+  if (hex32.length === 40) return '41' + hex32;
+  const raw42 = hex32.slice(-42);
+  if (raw42.startsWith('41')) return raw42; // Already TRON format
+  return '41' + raw42.slice(-40);           // EVM format - prepend TRON prefix
+}
+
+function hexToUint(hex) {
+  if (!hex) return BigInt(0);
+  try { return BigInt('0x' + hex); } catch(_) { return BigInt(0); }
+}
+
+function riskBadge(risk) {
+  const map = {
+    high: 'b-red',
+    med:  'b-amber',
+    low:  'b-green',
+    none: 'b-ghost',
+  };
+  const icons = {
+    high: icSVG('M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01', 10),
+    med:  icSVG('M5 12h14', 10),
+    low:  icSVG('M20 6L9 17l-5-5', 10),
+    none: icSVG('M12 12h.01', 10),
+  };
+  const labels = { high: 'High risk', med: 'Medium', low: 'Low risk', none: 'Read-only' };
+  const cls = map[risk] || 'b-ghost';
+  const label = t(labels[risk] || risk);
+  const icon = icons[risk] || '';
+  return `<span class="badge ${cls}">${icon} ${esc(label)}</span>`;
+}
+
+function statusBadge(success) {
+  return success
+    ? `<span class="badge b-green">${icSVG(IC.check, 10)} ${t('Success')}</span>`
+    : `<span class="badge b-red">${icSVG(IC.x, 10)} ${t('Failed')}</span>`;
+}
+
+function txAddrLink(addr) {
+  if (!addr || addr === '—') return `<span class="kv-muted">—</span>`;
+  return `<a class="a-link a-link-inline mono kv-link" href="https://tronscan.org/#/address/${esc(addr)}" target="_blank" rel="noopener"><span>${esc(addrLabel(addr))}</span>${icSVG(IC.link, 9)}</a>`;
+}
+
+function transferDedupKey(tr, loose) {
+  const amt = String(tr.amount_str || tr.amount || '');
+  const parts = [tr.from_address, tr.to_address];
+  if (!loose) parts.push(tr.contract_address);
+  parts.push(amt);
+  return parts.join('|').toLowerCase();
+}
+
+async function normalizeTransferAddr(addr) {
+  if (!addr || isValidTron(addr)) return addr;
+  let clean = String(addr).replace(/^0x/i, '');
+  if (clean.length >= 40) clean = '41' + clean.slice(-40);
+  if (clean.length === 42) return hexToTronAddress(clean).catch(() => addr);
+  return addr;
+}
+
+async function normalizeTransferRow(tr) {
+  const out = { ...tr };
+  for (const key of ['from_address', 'to_address', 'contract_address']) {
+    out[key] = await normalizeTransferAddr(out[key]);
+  }
+  const tok = KNOWN_TOKENS[out.contract_address];
+  if (tok) {
+    if (!out.symbol || out.symbol === '?') out.symbol = tok.symbol;
+    if (out.decimals == null) out.decimals = tok.decimals;
+    if (!out.name) out.name = tok.name;
+    out.vip = true;
+  }
+  return out;
+}
+
+async function mergeTrc20Transfers(scanInfo, txInfo) {
+  const scanTransfers = collectTrc20Transfers(scanInfo);
+  const logTransfers = decodeLogsToTransfers(txInfo?.log, KNOWN_TOKENS);
