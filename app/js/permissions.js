@@ -151,3 +151,156 @@ function decodePermissionOperations(hex) {
     }
   }
   const labels = names.map(n => PERMISSION_OP_LABELS[n] || n.replace(/Contract$/, ''));
+  return { names, labels, count: names.length };
+}
+
+async function normalizePermissionBlock(block) {
+  if (!block || typeof block !== 'object') return null;
+  const keys = await Promise.all((block.keys || []).map(async k => ({
+    address: await normalizePermKeyAddress(k.address),
+    weight: Number(k.weight) || 0,
+  })));
+  return {
+    ...block,
+    threshold: Number(block.threshold) || 0,
+    keys: keys.filter(k => k.address),
+  };
+}
+
+async function fetchAccountPermissions(addr) {
+  const accRes = await gridGet(`/v1/accounts/${addr}`).catch(() => null);
+  const row = accRes?.data?.[0] || null;
+  let owner = row?.owner_permission || null;
+  let actives = row?.active_permission || [];
+  let witness = row?.witness_permission || null;
+
+  if (!owner && (!actives || !actives.length)) {
+    const raw = await gridPost('/wallet/getaccount', { value: addr, visible: true }).catch(() => null);
+    if (raw && !raw.Error) {
+      owner = raw.owner_permission || owner;
+      actives = raw.active_permission || actives;
+      witness = raw.witness_permission || witness;
+    }
+  }
+
+  owner = await normalizePermissionBlock(owner);
+  const activeList = Array.isArray(actives) ? actives : (actives ? [actives] : []);
+  const normalizedActives = [];
+  for (const ap of activeList) {
+    const norm = await normalizePermissionBlock(ap);
+    if (norm) normalizedActives.push(norm);
+  }
+  witness = await normalizePermissionBlock(witness);
+
+  return {
+    owner,
+    actives: normalizedActives,
+    witness,
+    inactive: !row && !owner && !normalizedActives.length,
+    isContract: await probeTronContract(addr).catch(() => false),
+    accountRow: row,
+  };
+}
+
+async function enrichPermissionSigners(selfAddr, owner, actives, witness) {
+  const blocks = [owner, ...(actives || []), witness].filter(Boolean);
+  const uniq = new Set();
+  blocks.forEach(b => (b.keys || []).forEach(k => { if (k.address) uniq.add(k.address); }));
+  const meta = {};
+  await Promise.all([...uniq].map(async address => {
+    meta[address] = {
+      isContract: await probeTronContract(address).catch(() => false),
+      external: !sameTronAddr(address, selfAddr),
+    };
+  }));
+  return meta;
+}
+
+async function fetchPermissionHistory(addr) {
+  const res = await gridGet(`/v1/accounts/${addr}/transactions`, {
+    limit: 120,
+    order_by: 'block_timestamp,desc',
+    only_confirmed: true,
+  }).catch(() => ({ data: [] }));
+  return (res?.data || [])
+    .filter(tx => tx.raw_data?.contract?.[0]?.type === 'AccountPermissionUpdateContract')
+    .slice(0, 6)
+    .map(tx => ({
+      hash: tx.txID || tx.transaction_id || tx.hash || '',
+      ts: tx.block_timestamp || 0,
+    }))
+    .filter(row => row.hash);
+}
+
+function permissionBlockSignature(block) {
+  if (!block?.keys?.length) return '';
+  const keys = [...block.keys].map(k => `${k.address}:${k.weight}`).sort().join(',');
+  return `${keys}|t${block.threshold || 1}`;
+}
+
+function isMultisigInfoFinding(msg) {
+  const m = String(msg || '');
+  return /Multisig Owner/i.test(m)
+    || /is multisig/i.test(m)
+    || /Owner threshold .*multiple signatures/i.test(m);
+}
+
+function computePermissionRiskScore(analysis, stats) {
+  if (analysis.level === 'ok' && !stats.externalSigners) return 0;
+  let score = 0;
+  if (stats.externalSigners) score += 35 + Math.min(25, stats.externalSigners * 12);
+  analysis.findings.forEach(f => {
+    if (f.lvl === 'danger') score += 12;
+    else if (f.lvl === 'warn') score += 6;
+  });
+  if (stats.witnessKeys) score += 4;
+  return Math.min(100, Math.max(analysis.level === 'ok' ? 0 : 8, score));
+}
+
+function analyzeAccountPermissions(addr, owner, actives, witness, signerMeta = {}) {
+  const findings = [];
+  let level = 'ok';
+
+  const bump = (l) => {
+    if (l === 'danger') level = 'danger';
+    else if (l === 'warn' && level !== 'danger') level = 'warn';
+  };
+
+  const ownerKeys = owner?.keys || [];
+  const ownerThreshold = owner?.threshold || 1;
+  const ownerClass = classifyPermissionKeys(ownerKeys, addr, ownerThreshold, signerMeta);
+  const ownerSig = permissionBlockSignature(owner);
+  if (ownerClass.contractExternal.length) {
+    findings.push({
+      lvl: 'danger',
+      msg: t('Contract signer on Owner permission — a third-party contract can control this account.'),
+    });
+    bump('danger');
+  } else if (ownerClass.soloExternal.length) {
+    findings.push({
+      lvl: 'danger',
+      msg: t('External signer can act alone on Owner permission — full account control without this wallet.'),
+    });
+    bump('danger');
+  }
+  if (ownerKeys.length > 1) {
+    findings.push({
+      lvl: 'info',
+      msg: t('Multisig Owner — {n} controllers, threshold {t}.', { n: ownerKeys.length, t: ownerThreshold }),
+    });
+  } else if (ownerThreshold > 1) {
+    findings.push({
+      lvl: 'info',
+      msg: t('Owner threshold {t} — multiple signatures required for owner actions.', { t: ownerThreshold }),
+    });
+  }
+
+  for (const ap of actives || []) {
+    const name = ap.permission_name || t('active');
+    const threshold = ap.threshold || 1;
+    const activeClass = classifyPermissionKeys(ap.keys, addr, threshold, signerMeta);
+    if (activeClass.contractExternal.length) {
+      findings.push({
+        lvl: 'danger',
+        msg: t('Active permission "{name}" includes a contract signer.', { name }),
+      });
