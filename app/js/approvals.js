@@ -198,3 +198,43 @@ function apprRevokeBtn() {
   const label = esc(GLOSSARY.revoke?.lbl || 'Revoke');
   const tip = esc(t('Connect wallet to revoke'));
   return `<button type="button" class="wallet-action-btn wallet-action-btn--danger revoke-one-btn" data-appr-revoke title="${tip}" aria-label="${tip}">${icSVG(IC.trash, 14)}<span>${label}</span></button>`;
+}
+
+function openApprovalsRevokeConnect() {
+  showToast(t('Connect wallet to revoke'));
+}
+
+function bindApprovalsRevokeActions() {
+  approvalsRes?.querySelectorAll('[data-appr-revoke]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openApprovalsRevokeConnect();
+    });
+  });
+  approvalsRes?.querySelectorAll('[data-appr-revoke-all]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openApprovalsRevokeConnect();
+    });
+  });
+}
+
+async function mergeApprovalCandidates(scanItems, txItems) {
+  const items = [...scanItems, ...txItems];
+  const resolved = await Promise.all(items.map((item) => resolveApprovalAddresses(item)));
+  const map = new Map();
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const { tokenAddr, spender } = resolved[i];
+    if (!tokenAddr || !spender || !isValidTron(tokenAddr) || !isValidTron(spender)) continue;
+    if (typeof isApprovalsSuppressedSpender === 'function' && isApprovalsSuppressedSpender(spender)) continue;
+    const key = `${tokenAddr}_${spender}`;
+    if (!map.has(key)) {
+      map.set(key, { ...item, tokenAddr, spender });
+    }
+  }
+  return Array.from(map.values());
+}
+
