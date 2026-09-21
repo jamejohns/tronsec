@@ -158,3 +158,43 @@ function apprGroupSections(list) {
   }).join('');
 }
 
+function apprSummaryBar(counts, meta) {
+  const unlim = counts.critical;
+  const excessive = counts.high;
+  const warn = counts.warn;
+  const high = unlim + excessive;
+
+  let tone = 'ok';
+  let text;
+  if (high > 0) {
+    tone = 'bad';
+    const bits = [];
+    if (unlim) bits.push(`${unlim} ${ttLabel('unlimited')}`);
+    if (excessive) bits.push(`${excessive} ${t('excessive')}`);
+    text = `${bits.join(' · ')} — ${t('revoke these first')}`;
+  } else if (warn > 0) {
+    tone = 'warn';
+    text = `${warn} ${t('elevated')} — ${t('worth a quick review')}`;
+  } else {
+    text = t('No high-risk grants');
+  }
+
+  return `<div class="appr-summary is-${tone}">
+    <div class="appr-summary-main">
+      <div class="appr-summary-text">${esc(text)}</div>
+      <div class="appr-summary-meta">
+        <span>${meta.allowances} ${ttLabel('allowance')}${meta.allowances === 1 ? '' : 's'}</span>
+        <span aria-hidden="true">·</span>
+        <span>${meta.spenders} ${ttLabel('spender')}${meta.spenders === 1 ? '' : 's'}</span>
+      </div>
+    </div>
+    <button type="button" class="wallet-action-btn wallet-action-btn--danger appr-revoke-all-btn" data-appr-revoke-all title="${esc(t('Connect wallet to revoke'))}">
+      ${icSVG(IC.trash, 14)}<span>${esc(t('Revoke all'))}</span>
+    </button>
+  </div>`;
+}
+
+function apprRevokeBtn() {
+  const label = esc(GLOSSARY.revoke?.lbl || 'Revoke');
+  const tip = esc(t('Connect wallet to revoke'));
+  return `<button type="button" class="wallet-action-btn wallet-action-btn--danger revoke-one-btn" data-appr-revoke title="${tip}" aria-label="${tip}">${icSVG(IC.trash, 14)}<span>${label}</span></button>`;
