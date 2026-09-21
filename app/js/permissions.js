@@ -763,3 +763,156 @@ function bindPermActions(addr) {
     summaryBtn.addEventListener('click', () => {
       const text = buildPermissionSummaryText(permissionsData);
       navigator.clipboard?.writeText(text).then(() => showToast(t('Summary copied'))).catch(() => showToast(t('Copy failed')));
+    });
+  }
+  permissionsRes.querySelectorAll('[data-perm-manage]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openPermissionsManage();
+    });
+  });
+  permissionsRes.querySelectorAll('.wallet-contract-scan-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      if (typeof openAddressScan === 'function') openAddressScan(btn.getAttribute('data-addr'));
+    });
+  });
+  permissionsRes.querySelectorAll('.wallet-tx-decode-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      if (typeof openTxDecoder === 'function') openTxDecoder(btn.getAttribute('data-hash'));
+    });
+  });
+  permissionsRes.querySelectorAll('[data-perm-step]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      const action = btn.getAttribute('data-perm-step');
+      const targetAddr = btn.getAttribute('data-perm-addr');
+      const hash = btn.getAttribute('data-perm-hash');
+      if (action === 'scan-external' && targetAddr && typeof openWalletScan === 'function') openWalletScan(targetAddr);
+      else if (action === 'wallet' && typeof openWalletScan === 'function') openWalletScan(addr);
+      else if (action === 'tx' && hash && typeof openTxDecoder === 'function') openTxDecoder(hash);
+      else if (action === 'manage') openPermissionsManage();
+    });
+  });
+}
+
+function renderPermissions() {
+  const { addr, owner, actives, witness, analysis, isContract, riskScore, stats, history, signerMeta } = permissionsData;
+  const statBlock = stats || permissionStats(addr, owner, actives, witness, signerMeta);
+
+  const headTags = [
+    statBlock.externalSigners ? permTag(t('{n} external controller(s)', { n: statBlock.externalSigners }), 'bad') : '',
+    statBlock.coSigners ? permTag(t('{n} co-signer(s)', { n: statBlock.coSigners }), 'name') : '',
+    statBlock.multisigGroups ? permTag(t('{n} multisig group(s)', { n: statBlock.multisigGroups }), 'name') : '',
+    statBlock.witnessKeys ? permTag(t('Witness keys'), 'warn') : '',
+    history?.length ? permTag(t('{n} recent permission TX', { n: history.length }), 'warn') : '',
+    isContract ? permTag(t('Contract'), 'name') : permTag(t('Wallet'), 'live'),
+  ].filter(Boolean).join('');
+
+  const heroHtml = `
+    ${permRiskStat(riskScore ?? 0, analysis.level)}
+    <div class="an-stat">
+      <div class="an-stat-label">${t('Active groups')}</div>
+      <div class="an-stat-value is-info">${statBlock.activeGroups}</div>
+      <div class="an-stat-sub">${t('custom operation scopes')}</div>
+    </div>
+    <div class="an-stat">
+      <div class="an-stat-label">${t('Owner signers')}</div>
+      <div class="an-stat-value is-green">${statBlock.ownerSigners}</div>
+      <div class="an-stat-sub">${owner?.threshold > 1 ? t('threshold {t}', { t: owner.threshold }) : t('full account control')}</div>
+    </div>
+    <div class="an-stat">
+      <div class="an-stat-label">${t('External controllers')}</div>
+      <div class="an-stat-value ${statBlock.externalSigners ? 'is-red' : 'is-green'}">${statBlock.externalSigners}</div>
+      <div class="an-stat-sub">${statBlock.externalSigners ? t('can act without this wallet') : (statBlock.coSigners ? t('{n} co-signer(s) only', { n: statBlock.coSigners }) : t('none detected'))}</div>
+    </div>`;
+
+  const sections = [
+    ...(actives || []).map((ap, i) => permSection(t('Active permission'), ap, addr, signerMeta, {
+      showOps: true,
+      index: actives.length > 1 ? i + 1 : 0,
+      sectionKey: `active-${i}`,
+    })),
+    permSection(t('Owner permission'), owner, addr, signerMeta, { showOps: true, sectionKey: 'owner' }),
+    witness?.keys?.length ? permSection(t('Witness permission'), witness, addr, signerMeta, { sectionKey: 'witness' }) : '',
+  ].filter(Boolean).join('');
+
+  permissionsRes.innerHTML = `<div class="perm-scan">
+    ${permHeadCard(addr, headTags, permissionsFromCache)}
+    <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">${heroHtml}</div>
+    <div class="perm-assessment">${permAssessment(analysis, isContract, statBlock)}</div>
+    ${permManageBar()}
+    ${buildPermissionNextSteps(addr, statBlock, history)}
+    ${permFindingRows(analysis.findings, analysis.level)}
+    <div class="perm-sections">${sections}</div>
+    ${permHistorySection(history)}
+    <p class="aml-disclaimer perm-disclaimer">${t('Permission audit uses public on-chain data and heuristics. Co-signer wallets are not AML-screened — verify you trust every signer.')}</p>
+  </div>`;
+
+  bindPermActions(addr);
+  if (window.lucide) lucide.createIcons();
+  if (typeof syncModuleNavState === 'function') syncModuleNavState('permissions');
+}
+
+async function permissionsScan(opts = {}) {
+  if (permissionsScanBusy) return;
+  const force = opts.force === true;
+  const addr = permissionsInput.value.trim();
+  setError(permissionsErr, '');
+  if (!addr) { flashInput(permissionsInput); showToast(t('Enter a TRON address')); return; }
+  if (!isValidTron(addr)) { flashInput(permissionsInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
+
+  permissionsLastAddr = addr;
+
+  if (!force) {
+    const cached = readPermissionsSessionCache(addr);
+    if (cached?.data) {
+      permissionsData = cached.data;
+      permissionsFromCache = true;
+      hideScanEmpty(permissionsEmpty, { instant: true });
+      renderPermissions();
+      showToast(t('Loaded from session cache'));
+      return;
+    }
+  } else {
+    clearPermissionsSessionCache(addr);
+  }
+
+  const gen = ++permissionsScanGen;
+  setPermissionsScanLocked(true);
+  permissionsFromCache = false;
+  hideScanEmpty(permissionsEmpty);
+  permissionsRes.innerHTML = SK.permissions();
+
+  try {
+    const [payload, history] = await Promise.all([
+      fetchAccountPermissions(addr),
+      fetchPermissionHistory(addr),
+    ]);
+    if (gen !== permissionsScanGen) return;
+
+    if (payload.inactive && !payload.owner && !payload.actives.length) {
+      permissionsRes.innerHTML = '';
+      setError(permissionsErr, t('Address not found or unactivated — no on-chain account for that address. Please check the address format and try again.'));
+      return;
+    }
+
+    const signerMeta = await enrichPermissionSigners(addr, payload.owner, payload.actives, payload.witness);
+    if (gen !== permissionsScanGen) return;
+
+    const analysis = analyzeAccountPermissions(addr, payload.owner, payload.actives, payload.witness, signerMeta);
+    const stats = permissionStats(addr, payload.owner, payload.actives, payload.witness, signerMeta);
+    const riskScore = computePermissionRiskScore(analysis, stats);
+    permissionsData = { addr, ...payload, analysis, history, signerMeta, riskScore, stats };
+    renderPermissions();
+    writePermissionsSessionCache({ addr, data: permissionsData });
+  } catch (e) {
+    if (gen !== permissionsScanGen) return;
+    permissionsRes.innerHTML = '';
+    setError(permissionsErr, userFriendlyFetchError(e));
+  } finally {
+    if (gen === permissionsScanGen) setPermissionsScanLocked(false);
+  }
+}
