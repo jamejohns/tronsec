@@ -38,3 +38,43 @@ function restoreApprovalsList(list) {
     return { ...a, amount };
   });
 }
+
+function readApprovalsSessionCache(addr) {
+  return readSessionCache('approvals', addr, {
+    ttl: APPROVALS_CACHE_TTL,
+    validate: (p) => p.addr === addr && Array.isArray(p.list),
+  });
+}
+
+function writeApprovalsSessionCache(addr, list) {
+  if (!addr) return;
+  writeSessionCache('approvals', addr, { addr, list: serializeApprovalsList(list) });
+}
+
+function clearApprovalsSessionCache(addr) {
+  clearSessionCache('approvals', addr);
+}
+
+function setApprovalsScanLocked(locked) {
+  approvalsScanBusy = locked;
+  if (locked) {
+    spinBtn(approvalsBtn, true);
+    if (approvalsBtn) approvalsBtn.setAttribute('aria-busy', 'true');
+    lockScanInput(approvalsInput, true);
+  } else {
+    endScanUI({ btn: approvalsBtn, input: approvalsInput });
+  }
+}
+
+approvalsInput.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  if (approvalsScanBusy) return;
+  approvalsScan();
+});
+approvalsBtn.addEventListener('click', approvalsScan);
+
+function apprRowIcon(symbol) {
+  const label = (symbol || '?').replace(/^0x/i, '').slice(0, 3).toUpperCase() || 'TKN';
+  return `<div class="appr-row-icon">${esc(label)}</div>`;
+}
