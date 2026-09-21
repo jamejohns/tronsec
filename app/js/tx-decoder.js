@@ -484,3 +484,165 @@ async function collectDustSignals(ctx) {
   if (hasDustAmount || isTronScanRiskyTx(scanInfo)) {
     const sender = isValidTron(fromAddr) ? fromAddr : null;
     if (sender) {
+      const profile = await fetchDustSenderProfile(sender);
+      if (isDustBotProfile(profile)) {
+        alerts.push({
+          lvl: 'amber',
+          msg: t('High-volume dust sender — mass outbound micro-transfers ({out} sent / {in} received). Likely spam probe or address-poisoning setup.', {
+            out: profile.out,
+            in: profile.inn,
+          }),
+        });
+        summaryRiskBump = summaryRiskBump || 'med';
+      }
+    }
+  }
+
+  return { alerts, summaryRiskBump, summaryDesc };
+}
+
+function bumpSummaryRisk(current, bump) {
+  const rank = { low: 0, med: 1, high: 2 };
+  if (!bump || rank[bump] == null) return current;
+  const cur = rank[current] ?? 0;
+  const next = rank[bump] ?? 0;
+  if (next > cur) {
+    if (bump === 'high') return 'high';
+    if (bump === 'med' && current !== 'high') return 'med';
+  }
+  return current;
+}
+
+function trc10TransferFromScan(scanInfo, cVal) {
+  const cd = scanInfo?.contractData;
+  if (!cd && !cVal?.amount) return null;
+  const ti = cd?.tokenInfo;
+  const decimals = ti?.tokenDecimal ?? 0;
+  const raw = cd?.amount ?? cVal.amount ?? 0;
+  return {
+    from_address: cd?.owner_address || cVal.owner_address,
+    to_address: cd?.to_address || cVal.to_address,
+    contract_address: ti?.tokenId != null ? String(ti.tokenId) : String(cVal.asset_name || ''),
+    amount_str: String(raw),
+    symbol: ti?.tokenAbbr || ti?.tokenName || String(cVal.asset_name || '?'),
+    decimals,
+    name: ti?.tokenName || '',
+    tokenType: 'trc10',
+    vip: !!ti?.vip,
+    source: 'scan-trc10',
+  };
+}
+
+function collectTrc20Transfers(scanInfo) {
+  const raw = [
+    ...(scanInfo?.trc20 || []),
+    ...(scanInfo?.trc20TransferInfo || []),
+    ...(scanInfo?.transfersAllList || []),
+  ].filter(Boolean);
+  const seen = new Set();
+  return raw.filter(tr => {
+    const key = [tr.from_address, tr.to_address, tr.contract_address, tr.amount_str, tr.type].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return tr.tokenType === 'trc20' || tr.tokenType2 === 'trc20' || tr.type === 'Transfer';
+  });
+}
+
+function decodeLogsToTransfers(logs, tokenByContract) {
+  if (!Array.isArray(logs)) return [];
+  return logs.filter(l => l.topics?.[0] === TRANSFER_TOPIC && l.topics.length >= 3).map(l => {
+    const contract = l.address || l.contract_address;
+    const meta = tokenByContract[contract] || {};
+    let from = l.topics[1];
+    let to = l.topics[2];
+    if (from?.length >= 40) from = '41' + from.slice(-40);
+    if (to?.length >= 40) to = '41' + to.slice(-40);
+    const amount = l.data ? BigInt('0x' + l.data.replace(/^0x/, '')) : BigInt(0);
+    return {
+      from_address: from,
+      to_address: to,
+      contract_address: contract,
+      amount_str: amount.toString(),
+      symbol: meta.symbol || '?',
+      decimals: meta.decimals ?? 6,
+      name: meta.name || '',
+      source: 'log',
+    };
+  });
+}
+
+function renderTxTransferRow(tr) {
+  const dec = tr.decimals ?? 6;
+  const amt = fmtTokenAmt(BigInt(tr.amount_str || tr.amount || 0), dec);
+  const sym = tr.symbol || '?';
+  const vip = tr.vip || OFFICIAL_TOKEN_ADDRS.has(tr.contract_address);
+  const symBadge = vip ? badge('b-green', sym) : badge('b-cyan', sym);
+  return `<div class="wallet-activity-item tx-move-item">
+    <div class="wallet-activity-icon is-neutral">${icSVG(IC.activity, 14)}</div>
+    <div class="wallet-activity-body">
+      <div class="wallet-activity-title">${symBadge}</div>
+      <div class="wallet-activity-meta tx-move-route">
+        ${walletContractScanBtn(tr.from_address)}<span class="tx-move-arrow">→</span>${walletContractScanBtn(tr.to_address)}
+      </div>
+    </div>
+    <div class="tx-move-val">
+      <div class="wallet-activity-amt tx-amt-neutral">${esc(amt)}</div>
+      <div class="wallet-activity-time">${walletContractScanBtn(tr.contract_address)}</div>
+    </div>
+  </div>`;
+}
+
+function renderTrc20TransfersHtml(transfers) {
+  if (!transfers.length) return '';
+  const rows = transfers.map(renderTxTransferRow).join('');
+  return txBlock(t('Token movements'), `
+    <div class="tx-move-list">${rows}</div>
+  `, t(transfers.length === 1 ? '{count} transfer' : '{count} transfers', { count: transfers.length }));
+}
+
+function isClaimSplitCall(trigger, selector) {
+  const method = (trigger?.method || SELECTORS[selector]?.name || '').toLowerCase();
+  if (selector === 'aad3ec96') return true;
+  if (!method.includes('claim')) return false;
+  return /percentage|percent|share|split|ratio|portion/.test(method);
+}
+
+async function fetchContractMethodNames(addr) {
+  if (!addr) return [];
+  try {
+    const wrap = await scanGet('/contract', { contract: addr });
+    const meta = wrap?.data?.[0] || {};
+    return Object.values(meta.methodMap || {}).map(sig => String(sig).split('(')[0].toLowerCase());
+  } catch (_) {
+    return [];
+  }
+}
+
+function isDrainContractProfile(methods, contractAddr) {
+  if (!methods?.length || OFFICIAL_TOKEN_ADDRS.has(contractAddr)) return false;
+  const joined = methods.join(' ');
+  const hasClaim = /claim/i.test(joined);
+  const hasBatch = /multicall|batchcall|executebatch|aggregate/.test(joined);
+  const hasOwner = /changeowner|changeadmin|transferownership/.test(joined);
+  const hasTrc20 = ['transfer', 'approve', 'transferfrom'].every(n => methods.includes(n));
+  return hasClaim && (hasBatch || hasOwner) && !hasTrc20;
+}
+
+function isClaimScamPattern(selector, trigger, dataHex, contractMethods, contractAddr) {
+  const addr = contractAddr || trigger?.contract_address || '';
+  if (OFFICIAL_TOKEN_ADDRS.has(addr)) return false;
+  if (isClaimSplitCall(trigger, selector)) return true;
+  if (isDrainContractProfile(contractMethods, addr)) return true;
+
+  const method = (trigger?.method || SELECTORS[selector]?.name || '').toLowerCase();
+  const data = (dataHex || '').toLowerCase();
+  const hasClaim = method.includes('claim') || selector === '4e71d92d' || selector === 'aad3ec96';
+  const hasBatch = method.includes('multicall') || selector === 'ac9650d8' || data.includes('ac9650d8');
+  const hasOwner = method.includes('changeowner') || method.includes('changeadmin') || data.includes('704802ad');
+  return (hasClaim && hasBatch) || (hasClaim && hasOwner);
+}
+
+// openContractScan lives in shared.js
+
+// Decode ABI-encoded call data (hex string without 0x, starting after 4-byte selector)
+function decodeCallData(selector, data) {
