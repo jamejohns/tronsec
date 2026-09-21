@@ -318,3 +318,43 @@ function apprHeadTags(list) {
   else if (counts.warn) tags.push(walletTag(`${counts.warn} ${t('elevated allowance')}${counts.warn > 1 ? 's' : ''}`, 'warn'));
   if (approvalsFromCache) tags.push(walletTag(t('session cache'), 'name'));
   return tags.join('');
+}
+
+function apprHeadCard(addr, list) {
+  return scanHeadCard({
+    leadHtml: `<div class="wallet-head-addr">${esc(addr)}</div>`,
+    actionsHtml: `
+      ${scanActionBtn({ id: 'appr-refresh-btn', label: 'Refresh scan', icon: IC.refresh })}
+      ${scanActionBtn({ id: 'appr-copy-addr-btn', label: 'Copy', icon: IC.copy })}
+      ${scanActionBtn({ id: 'appr-tronscan-btn', label: 'TronScan', icon: IC.external, href: `https://tronscan.org/#/address/${addr}`, variant: 'ext' })}
+    `,
+    tagsHtml: apprHeadTags(list),
+  });
+}
+
+function bindApprovalsHeadActions(addr) {
+  document.getElementById('appr-refresh-btn')?.addEventListener('click', () => approvalsScan({ force: true }));
+  document.getElementById('appr-copy-addr-btn')?.addEventListener('click', () => {
+    if (!addr) return;
+    navigator.clipboard.writeText(addr).then(() => {
+      const btn = document.getElementById('appr-copy-addr-btn');
+      if (!btn) return;
+      btn.classList.add('is-copied');
+      btn.innerHTML = `${icSVG(IC.check, 14)}<span>${t('Copied')}</span>`;
+      setTimeout(() => {
+        btn.classList.remove('is-copied');
+        btn.innerHTML = `${icSVG(IC.copy, 14)}<span>${t('Copy')}</span>`;
+      }, 2000);
+    });
+  });
+}
+
+function renderApprovals() {
+  const list = approvalsList;
+  const addr = approvalsLastAddr;
+  const headHtml = addr ? apprHeadCard(addr, list) : '';
+
+  if (list.length === 0) {
+    approvalsRes.innerHTML = `
+      <div class="appr-scan">
+        ${headHtml}
