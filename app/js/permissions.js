@@ -304,3 +304,156 @@ function analyzeAccountPermissions(addr, owner, actives, witness, signerMeta = {
         lvl: 'danger',
         msg: t('Active permission "{name}" includes a contract signer.', { name }),
       });
+      bump('danger');
+    } else if (activeClass.soloExternal.length) {
+      findings.push({
+        lvl: 'danger',
+        msg: t('Active permission "{name}" — external signer can act without this wallet.', { name }),
+      });
+      bump('danger');
+    }
+    if ((ap.keys || []).length > 1) {
+      const sig = permissionBlockSignature(ap);
+      if (sig !== ownerSig) {
+        findings.push({
+          lvl: 'info',
+          msg: t('Active "{name}" is multisig ({n} keys, threshold {t}).', {
+            name, n: ap.keys.length, t: threshold,
+          }),
+        });
+      }
+    }
+    const ops = decodePermissionOperations(ap.operations);
+    if (ops.names.includes('AccountPermissionUpdateContract') && activeClass.riskyAddresses.size) {
+      findings.push({
+        lvl: 'danger',
+        msg: t('Active "{name}" can modify account permissions via an external controller.', { name }),
+      });
+      bump('danger');
+    }
+  }
+
+  if (witness?.keys?.length) {
+    findings.push({
+      lvl: 'info',
+      msg: t('Witness (Super Representative) permission is configured on this account.'),
+    });
+  }
+
+  if (!findings.some(f => f.lvl === 'danger' || f.lvl === 'warn')) {
+    if (!findings.length) {
+      findings.unshift({
+        lvl: 'ok',
+        msg: t('Standard layout — only this address holds owner/active signing keys with threshold 1.'),
+      });
+    } else if (!findings.some(f => f.lvl === 'info')) {
+      findings.unshift({
+        lvl: 'ok',
+        msg: t('No permission risks detected — review signers and operation scopes below.'),
+      });
+    }
+  }
+
+  return { level, findings };
+}
+
+function permissionStats(addr, owner, actives, witness, signerMeta = {}) {
+  const blocks = [owner, ...(actives || []), witness].filter(Boolean);
+  const riskyExternal = new Set();
+  const coSigners = new Set();
+  blocks.forEach(b => {
+    const cls = classifyPermissionKeys(b.keys, addr, b.threshold || 1, signerMeta);
+    cls.riskyAddresses.forEach(a => riskyExternal.add(a));
+    cls.coSigners.forEach(k => coSigners.add(k.address));
+  });
+  const multisigGroups = blocks.filter(b => (b.keys?.length || 0) > 1 || (b.threshold || 1) > 1).length;
+  return {
+    ownerSigners: owner?.keys?.length || 0,
+    activeGroups: actives?.length || 0,
+    externalSigners: riskyExternal.size,
+    coSigners: coSigners.size,
+    multisigGroups,
+    witnessKeys: witness?.keys?.length || 0,
+    riskyExternalAddresses: [...riskyExternal],
+  };
+}
+
+const PERM_OP_GROUPS = {
+  transfers: {
+    label: 'Transfers',
+    types: ['TransferContract', 'TransferAssetContract', 'ShieldedTransferContract'],
+  },
+  contracts: {
+    label: 'Smart contracts',
+    types: ['TriggerSmartContract', 'CreateSmartContract', 'ClearABIContract', 'UpdateSettingContract'],
+  },
+  staking: {
+    label: 'Stake & resources',
+    types: ['FreezeBalanceContract', 'UnfreezeBalanceContract', 'FreezeBalanceV2Contract', 'UnfreezeBalanceV2Contract', 'DelegateResourceContract', 'UnDelegateResourceContract', 'WithdrawExpireUnfreezeContract', 'CancelAllUnfreezeV2Contract'],
+  },
+  governance: {
+    label: 'Governance & votes',
+    types: ['VoteWitnessContract', 'WithdrawBalanceContract', 'WithdrawRewardContract', 'ProposalCreateContract', 'ProposalApproveContract', 'ProposalDeleteContract'],
+  },
+  permissions: {
+    label: 'Permission admin',
+    types: ['AccountPermissionUpdateContract', 'AccountUpdateContract', 'SetAccountIdContract'],
+  },
+};
+
+function summarizeOperations(hex) {
+  const ops = decodePermissionOperations(hex);
+  const groups = [];
+  const used = new Set();
+  for (const group of Object.values(PERM_OP_GROUPS)) {
+    const hits = ops.names.filter(n => group.types.includes(n));
+    if (!hits.length) continue;
+    hits.forEach(n => used.add(n));
+    groups.push({
+      label: group.label,
+      count: hits.length,
+      risky: hits.some(n => PERMISSION_OP_RISK.has(n)),
+    });
+  }
+  const other = ops.names.filter(n => !used.has(n)).length;
+  if (other > 0) {
+    groups.push({ label: 'Other on-chain ops', count: other, risky: false });
+  }
+  return { total: ops.count, groups, risky: ops.names.filter(n => PERMISSION_OP_RISK.has(n)) };
+}
+
+function permKvRow(label, valueHtml, last) {
+  return `<div class="kv-row${last ? ' kv-row--last' : ''}">
+    <span class="kv-label">${kvLabel(label)}</span>
+    <span class="kv-val">${valueHtml}</span>
+  </div>`;
+}
+
+function permHeadCard(addr, tagsHtml, fromCache) {
+  return scanHeadCard({
+    leadHtml: `<div class="wallet-head-addr">${esc(addr)}</div>`,
+    actionsHtml: `
+      ${scanActionBtn({ id: 'perm-copy-summary-btn', label: 'Copy summary', icon: IC.copy })}
+      ${scanActionBtn({ id: 'perm-refresh-btn', label: 'Refresh scan', icon: IC.refresh })}
+      ${scanActionBtn({ id: 'perm-tronscan-btn', label: 'TronScan', icon: IC.external, href: `https://tronscan.org/#/address/${addr}/permissions`, variant: 'ext' })}
+    `,
+    tagsHtml: `${tagsHtml}${fromCache ? permTag(t('session cache'), 'name') : ''}`,
+  });
+}
+
+function permTag(text, variant) {
+  return `<span class="wallet-tag${variant ? ` is-${variant}` : ''}">${esc(t(text))}</span>`;
+}
+
+function permAssessment(analysis, isContract, stats) {
+  const danger = analysis.findings.filter(f => f.lvl === 'danger');
+  const warn = analysis.findings.filter(f => f.lvl === 'warn');
+  if (isContract) {
+    return amlAlertInline('amber', `<strong>${t('Contract address')}</strong> — ${t('Account permission keys usually belong to wallets; on-chain data shown if present.')}`);
+  }
+  if (danger.length) {
+    return amlAlertInline('red', `<strong>${t('High-risk permission layout')}</strong> — ${esc(danger[0].msg)}${danger.length > 1 ? ` (+${danger.length - 1})` : ''}`);
+  }
+  if (warn.length) {
+    return amlAlertInline('amber', `<strong>${t('Review recommended')}</strong> — ${esc(warn[0].msg)}${warn.length > 1 ? ` (+${warn.length - 1})` : ''}`);
+  }
