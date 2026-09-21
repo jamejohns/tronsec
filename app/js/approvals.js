@@ -358,3 +358,47 @@ function renderApprovals() {
     approvalsRes.innerHTML = `
       <div class="appr-scan">
         ${headHtml}
+        <div class="scan-empty scan-empty--inline">
+          <div class="scan-empty-icon">${icSVG("M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z M9 12l2 2 4-4", 40)}</div>
+          <p class="scan-empty-title">${t('No approvals found')}</p>
+          <p class="scan-empty-hint">${t('This address has no active TRC20 allowances on record')}</p>
+        </div>
+        <p class="aml-disclaimer">${t('Approvals list reflects on-chain TRC-20 allowances at scan time. Revoke unused spenders after verifying each contract.')}</p>
+      </div>`;
+    bindApprovalsHeadActions(addr);
+    return;
+  }
+
+  const active = list;
+  const counts = apprRiskCounts(active);
+  const spenderCount = new Set(active.map(a => a.spender).filter(Boolean)).size;
+
+  approvalsRes.innerHTML = `
+    <div class="appr-scan">
+      ${headHtml}
+      ${apprSummaryBar(counts, { allowances: active.length, spenders: spenderCount })}
+      <div class="appr-sections">${apprGroupSections(list)}</div>
+      <p class="aml-disclaimer">${t('Approvals list reflects on-chain TRC-20 allowances at scan time. Revoke unused spenders after verifying each contract.')}</p>
+    </div>`;
+
+  bindApprovalsHeadActions(addr);
+  bindApprovalsRevokeActions();
+  approvalsRes.querySelectorAll('.wallet-contract-scan-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      openAddressScan(btn.getAttribute('data-addr'));
+    });
+  });
+}
+
+function resetApprovalsScanCache() {
+  approvalsScanGen++;
+  const addr = approvalsInput?.value?.trim() || approvalsLastAddr;
+  if (addr) clearApprovalsSessionCache(addr);
+  approvalsLastAddr = '';
+  approvalsList = [];
+  approvalsFromCache = false;
+  setApprovalsScanLocked(false);
+  if (typeof clearApiCaches === 'function') clearApiCaches();
+  else if (typeof clearScanApiCache === 'function') clearScanApiCache();
+}
