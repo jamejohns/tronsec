@@ -322,3 +322,165 @@ async function normalizeTransferRow(tr) {
 async function mergeTrc20Transfers(scanInfo, txInfo) {
   const scanTransfers = collectTrc20Transfers(scanInfo);
   const logTransfers = decodeLogsToTransfers(txInfo?.log, KNOWN_TOKENS);
+  const normalizedScan = await Promise.all(scanTransfers.map(normalizeTransferRow));
+  const normalizedLogs = await Promise.all(logTransfers.map(normalizeTransferRow));
+  const merged = [];
+  const seenStrict = new Set();
+  const seenLoose = new Set();
+  for (const tr of normalizedScan) {
+    seenStrict.add(transferDedupKey(tr));
+    seenLoose.add(transferDedupKey(tr, true));
+    merged.push(tr);
+  }
+  for (const tr of normalizedLogs) {
+    const strict = transferDedupKey(tr);
+    const loose = transferDedupKey(tr, true);
+    if (seenStrict.has(strict) || seenLoose.has(loose)) continue;
+    seenStrict.add(strict);
+    seenLoose.add(loose);
+    merged.push(tr);
+  }
+  return merged;
+}
+
+function normalizeSelector(raw) {
+  if (!raw) return '';
+  return String(raw).toLowerCase().replace(/^0x/, '').slice(0, 8);
+}
+
+function pickTriggerParam(params, ...keys) {
+  if (!params) return null;
+  for (const k of keys) {
+    if (params[k] != null && params[k] !== '') return params[k];
+  }
+  return null;
+}
+
+function pickTriggerBigInt(params, ...keys) {
+  const v = pickTriggerParam(params, ...keys);
+  if (v == null || v === '') return null;
+  try { return BigInt(String(v)); } catch (_) { return null; }
+}
+
+function buildDecodedFromTrigger(trigger) {
+  if (!trigger?.methodId) return null;
+  const sel = normalizeSelector(trigger.methodId);
+  const p = trigger.parameter || {};
+  switch (sel) {
+    case 'a9059cbb':
+      return { fn: 'transfer', to: pickTriggerParam(p, '_to', 'to', 'recipient'), amount: pickTriggerBigInt(p, '_value', 'value', 'amount') };
+    case '095ea7b3':
+      return { fn: 'approve', spender: pickTriggerParam(p, '_spender', 'spender'), amount: pickTriggerBigInt(p, '_value', 'value', 'amount') };
+    case '23b872dd':
+      return { fn: 'transferFrom', from: pickTriggerParam(p, '_from', 'from'), to: pickTriggerParam(p, '_to', 'to'), amount: pickTriggerBigInt(p, '_value', 'value', 'amount') };
+    case '39509351':
+      return { fn: 'increaseAllowance', spender: pickTriggerParam(p, '_spender', 'spender'), amount: pickTriggerBigInt(p, '_increment', 'increment', '_value', 'value') };
+    case 'd73dd623':
+      return { fn: 'increaseApproval', spender: pickTriggerParam(p, '_spender', 'spender'), amount: pickTriggerBigInt(p, '_addedValue', '_increment', 'increment', '_value', 'value') };
+    case 'a457c2d7':
+      return { fn: 'decreaseAllowance', spender: pickTriggerParam(p, '_spender', 'spender'), amount: pickTriggerBigInt(p, '_decrement', 'decrement', '_value', 'value') };
+    case '66188463':
+      return { fn: 'decreaseApproval', spender: pickTriggerParam(p, '_spender', 'spender'), amount: pickTriggerBigInt(p, '_subtractedValue', '_decrement', 'decrement', '_value', 'value') };
+    case 'a22cb465': {
+      const approved = pickTriggerBigInt(p, '_approved', 'approved');
+      return { fn: 'setApprovalForAll', operator: pickTriggerParam(p, '_operator', 'operator'), approved: approved === BigInt(1) };
+    }
+    case 'aad3ec96':
+      return {
+        fn: 'claimSplit',
+        to: pickTriggerParam(p, 'recipient', '_recipient', '_to', 'to'),
+        amount: pickTriggerBigInt(p, 'percentage', '_percentage', '_value', 'value'),
+      };
+    default:
+      return SELECTORS[sel] ? { fn: SELECTORS[sel].name } : null;
+  }
+}
+
+async function hydrateDecodedAddresses(decoded) {
+  if (!decoded) return decoded;
+  const out = { ...decoded };
+  if (out.from && !isValidTron(out.from)) out.from = await hexToTronAddress(out.from);
+  if (out.to && !isValidTron(out.to)) out.to = await hexToTronAddress(out.to);
+  if (out.spender && !isValidTron(out.spender)) out.spender = await hexToTronAddress(out.spender);
+  if (out.operator && !isValidTron(out.operator)) out.operator = await hexToTronAddress(out.operator);
+  return out;
+}
+
+function isTronScanRiskyTx(scanInfo) {
+  if (!scanInfo) return false;
+  const v = scanInfo.riskTransaction;
+  return v === true || v === 1 || v === '1';
+}
+
+// -- Dust / address-poisoning heuristics --------------------------------
+
+function isMicroTokenTransfer(tr) {
+  if (!tr) return false;
+  if (OFFICIAL_TOKEN_ADDRS.has(tr.contract_address)) return false;
+  const dec = Number(tr.decimals ?? 6);
+  let raw = 0n;
+  try { raw = BigInt(tr.amount_str ?? tr.amount ?? 0); } catch (_) { return false; }
+  if (raw <= 0n) return false;
+  const unit = 10n ** BigInt(Math.max(0, dec));
+  return raw <= unit;
+}
+
+function tronAddrPoisonMatch(a, b) {
+  if (!a || !b || a === '—' || b === '—' || a === b) return false;
+  if (!isValidTron(a) || !isValidTron(b)) return false;
+  return a.slice(0, 4) === b.slice(0, 4) && a.slice(-4) === b.slice(-4);
+}
+
+async function collectDustSignals(ctx) {
+  const { cType, cVal, scanInfo, mergedTransfers, fromAddr, toAddr } = ctx;
+  const alerts = [];
+  let summaryRiskBump = null;
+  let summaryDesc = '';
+
+  const trxSun = cType === 'TransferContract' ? (cVal.amount || 0) : 0;
+  const isMicroTrx = cType === 'TransferContract' && isMicroTrxSun(trxSun);
+  const microTokenTransfers = (mergedTransfers || []).filter(isMicroTokenTransfer);
+  const trc10Micro = cType === 'TransferAssetContract' && isMicroTokenTransfer(
+    trc10TransferFromScan(scanInfo, cVal)
+  );
+  const hasDustAmount = isMicroTrx || microTokenTransfers.length > 0 || trc10Micro;
+
+  if (tronAddrPoisonMatch(fromAddr, toAddr)) {
+    alerts.push({
+      lvl: 'red',
+      msg: t('Address poisoning pattern — sender resembles recipient (matching prefix and suffix). Verify the full base58 address before sending funds.'),
+    });
+    summaryRiskBump = 'high';
+  }
+
+  if (isMicroTrx) {
+    alerts.push({
+      lvl: 'amber',
+      msg: t('Micro TRX transfer ({amount} TRX) — typical dust/spam probe. Do not treat as payment and never copy an address from history without verifying every character.', {
+        amount: (trxSun / 1_000_000).toFixed(6),
+      }),
+    });
+    summaryDesc = t('Possible dust attack — micro-transfer designed to pollute your transaction history.');
+    summaryRiskBump = summaryRiskBump || 'med';
+  }
+
+  if (microTokenTransfers.length > 0) {
+    const sym = microTokenTransfers[0].symbol || 'token';
+    alerts.push({
+      lvl: 'amber',
+      msg: t('Micro {symbol} transfer — suspicious dust amount on a non-official token. Verify the contract/asset ID before interacting.', { symbol: sym }),
+    });
+    summaryRiskBump = summaryRiskBump || 'med';
+  } else if (trc10Micro) {
+    const ti = scanInfo?.contractData?.tokenInfo;
+    const sym = ti?.tokenAbbr || ti?.tokenName || t('TRC10 token');
+    alerts.push({
+      lvl: 'amber',
+      msg: t('Micro {symbol} transfer — suspicious dust amount on a non-official token. Verify the contract/asset ID before interacting.', { symbol: sym }),
+    });
+    summaryRiskBump = summaryRiskBump || 'med';
+  }
+
+  if (hasDustAmount || isTronScanRiskyTx(scanInfo)) {
+    const sender = isValidTron(fromAddr) ? fromAddr : null;
+    if (sender) {
