@@ -238,3 +238,43 @@ async function mergeApprovalCandidates(scanItems, txItems) {
   return Array.from(map.values());
 }
 
+
+async function approvalsScan(opts = {}) {
+  if (approvalsScanBusy) return;
+  const force = opts.force === true;
+  const addr = approvalsInput.value.trim();
+  setError(approvalsErr, '');
+  if (!addr) { flashInput(approvalsInput); showToast(t('Enter a TRON address')); return; }
+  if (!isValidTron(addr)) { flashInput(approvalsInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
+
+  approvalsLastAddr = addr;
+
+  if (typeof isApprovalsSuppressedAddress === 'function' && isApprovalsSuppressedAddress(addr)) {
+    clearApprovalsSessionCache(addr);
+    clearPersistedDemoAssignment(addr);
+    approvalsFromCache = false;
+    approvalsList = [];
+    hideScanEmpty(approvalsEmpty);
+    renderApprovals();
+    writeApprovalsSessionCache(addr, []);
+    return;
+  }
+
+  if (!force) {
+    const cached = readApprovalsSessionCache(addr);
+    if (cached) {
+      hideScanEmpty(approvalsEmpty, { instant: true });
+      approvalsList = restoreApprovalsList(cached.list);
+      approvalsFromCache = true;
+      renderApprovals();
+      showToast(t('Loaded from session cache'));
+      return;
+    }
+  } else {
+    clearApprovalsSessionCache(addr);
+  }
+
+  approvalsFromCache = false;
+
+  const gen = ++approvalsScanGen;
+  setApprovalsScanLocked(true);
