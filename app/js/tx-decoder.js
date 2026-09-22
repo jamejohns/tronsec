@@ -808,3 +808,165 @@ async function txDecode(opts = {}) {
     const timestamp  = txData.raw_data?.timestamp;
     const fee        = txInfo?.fee ? (txInfo.fee / 1_000_000).toFixed(6) : '0';
     const energyUsed = txInfo?.receipt?.energy_usage_total || txInfo?.receipt?.energy_usage || 0;
+    const netUsed    = txInfo?.receipt?.net_usage || 0;
+    const blockNum   = txInfo?.blockNumber || '—';
+
+    // -- Build human-readable summary --------------------------------
+    let summaryTitleHtml = '';
+    let summaryDesc  = '';
+    let summaryRisk  = typeMeta.risk;
+    let decodedCall  = null;
+    let tokenInfo    = null;
+    let tokenDecimals = 6;
+    let selector     = '';
+    let contractAddr = '';
+    let contractMethods = [];
+    let suspiciousApprovalSpender = false;
+    let amtStr = null;
+    const details    = []; // [{label, value, mono?}]
+    const trigger    = scanInfo?.trigger_info || null;
+    let mergedTransfers = await mergeTrc20Transfers(scanInfo, txInfo);
+    const trc10Row = cType === 'TransferAssetContract' ? trc10TransferFromScan(scanInfo, cVal) : null;
+    if (trc10Row) {
+      const key = [trc10Row.from_address, trc10Row.to_address, trc10Row.contract_address, trc10Row.amount_str].join('|');
+      const dup = mergedTransfers.some(tr => [tr.from_address, tr.to_address, tr.contract_address, tr.amount_str].join('|') === key);
+      if (!dup) mergedTransfers = [...mergedTransfers, trc10Row];
+    }
+    const hasTokenMovements = mergedTransfers.length > 0;
+
+    // From / To
+    const fromAddr = cVal.owner_address || '—';
+    const toAddr   = cVal.to_address || cVal.contract_address || '—';
+
+    switch (cType) {
+
+      case 'TransferContract': {
+        const amt = (cVal.amount || 0) / 1_000_000;
+        summaryTitleHtml = esc(`Sent ${amt.toFixed(6)} TRX`);
+        summaryDesc  = '';
+        details.push({ label: 'Amount', value: amt.toFixed(6) + ' TRX', mono: true });
+        details.push({ label: 'From',   value: fromAddr, mono: true, link: true });
+        details.push({ label: 'To',     value: toAddr,   mono: true, link: true });
+        break;
+      }
+
+      case 'TransferAssetContract': {
+        const ti = scanInfo?.contractData?.tokenInfo;
+        const sym = ti?.tokenAbbr || ti?.tokenName || cVal.asset_name || t('TRC10 token');
+        const dec = ti?.tokenDecimal ?? 0;
+        const amt = fmtTokenAmt(BigInt(cVal.amount || scanInfo?.contractData?.amount || 0), dec);
+        summaryTitleHtml = esc(t('Sent {amount} {symbol}', { amount: amt, symbol: sym }));
+        summaryDesc = isTronScanRiskyTx(scanInfo)
+          ? t('TronScan marks this as a risky spam/airdrop transfer. Do not follow links in the token name or interact with the sender.')
+          : (ti ? t('TRC10 token transfer — verify the asset ID before treating this as a real payment.') : '');
+        if (isTronScanRiskyTx(scanInfo)) summaryRisk = 'high';
+        details.push({ label: 'Token', value: ti?.tokenName ? `${sym} (${ti.tokenName})` : sym });
+        details.push({ label: 'Amount', value: `${amt} ${sym}`, mono: true });
+        details.push({ label: 'From', value: fromAddr, mono: true, link: true });
+        details.push({ label: 'To', value: toAddr, mono: true, link: true });
+        break;
+      }
+
+      case 'TriggerSmartContract': {
+        const data     = cVal.data || '';
+        selector = trigger?.methodId ? normalizeSelector(trigger.methodId) : normalizeSelector(data.slice(0, 8));
+        const selMeta  = SELECTORS[selector];
+        contractAddr = trigger?.contract_address || cVal.contract_address;
+        contractMethods = await fetchContractMethodNames(contractAddr);
+        const knownTok = KNOWN_TOKENS[contractAddr];
+
+        tokenDecimals = knownTok?.decimals != null
+          ? knownTok.decimals
+          : await fetchTokenDecimals(contractAddr);
+
+        decodedCall = await hydrateDecodedAddresses(
+          buildDecodedFromTrigger(trigger) || decodeCallData(selector, data)
+        );
+        const spenderMethods = decodedCall?.spender
+          ? await fetchContractMethodNames(decodedCall.spender)
+          : [];
+        suspiciousApprovalSpender = isSuspiciousApprovalSpender(decodedCall?.spender, spenderMethods);
+        summaryRisk = selMeta?.risk || 'med';
+        if (isClaimSplitCall(trigger, selector) || isDrainContractProfile(contractMethods, contractAddr)) {
+          summaryRisk = 'high';
+        }
+        if (OFFICIAL_TOKEN_ADDRS.has(contractAddr) && summaryRisk === 'high' && decodedCall?.fn === 'transfer') {
+          summaryRisk = 'low';
+        } else if (
+          OFFICIAL_TOKEN_ADDRS.has(contractAddr)
+          && summaryRisk === 'high'
+          && isApprovalIncreaseCall(decodedCall, selector)
+          && !suspiciousApprovalSpender
+          && !isHighRiskApproval(decodedCall?.amount, tokenDecimals)
+        ) {
+          summaryRisk = 'med';
+        }
+
+        if (knownTok) tokenInfo = knownTok;
+        const symbol = knownTok ? knownTok.symbol : (trigger?.contract_address ? 'tokens' : 'tokens');
+        const tkName = knownTok ? `${knownTok.symbol} (${knownTok.name})` : t('unknown token');
+
+        const amtValue = decodedCall?.amount != null
+          ? fmtTokenAmt(decodedCall.amount, tokenDecimals)
+          : null;
+        amtStr = amtValue != null ? `${amtValue} ${symbol}` : null;
+
+        if (decodedCall) {
+          if (decodedCall.fn === 'transfer') {
+            const toLabel = decodedCall.to ? addrLabel(decodedCall.to) : '—';
+            const fnName = selMeta?.name || decodedCall.fn || 'transfer';
+            summaryTitleHtml = hasTokenMovements
+              ? esc(`${fnName}() · ${symbol}`)
+              : esc(`Sent ${amtStr || '—'} > ${toLabel}`);
+            summaryDesc  = knownTok ? '' : t('Always verify the contract address before interacting.');
+            if (!hasTokenMovements) {
+              details.push({ label: 'From',   value: cVal.owner_address, mono: true, link: true });
+              if (decodedCall.to) details.push({ label: 'To', value: decodedCall.to, mono: true, link: true });
+              if (amtStr) details.push({ label: 'Amount', value: amtStr, mono: true });
+            }
+          } else if (decodedCall.fn === 'transferFrom') {
+            const fromLabel = decodedCall.from ? addrLabel(decodedCall.from) : '—';
+            const toLabel   = decodedCall.to   ? addrLabel(decodedCall.to)   : '—';
+            summaryTitleHtml = hasTokenMovements
+              ? esc(`transferFrom() · ${symbol}`)
+              : esc(`${fromLabel} > ${toLabel} — ${amtStr || '—'}`);
+            summaryDesc  = hasTokenMovements
+              ? t('transferFrom() — tokens moved on behalf of another address, initiated by {caller}.', { caller: addrLabel(cVal.owner_address) })
+              : `transferFrom: ${amtValue || t('amount unknown')} of ${tkName} moved from ${fromLabel} to ${toLabel}, initiated by ${addrLabel(cVal.owner_address)}. Used by DeFi protocols and DEX aggregators — also a common drainer pattern.`;
+            if (!hasTokenMovements) {
+              if (decodedCall.from) details.push({ label: 'From', value: decodedCall.from, mono: true, link: true });
+              if (decodedCall.to)   details.push({ label: 'To', value: decodedCall.to, mono: true, link: true });
+              if (amtStr) details.push({ label: 'Amount', value: amtStr, mono: true });
+            } else {
+              details.push({ label: t('Initiated by'), value: cVal.owner_address, mono: true, link: true });
+            }
+          } else if (decodedCall.fn === 'claimSplit') {
+            const pct = decodedCall.amount != null ? String(decodedCall.amount) : '—';
+            const toLabel = decodedCall.to ? addrLabel(decodedCall.to) : '—';
+            summaryTitleHtml = `<span class="is-red">${esc(t('Claim split drain'))}</span> — ${esc(toLabel)} · ${esc(pct)}%`;
+            summaryDesc = t('claim(recipient, percentage) splits approved assets from the caller to recipient by percentage — classic drainer behaviour.');
+            summaryRisk = 'high';
+            if (decodedCall.to) details.push({ label: 'Recipient', value: decodedCall.to, mono: true, link: true });
+            details.push({ label: t('Split %'), value: pct + '%', mono: true });
+          } else if (isApprovalIncreaseCall(decodedCall, selector)) {
+            const spLabel = decodedCall.spender ? addrLabel(decodedCall.spender) : '—';
+            const isUnlim = isUnlimitedApproval(decodedCall.amount, tokenDecimals);
+            const isExcessive = isHighRiskApproval(decodedCall.amount, tokenDecimals);
+            const allowPlain = isUnlim ? `≈ ${t('unlimited')}` : (amtStr || '—');
+            const fnLabel = approvalIncreaseFnLabel(decodedCall.fn);
+            if (suspiciousApprovalSpender) {
+              summaryTitleHtml = `<span class="is-red">${esc(t('Possible drainer approval'))}</span> — ${esc(fnLabel)} ${esc(spLabel)}`;
+              summaryDesc = t('Spender contract can pull approved tokens (controlAndTransferToken / known drainer pattern). Do not sign payment pages that show approve instead of transfer.');
+              summaryRisk = 'high';
+            } else {
+              summaryTitleHtml = isUnlim
+                ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:inline;vertical-align:-2px;margin-right:2px;color:var(--red)"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> ${esc(fnLabel)} ${esc(spLabel)} — ${tt('unlimited')} ${esc(symbol)}`
+                : esc(`${fnLabel} ${spLabel} — ${allowPlain}`);
+              summaryDesc = `${fnLabel} ${spLabel} for ${allowPlain} of ${tkName}. ${isUnlim ? t('UNLIMITED — the spender can drain your entire balance at any time.') : (isExcessive ? t('Excessive allowance — verify the spender before signing.') : t('The spender can transfer this amount without further confirmation.'))}`;
+              if (isUnlim || isExcessive) summaryRisk = 'high';
+            }
+            details.push({ label: tt('spender'), value: decodedCall.spender || '—', mono: true, link: true });
+            details.push(isUnlim
+              ? { label: tt('allowance'), html: true, valueHtml: `≈ ${tt('unlimited')}` }
+              : { label: tt('allowance'), value: allowPlain, mono: true });
+            if (decodedCall.fn === 'increaseApproval') {
