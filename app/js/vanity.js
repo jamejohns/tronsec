@@ -292,3 +292,150 @@ function vanityFormatEta(seconds) {
   if (!Number.isFinite(seconds) || seconds <= 0) return '—';
   if (seconds < 60) return `~${Math.ceil(seconds)}s`;
   if (seconds < 3600) return `~${Math.ceil(seconds / 60)}m`;
+  if (seconds < 86400) return `~${(seconds / 3600).toFixed(1)}h`;
+  return `~${(seconds / 86400).toFixed(1)}d`;
+}
+
+function vanitySearchRate(elapsed) {
+  const baseline = vanityExpectedRate();
+  if (vanityTotalAttempts < 500 || elapsed < 2) return baseline;
+  const measured = vanityTotalAttempts / elapsed;
+  vanitySmoothedRate = vanitySmoothedRate
+    ? vanitySmoothedRate * 0.75 + measured * 0.25
+    : measured;
+  return Math.max(vanitySmoothedRate, baseline * 0.5);
+}
+
+function vanityFormatRate(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M/s`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K/s`;
+  return `${Math.round(n)}/s`;
+}
+
+/** Bar fill — asymptotic, never reaches 100% until a match is found. */
+function vanityProgressPercent(attempts, estTotal) {
+  if (!Number.isFinite(estTotal) || estTotal <= 0) return 0;
+  const ratio = attempts / estTotal;
+  return Math.min(88, 88 * (1 - Math.exp(-ratio)));
+}
+
+/** Memoryless search: expected remaining time does not shrink with attempts. */
+function vanityEtaRemaining(estTotal, rate) {
+  if (!Number.isFinite(estTotal) || estTotal <= 0 || rate <= 0) return Infinity;
+  return estTotal / rate;
+}
+
+function vanityGetMode() {
+  const active = vanityModeGroup?.querySelector('.vanity-mode-btn.is-active');
+  return active?.dataset.mode || 'suffix';
+}
+
+function vanitySetMode(mode) {
+  vanityModeGroup?.querySelectorAll('.vanity-mode-btn').forEach((btn) => {
+    const on = btn.dataset.mode === mode;
+    btn.classList.toggle('is-active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    btn.setAttribute('tabindex', on ? '0' : '-1');
+  });
+  vanitySyncInputLayout(mode);
+  vanityUpdateFormState();
+}
+
+function vanitySyncInputLayout(mode) {
+  const both = vanityIsBothMode(mode);
+  vanitySingleInput?.classList.toggle('hidden', both);
+  vanityDualInput?.classList.toggle('hidden', !both);
+  vanityPresetsWrap?.classList.toggle('hidden', both);
+  vanityPresetsBothWrap?.classList.toggle('hidden', !both);
+  vanityPresets?.classList.toggle('hidden', both);
+  vanityPresetsBoth?.classList.toggle('hidden', !both);
+  document.querySelector('#tab-vanity .vanity-search-bar')?.classList.toggle('is-dual', both);
+  if (window.lucide) lucide.createIcons();
+  if (!vanityRunning) {
+    if (both) vanityPrefixPatternInput?.focus();
+    else if (
+      document.activeElement === vanityPrefixPatternInput
+      || document.activeElement === vanitySuffixPatternInput
+    ) {
+      vanityPatternInput?.focus();
+    }
+  }
+}
+
+function vanityModeCaption(state) {
+  const input = typeof state === 'object' && state?.mode ? state : vanityCollectInput();
+  const { mode, trimmed, prefix, suffix, invalid, effPrefix } = input;
+  if (!trimmed) {
+    return vanityIsBothMode(mode)
+      ? t('Enter prefix and suffix to preview your address')
+      : t('Enter a pattern to preview your address');
+  }
+  if (invalid.length) return t('Remove invalid characters to continue');
+  if (input.infeasible) return vanityInfeasibleReason(input);
+  if (mode === 'both') {
+    return t('Address will start with {prefix}… and end with …{suffix}', {
+      prefix: effPrefix || vanityEffectivePrefix(prefix),
+      suffix,
+    });
+  }
+  if (mode === 'suffix') return t('Address will end with …{pattern}', { pattern: trimmed });
+  if (mode === 'prefix') {
+    const eff = vanityEffectivePrefix(trimmed);
+    return t('Address will start with {pattern}…', { pattern: eff });
+  }
+  return t('Address will contain …{pattern}…', { pattern: trimmed });
+}
+
+function vanityPreviewDots(n) {
+  return '·'.repeat(Math.max(0, n));
+}
+
+function vanityMarkPattern(raw) {
+  let html = '';
+  for (const ch of raw) {
+    const bad = !VANITY_BASE58.includes(ch);
+    html += bad
+      ? `<span class="vanity-preview-match vanity-preview-invalid">${esc(ch)}</span>`
+      : `<span class="vanity-preview-match">${esc(ch)}</span>`;
+  }
+  return html;
+}
+
+function vanityBuildPreview(state) {
+  const input = typeof state === 'object' && state?.mode ? state : vanityCollectInput();
+  const { mode, trimmed, prefix, suffix, effPrefix } = input;
+  const len = VANITY_PREVIEW_LEN;
+  if (!trimmed) {
+    return `<span class="vanity-preview-base">T</span><span class="vanity-preview-fade">${vanityPreviewDots(len - 1)}</span>`;
+  }
+
+  if (mode === 'both') {
+    const eff = effPrefix || vanityEffectivePrefix(prefix);
+    const pad = Math.max(0, len - eff.length - suffix.length);
+    const prefixHtml = prefix.startsWith('T')
+      ? vanityMarkPattern(eff)
+      : `<span class="vanity-preview-base">T</span>${vanityMarkPattern(prefix)}`;
+    return `${prefixHtml}<span class="vanity-preview-fade">${vanityPreviewDots(pad)}</span>${vanityMarkPattern(suffix)}`;
+  }
+  const raw = trimmed;
+  if (mode === 'suffix') {
+    const pad = Math.max(0, len - 1 - raw.length);
+    return `<span class="vanity-preview-base">T</span><span class="vanity-preview-fade">${vanityPreviewDots(pad)}</span>${vanityMarkPattern(raw)}`;
+  }
+  if (mode === 'prefix') {
+    const eff = vanityEffectivePrefix(raw);
+    const pad = Math.max(0, len - eff.length);
+    if (raw.startsWith('T')) {
+      return `${vanityMarkPattern(eff)}<span class="vanity-preview-fade">${vanityPreviewDots(pad)}</span>`;
+    }
+    return `<span class="vanity-preview-base">T</span>${vanityMarkPattern(raw)}<span class="vanity-preview-fade">${vanityPreviewDots(pad)}</span>`;
+  }
+  const idx = Math.max(1, Math.floor((len - raw.length) / 2));
+  const padR = Math.max(0, len - idx - raw.length);
+  return `<span class="vanity-preview-base">T</span><span class="vanity-preview-fade">${vanityPreviewDots(Math.max(0, idx - 1))}</span>${vanityMarkPattern(raw)}<span class="vanity-preview-fade">${vanityPreviewDots(padR)}</span>`;
+}
+
+function vanityHighlightAddress(address, pattern, mode, opts = {}) {
+  const caseSensitive = !!vanityCaseSensitive?.checked;
+  const a = caseSensitive ? address : address.toLowerCase();
+
