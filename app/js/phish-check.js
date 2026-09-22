@@ -414,3 +414,107 @@ function overallVerdict(vtResult, hFlags) {
   if (hRisk === 'low')   return { cls: 'amber', icon: big('M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM12 16v-4m0-4h.01'), label: 'Minor flags — verify manually' };
   return                        { cls: 'green', icon: big('M20 6L9 17l-5-5'), label: 'No threats detected' };
 }
+
+function vtStatusBadge(status) {
+  switch(status) {
+    case 'phishing':   return `<span class="badge b-red">${phIcon('M22 12c0 5.523-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2s10 4.477 10 10zM15 9l-6 6m0-6l6 6')} ${t('Malicious')}</span>`;
+    case 'suspicious': return `<span class="badge b-amber">${phIcon('M13 2L3 14h9l-1 8 10-12h-9l1-8z')} ${t('Suspicious')}</span>`;
+    case 'clean':      return `<span class="badge b-green">${phIcon('M20 6L9 17l-5-5')} ${t('Clean')}</span>`;
+    case 'error':      return `<span class="badge b-amber">${phIcon('M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01')} ${t('Error')}</span>`;
+    default:           return `<span class="badge b-ghost">? ${esc(status)}</span>`;
+  }
+}
+
+function renderPhishScanFromPayload(parsed, vtResult, hFlags, mmStatus, fromCache = false) {
+  if (!parsed?.href) return false;
+  phishFromCache = fromCache;
+  phishLastUrl = parsed.href;
+  hideScanEmpty(phishEmpty, { instant: true });
+  setError(phishErr, '');
+
+  const verdict = overallVerdict(vtResult, hFlags);
+  if (vtResult.status === 'error' && !hFlags.length) {
+    setError(phishErr, t('VirusTotal scan failed. Results may be incomplete.'));
+  }
+  const vCls = phishVerdictClass(verdict.cls);
+  const stats = vtResult.stats || {};
+  const mal = stats.malicious || 0;
+  const sus = stats.suspicious || 0;
+  const hrm = stats.harmless || 0;
+  const total = vtResult.total || 0;
+  const heurCount = hFlags.filter(f => f.source !== 'metamask').length;
+  const vtScanLink = `https://www.virustotal.com/gui/url/${btoa(parsed.href).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_')}`;
+
+  const headTags = [
+    vtStatusBadge(vtResult.status),
+    verdict.cls === 'red' ? badge('b-red', t('High risk')) :
+    verdict.cls === 'amber' ? badge('b-amber', t('Review')) : badge('b-green', t('Clean')),
+  ].join('');
+
+  const heroHtml = `
+    ${phishHeroStat('Verdict', `<span class="phish-verdict-inline">${verdict.icon}<span>${esc(t(verdict.label))}</span></span>`, vtResult.detail ? esc(vtResult.detail).slice(0, 80) : '', vCls)}
+    ${phishHeroStat('Malicious', String(mal), total ? t('{total} engines', { total }) : t('scan engines'), mal > 0 ? 'is-red' : 'is-neutral')}
+    ${phishHeroStat('Suspicious', String(sus), hrm ? t('{count} clean', { count: hrm }) : '', sus > 0 ? 'is-amber' : 'is-neutral')}
+    ${phishHeroStat('Pattern flags', String(hFlags.length), heurCount ? t('{count} heuristic', { count: heurCount }) : t('none detected'), hFlags.length ? 'is-amber' : 'is-green')}`;
+
+  let assessmentHtml;
+  if (verdict.cls === 'red') {
+    assessmentHtml = amlAlertInline('red', t('High risk — do not connect a wallet or enter credentials on this site.'));
+  } else if (vtResult.status === 'error') {
+    assessmentHtml = amlAlertInline('amber', t('VirusTotal scan failed. Heuristic checks only — verify manually.'));
+  } else if (verdict.cls === 'amber') {
+    assessmentHtml = amlAlertInline('amber', t('Review recommended — suspicious patterns detected. Verify the domain before interacting.'));
+  } else {
+    assessmentHtml = amlAlertInline('green', t('No threats detected — no major flags from scan engines or pattern checks.'));
+  }
+
+  const sourcesHtml = phishPanel(t('Sources checked'), `
+    ${phishKvRow(tt('scanEngines'), vtStatusBadge(vtResult.status))}
+    ${phishKvRow(tt('communityBlocklist'), mmStatusBadge(mmStatus))}
+    ${phishKvRow(tt('heuristics'), `<span class="badge ${heurCount ? 'b-amber' : 'b-green'}">${t(heurCount === 1 ? '{count} flag' : '{count} flags', { count: heurCount })}</span>`, true)}
+  `);
+
+  const domainHtml = phishPanel(t('Domain info'), `
+    ${phishKvRow(t('Domain'), `<span class="mono">${esc(parsed.hostname)}</span>`)}
+    ${phishKvRow(t('Protocol'), parsed.href.startsWith('https') ? '<span class="is-green">HTTPS</span>' : '<span class="is-red">HTTP</span>')}
+    ${phishKvRow(t('TLD'), `.${esc(getTld(parsed.hostname))}${SUSPICIOUS_TLDS.has(getTld(parsed.hostname)) ? ` <span class="badge b-amber">${t('risky')}</span>` : ''}`)}
+    ${phishKvRow(t('Subdomains'), (() => { const c = parsed.full.split('.').length - 2; return c === 0 ? t('None') : t(c === 1 ? '{count} level' : '{count} levels', { count: c }); })())}
+    ${phishKvRow(t('Domain length'), t('{length} chars', { length: parsed.hostname.length }))}
+    ${phishKvRow(t('Full report'), `<a class="a-link a-link-inline" href="${esc(vtScanLink)}" target="_blank" rel="noopener"><span>${t('View scan report')}</span>${icSVG(IC.link, 9)}</a>`, true)}
+  `);
+
+  phishRes.innerHTML = `
+    <div class="phish-scan">
+      ${phishHeadCard(parsed.href, parsed.hostname, headTags, fromCache)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">${heroHtml}</div>
+      <div class="phish-assessment">${assessmentHtml}</div>
+      <div class="aml-grid-2">
+        ${phishBlock(t('Pattern flags'), phishFlagRows(hFlags), { key: '{count} total', vars: { count: hFlags.length } })}
+        ${sourcesHtml}
+      </div>
+      ${domainHtml}
+      ${verdict.cls !== 'green' ? amlAlertInline('red', `<strong>${t('Safety reminder:')}</strong> ${t('Never enter your seed phrase, private key, or approve wallet connections on unfamiliar sites.')}`) : ''}
+      <p class="aml-disclaimer">${t('Automated URL screening — always verify official domains manually before signing transactions.')}</p>
+    </div>`;
+
+  bindPhishActions(parsed.href);
+  if (typeof syncModuleNavState === 'function') syncModuleNavState('scan-url');
+  if (window.lucide) lucide.createIcons();
+  return true;
+}
+
+// -- VT stats bar (legacy inline helper removed; hero grid used instead) --
+
+// -- Main check --------------------------------------------------------
+// -- Domain parser -----------------------------------------------------
+function parseDomain(raw) {
+  try {
+    let s = raw.trim();
+    if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+    const u = new URL(s);
+    const host = u.hostname.toLowerCase();
+    if (!host.includes('.')) return null;
+    return {
+      href:     u.href,
+      hostname: host.replace(/^www\./, ''),
+      full:     host,
