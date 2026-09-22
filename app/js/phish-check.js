@@ -518,3 +518,112 @@ function parseDomain(raw) {
       href:     u.href,
       hostname: host.replace(/^www\./, ''),
       full:     host,
+      path:     u.pathname + u.search,
+    };
+  } catch(_) { return null; }
+}
+
+async function phishCheck(opts = {}) {
+  const force = opts.force === true;
+  const raw = phishInput.value.trim();
+  setError(phishErr, '');
+
+  if (!raw) { flashInput(phishInput); showToast(t('Enter a URL')); return; }
+
+  if (!window.tronsecVtConfigured()) {
+    setError(phishErr, t('Phishing scan requires TRONSEC_PROXY.base (Cloudflare Worker with VIRUSTOTAL_API_KEY).'));
+    showToast(t('Configure Cloudflare Worker proxy — see workers/tronsec-api-proxy/README.md'));
+    return;
+  }
+
+  const parsed = parseDomain(raw);
+  if (!parsed) {
+    flashInput(phishInput);
+    showToast(t('Enter a valid website URL (e.g. https://example.com).'));
+    return;
+  }
+
+  phishLastUrl = parsed.href;
+
+  if (!force) {
+    const cached = readPhishSessionCache(parsed.href);
+    if (cached?.payload) {
+      const p = cached.payload;
+      if (renderPhishScanFromPayload(p.parsed, p.vtResult, p.hFlags, p.mmStatus, true)) {
+        showToast(t('Loaded from session cache'));
+        return;
+      }
+    }
+    if (cached?.html) {
+      phishFromCache = true;
+      hideScanEmpty(phishEmpty, { instant: true });
+      phishRes.innerHTML = cached.html;
+      bindPhishActions(parsed.href);
+      showToast(t('Loaded from session cache'));
+      return;
+    }
+  } else {
+    clearPhishSessionCache(parsed.href);
+  }
+
+  phishFromCache = false;
+  lockScanInput(phishInput, true);
+  spinBtn(phishBtn, true);
+  if (phishBtn) phishBtn.setAttribute('aria-busy', 'true');
+
+  requireCaptcha(async () => {
+    beginScanUI({
+      emptyEl: phishEmpty,
+      resultEl: phishRes,
+      errEl: phishErr,
+      btn: phishBtn,
+      input: phishInput,
+      skeletonHtml: SK.phishCheck(),
+    });
+
+    const steps = [
+      t('Loading blocklists…'),
+      t('Waiting for scan engines…'),
+      t('Engines scanning (this takes ~10s)…'),
+      t('Still scanning…'),
+      t('Almost done…'),
+    ];
+    let stepIdx = 0;
+
+    function showProgress(i) {
+      if (i < 0) return;
+      stepIdx = Math.min(i + 1, steps.length - 1);
+      const el = document.getElementById('phish-skel-status');
+      const text = el?.querySelector('.sk-status-text');
+      if (text) text.textContent = `[ ${steps[stepIdx].toUpperCase()} ]`;
+    }
+
+    const [vtResult, hFlags, _db] = await Promise.all([
+      checkVirusTotal(parsed.href, showProgress),
+      Promise.resolve(runHeuristics(parsed)),
+      fetchPhishingDB(),
+    ]);
+
+    const mmFlag = checkPhishingDB(parsed.hostname);
+    if (mmFlag) hFlags.push(mmFlag);
+
+    const mmStatus = (() => {
+      if (!_phishingDB || !_phishingDB.blacklist) return 'unavailable';
+      if (mmFlag) return 'flagged';
+      if (_phishingDB.whitelist?.some(d => parsed.hostname === d || parsed.hostname.endsWith('.' + d))) return 'whitelisted';
+      return 'clean';
+    })();
+
+    renderPhishScanFromPayload(parsed, vtResult, hFlags, mmStatus, false);
+    writePhishSessionCache({
+      url: parsed.href,
+      payload: { parsed, vtResult, hFlags, mmStatus },
+    });
+    endScanUI({ btn: phishBtn, input: phishInput });
+  }, () => {
+    endScanUI({ btn: phishBtn, input: phishInput });
+    if (!phishRes.innerHTML.trim() && !phishErr?.innerHTML?.trim()) {
+      showScanEmpty(phishEmpty);
+    }
+  });
+}
