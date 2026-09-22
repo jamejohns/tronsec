@@ -1132,3 +1132,168 @@ async function txDecode(opts = {}) {
           riskAlerts.push({ lvl: 'red', msg: t('Unlimited approval — spender can drain <strong>all</strong> tokens of this type from your wallet at any time.') });
           summaryRisk = 'high';
         } else if (isExcessive) {
+          riskAlerts.push({ lvl: 'red', msg: t('Excessive approval amount — spender can pull up to {amount} without further confirmation. Verify this is a trusted DeFi router, not a fake payment page.', { amount: amtStr || t('this amount') }) });
+          summaryRisk = 'high';
+        } else {
+          riskAlerts.push({ lvl: 'amber', msg: t('Token approval — you are granting permission to spend your tokens. Only approve trusted contracts.') });
+        }
+      }
+      // setApprovalForAll ? full NFT control
+      if (sel === 'a22cb465' && decodedCall?.approved) {
+        riskAlerts.push({ lvl: 'red', msg: t('setApprovalForAll — full NFT collection access granted to operator. Revoke immediately if unexpected.') });
+      }
+      // mint() ? supply inflation
+      if (sel === '40c10f19') {
+        riskAlerts.push({ lvl: 'red', msg: t('mint() — new tokens are being created, inflating supply. Potential price dilution.') });
+      }
+      // transferOwnership ? contract control handover
+      if (sel === 'f2fde38b' || sel === '704802ad') {
+        riskAlerts.push({ lvl: 'red', msg: t('transferOwnership() — contract control is being transferred. Verify the new owner is trustworthy.') });
+      }
+      // withdraw() ? potential fund drain
+      if (sel === '2e1a7d4d' || sel === 'e9fad8ee') {
+        riskAlerts.push({ lvl: 'amber', msg: t('withdraw() called — funds are being removed from a contract. Ensure this is expected behaviour.') });
+      }
+      // transferFrom ? tokens moved on behalf of someone
+      if (sel === '23b872dd') {
+        riskAlerts.push({ lvl: 'amber', msg: t('transferFrom() — tokens are being transferred on behalf of another address. This can be used by drainers to steal approved tokens.') });
+      }
+      // swap with high call value
+      if (cVal.call_value && cVal.call_value > 500_000_000) {
+        riskAlerts.push({ lvl: 'amber', msg: t('Large TRX payment ({amount} TRX) sent with contract call. Verify the recipient is a legitimate exchange or service.', { amount: (cVal.call_value/1_000_000).toFixed(2) }) });
+      }
+    }
+
+    // -- Additional risk signals --
+    // Failed transaction
+    if (!success) {
+      riskAlerts.push({ lvl: 'amber', msg: t('This transaction <strong>failed</strong> on-chain. No state changes were applied, but the fee was still consumed.') });
+    }
+
+    // Dust / address-poisoning heuristics
+    const dust = await collectDustSignals({
+      cType, cVal, scanInfo, mergedTransfers, fromAddr, toAddr,
+    });
+    riskAlerts.push(...dust.alerts);
+    summaryRisk = bumpSummaryRisk(summaryRisk, dust.summaryRiskBump);
+    if (dust.summaryDesc && !summaryDesc) summaryDesc = dust.summaryDesc;
+
+    const transfersHtml = renderTrc20TransfersHtml(mergedTransfers);
+
+    // -- Render -------------------------------------------------------
+    const redCount = riskAlerts.filter(a => a.lvl === 'red').length;
+    const amberCount = riskAlerts.filter(a => a.lvl === 'amber').length;
+
+    const headTags = [
+      statusBadge(success),
+      riskBadge(summaryRisk),
+      badge('b-ghost', t(typeMeta.label)),
+      tokenInfo ? badge('b-blue', tokenInfo.symbol + ' — ' + tokenInfo.name) : '',
+      OFFICIAL_TOKEN_ADDRS.has(trigger?.contract_address || cVal.contract_address) ? badge('b-green', t('Official token')) : '',
+    ].filter(Boolean).join('');
+
+    const riskSub = redCount
+      ? t('{count} critical', { count: redCount })
+      : amberCount
+        ? t('{count} warnings', { count: amberCount })
+        : t('No flags');
+    const feeSub = energyUsed
+      ? t('{amount} energy', { amount: fmtNum(energyUsed) })
+      : netUsed
+        ? t('{amount} bandwidth', { amount: fmtNum(netUsed) })
+        : '';
+
+    const heroHtml = `
+      ${txHeroStat(tt('type'), `<span class="tx-type-inline">${typeMeta.icon}<span>${esc(t(typeMeta.label))}</span></span>`, cType !== typeMeta.label ? esc(cType) : '', 'is-neutral')}
+      ${txHeroStat(tt('status'), success ? `<span class="is-green">${t('Success')}</span>` : `<span class="is-red">${t('Failed')}</span>`, timestamp ? esc(ago(timestamp)) : '—', success ? 'is-green' : 'is-red')}
+      ${txHeroStat(tt('risk'), riskBadge(summaryRisk), riskSub, txRiskClass(summaryRisk))}
+      ${txHeroStat(tt('fee'), `${fee} TRX`, feeSub, 'is-neutral')}`;
+
+    let assessmentHtml;
+    if (redCount > 0 || summaryRisk === 'high') {
+      assessmentHtml = amlAlertInline('red', `<strong>${t('High risk signals')}</strong> — ${t('{count} critical patterns detected. Review before signing similar transactions.', { count: redCount || 1 })}`);
+    } else if (amberCount > 0 || summaryRisk === 'med' || !success) {
+      const parts = [`<strong>${t('Review recommended')}</strong> —`];
+      if (!success) parts.push(t('transaction failed on-chain.'));
+      if (amberCount) parts.push(t('{count} warning signals present.', { count: amberCount }));
+      else parts.push(t('moderate-risk operation detected.'));
+      assessmentHtml = amlAlertInline('amber', parts.join(' '));
+    } else {
+      assessmentHtml = amlAlertInline('green', `<strong>${t('Low risk')}</strong> — ${t('no critical patterns detected in this transaction.')}`);
+    }
+
+    const signalsHtml = riskAlerts.length
+      ? txBlock(t('Risk signals'), `<div class="tx-signals aml-block-body--flush">${riskAlerts.map(txSignalRow).join('')}</div>`, { key: '{count} total', vars: { count: riskAlerts.length } })
+      : '';
+
+    const whatRows = details.map((d, i) =>
+      txKvRow(d.label, txDetailVal(d), i === details.length - 1)
+    ).join('');
+
+    const whatSummaryParts = [];
+    if (summaryTitleHtml) whatSummaryParts.push(`<div class="tx-summary-title">${summaryTitleHtml}</div>`);
+    if (summaryDesc) whatSummaryParts.push(`<div class="tx-summary-desc">${esc(summaryDesc)}</div>`);
+
+    const whatHtml = txBlock(t('What happened'), `
+      ${whatSummaryParts.length ? `<div class="tx-summary">${whatSummaryParts.join('')}</div>` : ''}
+      ${whatRows ? `<div class="aml-kv-list aml-block-body--flush">${whatRows}</div>` : ''}
+    `);
+
+    const chainRows = [
+      txKvRow(tt('block'), `<span class="mono">${esc(String(blockNum))}</span>`),
+      txKvRow(t('Time'), `<span class="mono">${timestamp ? esc(new Date(timestamp).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })) : '—'}</span>`),
+      txKvRow(tt('fee'), `<span class="mono is-blue">${fee} TRX</span>`),
+      energyUsed ? txKvRow(`${tt('energy')} · ${esc(t('used'))}`, `<span class="mono is-amber">${fmtNum(energyUsed)}</span>`) : '',
+      netUsed ? txKvRow(`${tt('bandwidth')} · ${esc(t('used'))}`, `<span class="mono">${fmtNum(netUsed)}</span>`) : '',
+      txKvRow(tt('smartContract'), `<span class="mono">${esc(cType)}</span>`, true),
+    ].filter(Boolean).join('');
+
+    const chainHtml = txPanel(t('On-chain details'), chainRows);
+
+    const rawHtml = (cType === 'TriggerSmartContract' && cVal.data) ? txBlock(t('Raw call data'), `
+      <div class="tx-raw-data">
+        <span class="tx-raw-sel">${esc(cVal.data.slice(0, 8))}</span>${esc(cVal.data.slice(8))}
+        <div class="tx-raw-note">${t('Highlighted = 4-byte function {selector} · remainder = {abi}-encoded parameters', { selector: tt('selector'), abi: tt('abi') })}</div>
+      </div>
+    `) : '';
+
+    const headTitleHtml = `<span class="tx-type-inline">${typeMeta.icon}<span>${esc(t(typeMeta.label))}</span></span>`;
+
+    txRes.innerHTML = `
+      <div class="tx-scan">
+        ${txHeadCard(headTitleHtml, hash, headTags, txFromCache)}
+        <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">${heroHtml}</div>
+        <div class="tx-assessment">${assessmentHtml}</div>
+        ${transfersHtml}
+        ${signalsHtml}
+        ${whatHtml}
+        ${chainHtml}
+        ${rawHtml}
+        <p class="aml-disclaimer">${t('Decoded from on-chain data — verify contract addresses and amounts before signing similar transactions.')}</p>
+      </div>`;
+
+    bindTxActions(hash);
+
+    writeTxSessionCache({ hash, html: txRes.innerHTML });
+
+
+    txRes.querySelectorAll('.tx-scan-contract-btn, .wallet-contract-scan-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.preventDefault();
+        openAddressScan(btn.getAttribute('data-addr'));
+      });
+    });
+
+  } catch (e) {
+    failScanUI({
+      resultEl: txRes,
+      errEl: txErr,
+      msg: userFriendlyFetchError(e),
+      btn: txBtn,
+      input: txInput,
+    });
+    return;
+  }
+
+  endScanUI({ btn: txBtn, input: txInput });
+}
