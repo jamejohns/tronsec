@@ -439,3 +439,150 @@ function vanityHighlightAddress(address, pattern, mode, opts = {}) {
   const caseSensitive = !!vanityCaseSensitive?.checked;
   const a = caseSensitive ? address : address.toLowerCase();
 
+  if (mode === 'both') {
+    const prefix = opts.prefix ?? '';
+    const suffix = opts.suffix ?? '';
+    const eff = vanityEffectivePrefix(prefix);
+    const p = caseSensitive ? eff : eff.toLowerCase();
+    const s = caseSensitive ? suffix : suffix.toLowerCase();
+    if (!a.startsWith(p) || !a.endsWith(s)) return esc(address);
+    const pre = esc(address.slice(0, eff.length));
+    const mid = esc(address.slice(eff.length, address.length - suffix.length));
+    const suf = esc(address.slice(address.length - suffix.length));
+    return `<mark class="vanity-match">${pre}</mark>${mid}<mark class="vanity-match">${suf}</mark>`;
+  }
+
+  const raw = pattern.trim();
+  if (!raw) return esc(address);
+
+  let start = 0;
+  let len = raw.length;
+
+  if (mode === 'suffix') {
+    start = address.length - raw.length;
+  } else if (mode === 'prefix') {
+    const eff = vanityEffectivePrefix(raw);
+    len = eff.length;
+    const p = caseSensitive ? eff : eff.toLowerCase();
+    if (!a.startsWith(p)) start = 0;
+    else start = 0;
+  } else {
+    const p = caseSensitive ? raw : raw.toLowerCase();
+    const idx = a.indexOf(p);
+    start = idx >= 0 ? idx : 0;
+  }
+
+  const before = esc(address.slice(0, start));
+  const match = esc(address.slice(start, start + len));
+  const after = esc(address.slice(start + len));
+  return `${before}<mark class="vanity-match">${match}</mark>${after}`;
+}
+
+function vanitySavePrefs() {
+  try {
+    localStorage.setItem(VANITY_PREFS_KEY, JSON.stringify({
+      pattern: vanityPatternInput?.value || '',
+      prefix: vanityPrefixPatternInput?.value || '',
+      suffix: vanitySuffixPatternInput?.value || '',
+      mode: vanityGetMode(),
+      caseSensitive: !!vanityCaseSensitive?.checked,
+    }));
+  } catch (_) { /* ignore */ }
+}
+
+function vanityApplyDefaults() {
+  if (vanityPatternInput) vanityPatternInput.value = VANITY_DEFAULT_PATTERN;
+  if (vanityPrefixPatternInput) vanityPrefixPatternInput.value = VANITY_DEFAULT_PREFIX;
+  if (vanitySuffixPatternInput) vanitySuffixPatternInput.value = VANITY_DEFAULT_SUFFIX;
+  vanitySetMode(VANITY_DEFAULT_MODE);
+}
+
+function vanityLoadPrefs() {
+  try {
+    const raw = localStorage.getItem(VANITY_PREFS_KEY);
+    if (!raw) {
+      vanityApplyDefaults();
+      return;
+    }
+    const prefs = JSON.parse(raw);
+    if (prefs.pattern && vanityPatternInput) {
+      const cleaned = [...prefs.pattern.trim()].filter((ch) => VANITY_BASE58.includes(ch)).join('');
+      vanityPatternInput.value = cleaned.slice(0, VANITY_MAX_PATTERN);
+    }
+    if (prefs.prefix && vanityPrefixPatternInput) {
+      const cleaned = [...prefs.prefix.trim()].filter((ch) => VANITY_BASE58.includes(ch)).join('');
+      vanityPrefixPatternInput.value = cleaned.slice(0, VANITY_MAX_BOTH_PART);
+    }
+    if (prefs.suffix && vanitySuffixPatternInput) {
+      const cleaned = [...prefs.suffix.trim()].filter((ch) => VANITY_BASE58.includes(ch)).join('');
+      vanitySuffixPatternInput.value = cleaned.slice(0, VANITY_MAX_BOTH_PART);
+    }
+    if (prefs.mode) vanitySetMode(prefs.mode);
+    if (vanityCaseSensitive && typeof prefs.caseSensitive === 'boolean') {
+      vanityCaseSensitive.checked = prefs.caseSensitive;
+    }
+  } catch (_) { /* ignore */ }
+}
+
+function vanitySetGenerateEnabled(enabled) {
+  if (!vanityStartBtn) return;
+  vanityStartBtn.disabled = !enabled;
+  vanityStartBtn.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+  vanityStartBtn.classList.toggle('is-disabled', !enabled);
+}
+
+function vanitySyncCaseToggle() {
+  const on = !!vanityCaseSensitive?.checked;
+  vanityCaseToggle?.classList.toggle('is-active', on);
+  vanityCaseToggle?.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+function vanityUpdateFormState() {
+  const input = vanityCollectInput();
+  const { mode, trimmed, invalid, infeasible, tooLong, ready, prefix, suffix } = input;
+  const diff = vanityDifficultyInfo(input);
+
+  if (vanityPreviewAddr) vanityPreviewAddr.innerHTML = vanityBuildPreview(input);
+  if (vanityHeroCaption) vanityHeroCaption.textContent = vanityModeCaption(input);
+  if (vanityPreview) {
+    vanityPreview.classList.toggle('is-invalid', invalid.length > 0 || infeasible || tooLong);
+    vanityPreview.classList.toggle('is-ready', ready);
+  }
+  if (vanityInputWrap) vanityInputWrap.classList.toggle('is-invalid', invalid.length > 0 || infeasible || tooLong);
+  document.getElementById('vanity-prefix-wrap')?.classList.toggle('is-invalid', invalid.length > 0 || infeasible || tooLong);
+  document.getElementById('vanity-suffix-wrap')?.classList.toggle('is-invalid', invalid.length > 0 || infeasible || tooLong);
+  vanityMetaBar?.classList.toggle('has-pattern', ready);
+
+  if (invalid.length) {
+    const toastKey = invalid.join('');
+    if (toastKey !== vanityLastInvalidToast) {
+      vanityLastInvalidToast = toastKey;
+      showToast(t('Invalid Base58 characters: {chars}', { chars: invalid.join(' ') }));
+    }
+  } else {
+    vanityLastInvalidToast = '';
+  }
+
+  if (infeasible || tooLong) {
+    const toastKey = tooLong ? `long:${mode}:${trimmed}` : `${mode}:${trimmed}`;
+    if (toastKey !== vanityLastInfeasibleToast) {
+      vanityLastInfeasibleToast = toastKey;
+      if (tooLong) {
+        showToast(t('Each part max {n} characters in prefix+suffix mode.', { n: VANITY_MAX_BOTH_PART }));
+      } else {
+        showToast(vanityInfeasibleReason(input));
+      }
+    }
+  } else {
+    vanityLastInfeasibleToast = '';
+  }
+
+  if (vanityMetaBar) vanityMetaBar.classList.toggle('hidden', !trimmed);
+  if (vanityStatusText) {
+    vanityStatusText.classList.toggle('hidden', !ready);
+    if (ready) {
+      const lenText = vanityIsBothMode(mode)
+        ? `${prefix.length}+${suffix.length}`
+        : `${trimmed.length}/${VANITY_MAX_PATTERN}`;
+      vanityStatusText.textContent = `${diff.label} · ${diff.eta} ${t('avg')} · ${lenText}`;
+    }
