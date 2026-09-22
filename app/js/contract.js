@@ -234,3 +234,121 @@ function detectContractStandard(abi) {
   if (['safetransferfrom(address,address,uint256,bytes)','urifromid'].some(n=>names.has(n))) return 'TRC-1155';
   return null;
 }
+
+function analyzeContractAbi(abi) {
+  const fns = abi.filter(e => e.type === 'Function' || !e.type);
+  const names = fns.map(e => e.name || '');
+  const has = (...patterns) => names.some(n => fnNameMatches(n, patterns));
+  return {
+    fns,
+    hasAbi: abi.length > 0,
+    hasMint: has('mint'),
+    hasPause: has('pause', 'stop', 'unpause'),
+    hasOwnerCtrl: has('transferownership', 'setowner', 'changeowner'),
+    hasBlack: names.some(isComplianceBlacklistFn),
+    hasDestroy: names.some(isSelfDestructFn),
+    hasWithdraw: names.some(isPrivilegedWithdrawFn),
+    hasFeeChange: has('setfee', 'settax', 'updatefee', 'setbuyfee', 'setsellfee'),
+    hasHiddenMint: has('issue', 'generate'),
+    hasRenounce: has('renounceownership'),
+    hasFallback: abi.some(e => e.type === 'Fallback' || e.type === 'Receive'),
+    hasUpgrade: has('upgrade', 'setimplementation', 'setlogic', 'upgradeto'),
+    hasProxy: fns.length <= 3,
+    hasCooldown: has('cooldown', 'timelock', 'setdelay'),
+    hasMaxTx: has('maxtx', 'maxamount', 'setlimit', 'maxtransfer'),
+    hasAntiWhale: has('maxwallet', 'maxholding', 'antiwhale'),
+    hasSwapBack: has('swapback', 'swapandliquify', 'processfees'),
+    hasAirdrop: has('airdrop', 'multisend', 'batchtransfer'),
+    hasBurnAll: has(/^burnall$/, 'burnfrom'),
+    hasClaimDrain: names.some(isClaimDrainFn),
+    hasMulticallBatch: names.some(isMulticallBatchFn),
+    hasOwnerChange: has('changeowner', 'changeadmin', 'setadmin'),
+    hasTooManyFns: fns.length > 40,
+    hasNoEvents: !abi.some(e => e.type === 'Event'),
+    readFns: fns.filter(e => e.stateMutability === 'view' || e.stateMutability === 'pure'),
+    writeFns: fns.filter(e => e.stateMutability !== 'view' && e.stateMutability !== 'pure' && e.stateMutability !== 'payable'),
+    payableFns: fns.filter(e => e.stateMutability === 'payable'),
+  };
+}
+
+function buildContractRisks(flags, ctx) {
+  const risks = [];
+  const { official, verified, hasAbi, standard, secToken, fraudTags } = ctx;
+
+  if (!hasAbi) risks.push({ lvl: 'danger', cat: 'Transparency', msg: 'No ABI — bytecode-only contract. Source is hidden, cannot audit logic.' });
+  if (flags.hasDestroy) risks.push({ lvl: 'danger', cat: 'Rug risk', msg: 'selfdestruct/destroy detected — owner can permanently kill the contract and lock all funds.' });
+  if (flags.hasBlack && !official) risks.push({ lvl: 'danger', cat: 'Censorship', msg: 'Blacklist function found — owner can silently block any address from transacting.' });
+  if (flags.hasBlack && official?.tier === 'issuer') risks.push({ lvl: 'info', cat: 'Compliance', msg: 'Issuer compliance controls (blacklist/freeze) — expected on regulated stablecoins, not a scam indicator.' });
+  if (flags.hasUpgrade && official?.tier === 'issuer') {
+    risks.push({ lvl: 'info', cat: 'Proxy', msg: 'Upgradeable fiat-token proxy — standard Circle/Tether deployment pattern on TRON, not a scam indicator.' });
+  } else if (flags.hasUpgrade && !official) {
+    risks.push({ lvl: 'danger', cat: 'Proxy', msg: 'Upgradeable proxy pattern — owner can silently replace contract logic at any time.' });
+  }
+  if (flags.hasWithdraw && !flags.hasRenounce && !official) risks.push({ lvl: 'danger', cat: 'Fund drain', msg: 'withdraw() with active ownership — privileged drain function without renounced control.' });
+  if (flags.hasClaimDrain && flags.hasMulticallBatch && !standard) {
+    risks.push({ lvl: 'danger', cat: 'Claim drain', msg: 'claim() + multicall() on a non-standard contract — may batch-split your token balance to attacker wallets.' });
+  } else if (flags.hasClaimDrain && !standard && !official) {
+    risks.push({ lvl: 'danger', cat: 'Claim trap', msg: 'claim() on a non-standard contract — may pull approved tokens or TRX from your wallet to the owner.' });
+  }
+  if (flags.hasClaimDrain && flags.hasMulticallBatch && flags.hasOwnerChange) {
+    risks.push({ lvl: 'danger', cat: 'Known scam', msg: 'claim + multicall + owner change — classic asset-split drain. Do not approve or call any function.' });
+  }
+  if (!verified && hasAbi && !official) risks.push({ lvl: 'warn', cat: 'Verification', msg: 'Source code not verified on TronScan — review bytecode-derived ABI carefully.' });
+  if (official && !verified) risks.push({ lvl: 'info', cat: 'Verification', msg: 'Listed official TRON contract — TronScan source flag may differ, but contract identity is confirmed.' });
+  if ((flags.hasMint || flags.hasHiddenMint) && !(official && standard === 'TRC20' && official.tier === 'issuer')) {
+    risks.push({ lvl: 'warn', cat: 'Supply', msg: 'Mint/issue function present — owner can inflate token supply at any time.' });
+  }
+  if (flags.hasPause && !(official?.tier === 'issuer')) risks.push({ lvl: 'warn', cat: 'Freeze', msg: 'pause()/stop() present — owner can freeze all transfers without consent.' });
+  if (flags.hasPause && official?.tier === 'issuer') risks.push({ lvl: 'info', cat: 'Compliance', msg: 'Pausable transfers — standard issuer emergency control on stablecoins.' });
+  if (flags.hasOwnerCtrl && !official) risks.push({ lvl: 'warn', cat: 'Ownership', msg: 'transferOwnership() present — control can be transferred silently.' });
+  if (flags.hasOwnerCtrl && official) risks.push({ lvl: 'info', cat: 'Governance', msg: 'Owner/multisig rotation — normal for established protocol or issuer contracts.' });
+  if (flags.hasFeeChange && !official) risks.push({ lvl: 'warn', cat: 'Fees', msg: 'setFee/tax function found — owner can change fees/taxes at will.' });
+  if (flags.hasFallback && !official) risks.push({ lvl: 'warn', cat: 'TRX sink', msg: 'Fallback/receive function — contract can accept arbitrary TRX, may be used as honeypot.' });
+  if (flags.hasProxy && hasAbi && !standard && !official) risks.push({ lvl: 'warn', cat: 'Proxy hint', msg: 'Very few ABI entries — possible minimal proxy. Real logic may be elsewhere.' });
+  if (flags.hasProxy && hasAbi && !standard && official?.tier === 'issuer') {
+    risks.push({ lvl: 'info', cat: 'Proxy', msg: 'Proxy contract surface — token logic is behind Circle/Tether fiat-token implementation.' });
+  }
+  if (flags.hasCooldown) risks.push({ lvl: 'warn', cat: 'Timelock', msg: 'Cooldown/timelock function found — transactions may be delayed or blocked at owner discretion.' });
+  if (flags.hasMaxTx) risks.push({ lvl: 'warn', cat: 'Tx limit', msg: 'Max transaction amount function present — owner can cap how much you can transfer at once.' });
+  if (flags.hasAntiWhale) risks.push({ lvl: 'warn', cat: 'Whale guard', msg: 'Max wallet/holding limit detected — owner can restrict maximum balance per address.' });
+  if (flags.hasSwapBack) risks.push({ lvl: 'warn', cat: 'Swap-router', msg: 'Swap-back/auto-liquidity function — contract may route trades through non-standard paths.' });
+  if (flags.hasAirdrop && !official) risks.push({ lvl: 'warn', cat: 'Batch ops', msg: 'Airdrop/batch transfer present — tokens may be distributed without recipient consent.' });
+  if (flags.hasBurnAll && !official) risks.push({ lvl: 'warn', cat: 'Burn risk', msg: 'batch burn function — owner can destroy tokens from any address if not restricted.' });
+  if (flags.hasRenounce) risks.push({ lvl: 'ok', cat: 'Good sign', msg: 'renounceOwnership() present — owner CAN give up control (check if already called).' });
+
+  if (secToken?.token_level === '3') risks.push({ lvl: 'danger', cat: 'TronScan', msg: 'TronScan marks this token as suspicious — treat as high fraud risk.' });
+  if (fraudTags?.length) risks.push({ lvl: 'danger', cat: 'TronScan tag', msg: t('Security tag: {tag}', { tag: fraudTags[0] }) });
+  if (secToken?.increase_total_supply === 1 && !(official?.tier === 'issuer')) {
+    risks.push({ lvl: 'warn', cat: 'Supply', msg: 'TronScan reports mintable supply — owner may inflate token supply.' });
+  }
+  if (secToken?.black_list_type === 1 && !official) {
+    risks.push({ lvl: 'warn', cat: 'Censorship', msg: 'TronScan reports a blacklist function on this token contract.' });
+  }
+
+  if (flags.hasTooManyFns && !official) risks.push({ lvl: 'warn', cat: 'Complexity', msg: t('{n} functions — unusually complex contract, higher attack surface.', { n: flags.fns.length }) });
+  if (flags.hasNoEvents && hasAbi && !standard) risks.push({ lvl: 'warn', cat: 'Opacity', msg: 'No events defined — transfers and key actions may not be traceable on-chain.' });
+  if (official) risks.unshift({ lvl: 'ok', cat: 'Official', msg: t('Recognized {issuer} contract ({symbol}) on TRON mainnet.', { issuer: official.issuer, symbol: official.symbol }) });
+  if (risks.filter(r => !['ok', 'info'].includes(r.lvl)).length === 0) {
+    risks.push({ lvl: 'ok', cat: 'Clean', msg: 'No critical risk patterns detected for this contract profile.' });
+  }
+  return risks;
+}
+
+function computeContractScore(risks, ctx) {
+  let score = 0;
+  risks.forEach(r => {
+    if (r.lvl === 'danger') score += 25;
+    else if (r.lvl === 'warn') score += 10;
+  });
+  if (!ctx.verified && ctx.hasAbi && !ctx.official) score += 10;
+  score = Math.min(score, 100);
+  const fraud = risks.some(r => r.lvl === 'danger' && (r.cat === 'TronScan' || r.cat === 'TronScan tag'));
+  const claimScam = risks.some(r => r.lvl === 'danger' && (r.cat === 'Claim drain' || r.cat === 'Claim trap' || r.cat === 'Known scam'));
+  if (claimScam) score = Math.max(score, 85);
+  if (ctx.official?.tier === 'issuer' && !fraud && !claimScam) score = Math.min(score, 10);
+  else if (ctx.official && !fraud && !claimScam) score = Math.min(score, 15);
+  if (ctx.intel?.holders != null && ctx.intel.holders > 100000 && ctx.official) score = Math.min(score, 12);
+  return score;
+}
+
+function isContractVerified(contractData, infoRes, scanMeta, official) {
