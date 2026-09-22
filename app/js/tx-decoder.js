@@ -646,3 +646,165 @@ function isClaimScamPattern(selector, trigger, dataHex, contractMethods, contrac
 
 // Decode ABI-encoded call data (hex string without 0x, starting after 4-byte selector)
 function decodeCallData(selector, data) {
+  const sel = SELECTORS[selector];
+  if (!sel) return null;
+
+  const params = data.slice(8); // strip 4-byte selector (8 hex chars)
+  const chunks = [];
+  for (let i = 0; i < params.length; i += 64) {
+    chunks.push(params.slice(i, i + 64));
+  }
+
+  // Decode by known function
+  switch (selector) {
+    case 'a9059cbb': { // transfer(address,uint256)
+      if (chunks.length < 2) return null;
+      const to  = hexToAddress(chunks[0]);
+      const amt = hexToUint(chunks[1]);
+      return { fn: 'transfer', to, amount: amt };
+    }
+    case '095ea7b3': { // approve(address,uint256)
+      if (chunks.length < 2) return null;
+      const spender = hexToAddress(chunks[0]);
+      const amt     = hexToUint(chunks[1]);
+      return { fn: 'approve', spender, amount: amt };
+    }
+    case '23b872dd': { // transferFrom(address,address,uint256)
+      if (chunks.length < 3) return null;
+      const from = hexToAddress(chunks[0]);
+      const to   = hexToAddress(chunks[1]);
+      const amt  = hexToUint(chunks[2]);
+      return { fn: 'transferFrom', from, to, amount: amt };
+    }
+    case 'a22cb465': { // setApprovalForAll(address,bool)
+      if (chunks.length < 2) return null;
+      const op       = hexToAddress(chunks[0]);
+      const approved = BigInt('0x' + chunks[1]) === BigInt(1);
+      return { fn: 'setApprovalForAll', operator: op, approved };
+    }
+    case 'aad3ec96': {
+      if (chunks.length < 2) return null;
+      return { fn: 'claimSplit', to: hexToAddress(chunks[0]), amount: hexToUint(chunks[1]) };
+    }
+    case '39509351':
+    case 'd73dd623': {
+      if (chunks.length < 2) return null;
+      return {
+        fn: selector === 'd73dd623' ? 'increaseApproval' : 'increaseAllowance',
+        spender: hexToAddress(chunks[0]),
+        amount: hexToUint(chunks[1]),
+      };
+    }
+    case 'a457c2d7':
+    case '66188463': {
+      if (chunks.length < 2) return null;
+      return {
+        fn: selector === '66188463' ? 'decreaseApproval' : 'decreaseAllowance',
+        spender: hexToAddress(chunks[0]),
+        amount: hexToUint(chunks[1]),
+      };
+    }
+    default:
+      return sel ? { fn: sel.name } : null;
+  }
+}
+
+// -- Fetch token decimals from chain (for unknown TRC20 contracts) ----
+// Calls decimals() selector 0x313ce567 via triggerconstantcontract
+const _decimalsCache = {};
+async function fetchTokenDecimals(contractAddress) {
+  if (_decimalsCache[contractAddress] != null) return _decimalsCache[contractAddress];
+  try {
+    const res = await gridPost('/wallet/triggerconstantcontract', {
+      owner_address: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb', // burn address, read-only call
+      contract_address: contractAddress,
+      function_selector: 'decimals()',
+      parameter: '',
+      visible: true,
+    });
+    const hex = res?.constant_result?.[0];
+    if (hex) {
+      const d = parseInt(hex, 16);
+      if (d >= 0 && d <= 36) {
+        _decimalsCache[contractAddress] = d;
+        return d;
+      }
+    }
+  } catch(_) {}
+  // Fallback to 6 (most common on TRON)
+  _decimalsCache[contractAddress] = 6;
+  return 6;
+}
+
+// -- Main decode function ----------------------------------------------
+async function txDecode(opts = {}) {
+  const force = opts.force === true;
+  const hash = txInput.value.trim();
+  setError(txErr, '');
+
+  if (!hash) { flashInput(txInput); showToast(t('Enter a TX hash or hex data')); return; }
+  if (!/^[0-9a-fA-F]{64}$/.test(hash)) {
+    flashInput(txInput);
+    showToast(t('Invalid TX hash — must be 64 hex characters.'));
+    return;
+  }
+
+  txLastHash = hash;
+
+  if (!force) {
+    const cached = readTxSessionCache(hash);
+    if (cached?.html) {
+      txFromCache = true;
+      txRes.innerHTML = cached.html;
+      hideScanEmpty(txEmpty, { instant: true });
+      bindTxActions(hash);
+      txRes.querySelectorAll('.tx-scan-contract-btn, .wallet-contract-scan-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+          e.preventDefault();
+          openAddressScan(btn.getAttribute('data-addr'));
+        });
+      });
+      showToast(t('Loaded from session cache'));
+      return;
+    }
+  } else {
+    clearTxSessionCache(hash);
+  }
+
+  txFromCache = false;
+  beginScanUI({
+    emptyEl: txEmpty,
+    resultEl: txRes,
+    errEl: txErr,
+    btn: txBtn,
+    input: txInput,
+    skeletonHtml: SK.txDecoder(),
+  });
+
+  try {
+    // Fetch TX info + receipt + TronScan enrichment in parallel
+    const [txData, txInfo, scanInfo] = await Promise.all([
+      gridPost('/wallet/gettransactionbyid', { value: hash, visible: true }),
+      gridPost('/wallet/gettransactioninfobyid', { value: hash }),
+      scanGet('/transaction-info', { hash }).catch(() => null),
+    ]);
+
+    if (!txData || !txData.txID) {
+      failScanUI({
+        resultEl: txRes,
+        errEl: txErr,
+        msg: t('Transaction not found. Check the hash and try again.'),
+        btn: txBtn,
+        input: txInput,
+      });
+      return;
+    }
+
+    const contract   = txData.raw_data?.contract?.[0];
+    const cType      = contract?.type || 'Unknown';
+    const cVal       = contract?.parameter?.value || {};
+    const typeMeta   = CONTRACT_TYPES[cType] || { label: cType, icon: icSVG('M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01'), risk: 'med' };
+    const success    = txData.ret?.[0]?.contractRet === 'SUCCESS';
+    const timestamp  = txData.raw_data?.timestamp;
+    const fee        = txInfo?.fee ? (txInfo.fee / 1_000_000).toFixed(6) : '0';
+    const energyUsed = txInfo?.receipt?.energy_usage_total || txInfo?.receipt?.energy_usage || 0;
