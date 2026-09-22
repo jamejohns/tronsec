@@ -970,3 +970,165 @@ async function txDecode(opts = {}) {
               ? { label: tt('allowance'), html: true, valueHtml: `≈ ${tt('unlimited')}` }
               : { label: tt('allowance'), value: allowPlain, mono: true });
             if (decodedCall.fn === 'increaseApproval') {
+              details.push({ label: t('Method'), value: 'increaseApproval()', mono: true });
+            }
+          } else if (isApprovalDecreaseCall(decodedCall, selector)) {
+            const spLabel = decodedCall.spender ? addrLabel(decodedCall.spender) : '—';
+            summaryTitleHtml = esc(t('Decreased allowance for {spender}', { spender: spLabel }));
+            summaryDesc = t('Reduced spending allowance for {spender} on {token}.', { spender: spLabel, token: tkName });
+            details.push({ label: tt('spender'), value: decodedCall.spender || '—', mono: true, link: true });
+            if (amtStr) details.push({ label: tt('allowance'), value: amtStr, mono: true });
+          } else if (decodedCall.fn === 'setApprovalForAll') {
+            const opLabel = decodedCall.operator ? addrLabel(decodedCall.operator) : '—';
+            summaryTitleHtml = esc(decodedCall.approved ? `Approved ${opLabel} for all NFTs` : `Revoked NFT approval for ${opLabel}`);
+            summaryDesc  = decodedCall.approved
+              ? `Granted ${opLabel} full control over all NFTs in this collection. They can transfer, burn, or list your NFTs without further approval.`
+              : `Revoked ${opLabel}'s permission to manage your NFTs in this collection.`;
+            details.push({ label: 'Operator', value: decodedCall.operator || '—', mono: true, link: true });
+            details.push({ label: 'Approved', value: decodedCall.approved ? t('YES — full collection access granted') : t('NO — approval revoked'), mono: false });
+          } else if (selMeta) {
+            summaryTitleHtml = esc(selMeta.name + '()');
+            summaryDesc  = t('Called {fn}() on {addr}. {desc}.', {
+              fn: selMeta.name, addr: addrLabel(cVal.contract_address), desc: t(selMeta.desc),
+            });
+          } else {
+            summaryTitleHtml = esc(t('Contract call'));
+            summaryDesc  = t('Unknown function (0x{selector}) called on {addr}. Raw call data shown below.', {
+              selector, addr: addrLabel(cVal.contract_address),
+            });
+          }
+        } else if (selMeta) {
+          summaryTitleHtml = esc(selMeta.name + '()');
+          summaryDesc  = t('Called {fn}() on {addr}. {desc}.', {
+            fn: selMeta.name, addr: addrLabel(cVal.contract_address), desc: t(selMeta.desc),
+          });
+        } else {
+          summaryTitleHtml = esc(t('Contract call'));
+          summaryDesc  = t('Unrecognized method (0x{selector}) on {addr}.', { selector, addr: addrLabel(cVal.contract_address) });
+        }
+
+        details.push({ label: tt('contract'), value: contractAddr || '—', mono: true, link: true });
+        if (OFFICIAL_TOKEN_ADDRS.has(contractAddr)) {
+          details.push({ label: tt('officialToken'), html: true, valueHtml: badge('b-green', t('Official token')) });
+        }
+        details.push({
+          label: t('Scan contract'),
+          html: true,
+          valueHtml: `<button type="button" class="wallet-load-more-btn tx-scan-contract-btn" data-addr="${esc(contractAddr)}">${icSVG(IC.external, 12)}<span>${t('Open in Contract Scan')}</span></button>`,
+        });
+        if (data) details.push({ label: tt('selector'), value: '0x' + selector + (selMeta ? ` (${selMeta.name})` : ' — unknown'), mono: true });
+
+        if (cVal.call_value && cVal.call_value > 0) {
+          details.push({ label: 'TRX sent', value: (cVal.call_value / 1_000_000).toFixed(6) + ' TRX', mono: true });
+        }
+        break;
+      }
+
+      case 'FreezeBalanceContract':
+      case 'FreezeBalanceV2Contract': {
+        const amt      = (cVal.frozen_balance || 0) / 1_000_000;
+        const resource = cVal.resource === 'ENERGY' ? t('Energy') : t('Bandwidth');
+        const isV2     = cType === 'FreezeBalanceV2Contract';
+        summaryTitleHtml = esc(isV2 ? `Freeze ${amt.toFixed(2)} TRX for ${resource} (v2)` : `Freeze ${amt.toFixed(2)} TRX for ${resource}`);
+        summaryDesc    = `Froze ${amt.toFixed(2)} TRX for ${resource}${cVal.receiver_address ? ', delegated to ' + addrLabel(cVal.receiver_address) : ''}. ${isV2 ? 'v2 staking — instant unfreeze, earn TP for voting.' : 'v1 staking — 3-day unfreeze period.'}`;
+        details.push({ label: 'Frozen',   value: amt.toFixed(6) + ' TRX', mono: true });
+        details.push({ label: 'Resource', value: resource });
+        if (cVal.receiver_address) details.push({ label: 'Delegated to', value: cVal.receiver_address, mono: true, link: true });
+        break;
+      }
+
+      case 'UnfreezeBalanceContract':
+      case 'UnfreezeBalanceV2Contract': {
+        const amt      = (cVal.unfreeze_balance || 0) / 1_000_000;
+        const resource = cVal.resource === 'ENERGY' ? t('Energy') : t('Bandwidth');
+        const isV2     = cType === 'UnfreezeBalanceV2Contract';
+        summaryTitleHtml = esc(`Unfreeze ${amt > 0 ? amt.toFixed(2) + ' TRX' : 'TRX'} (${resource})`);
+        summaryDesc    = `Unfroze ${amt > 0 ? amt.toFixed(2) + ' TRX' : 'TRX'} previously frozen for ${resource}. ${isV2 ? 'Instant unfreeze (v2).' : 'TRX returned to wallet after unfreeze.'}`;
+        details.push({ label: 'Resource', value: resource });
+        break;
+      }
+
+      case 'DelegateResourceContract': {
+        const amt      = (cVal.balance || 0) / 1_000_000;
+        const resource = cVal.resource === 'ENERGY' ? t('Energy') : t('Bandwidth');
+        summaryTitleHtml = esc(`Delegate ${amt.toFixed(2)} TRX of ${resource}`);
+        summaryDesc    = t('Delegated {amount} TRX worth of {resource} to {receiver}. You retain ownership and can undelegate anytime.', {
+          amount: amt.toFixed(2), resource, receiver: addrLabel(cVal.receiver_address || t('another address')),
+        });
+        details.push({ label: 'Amount',   value: amt.toFixed(6) + ' TRX', mono: true });
+        details.push({ label: 'Resource', value: resource });
+        details.push({ label: 'Receiver', value: cVal.receiver_address || '—', mono: true, link: true });
+        break;
+      }
+
+      case 'VoteWitnessContract': {
+        const votes = cVal.votes || [];
+        summaryTitleHtml = esc(`Voted for ${votes.length} SR candidate${votes.length !== 1 ? 's' : ''}`);
+        summaryDesc  = `Cast ${votes.reduce((s, v) => s + (v.vote_count || 0), 0)} vote${votes.length === 1 ? '' : 's'} for ${votes.length} SR candidate${votes.length !== 1 ? 's' : ''}. Voting helps secure the network and earns rewards. Requires TRON Power (TP) from staking.`;
+        votes.forEach((v, i) => {
+          details.push({ label: `Vote ${i + 1}`, value: `${v.vote_address || '—'} — ${v.vote_count} votes`, mono: true });
+        });
+        break;
+      }
+
+      case 'WithdrawBalanceContract': {
+        summaryTitleHtml = esc('Claimed voting rewards');
+        summaryDesc  = t('Claimed accumulated voting rewards from the TRON network. Rewards are generated by voting for Super Representatives.');
+        break;
+      }
+
+      case 'CreateSmartContract': {
+        summaryTitleHtml = esc('Deployed new contract');
+        summaryDesc  = t('Deployed a new smart contract to the TRON blockchain. Smart contracts run on the TRON Virtual Machine (TVM). Deployment consumes significant energy and storage fees.');
+        summaryRisk  = 'med';
+        if (txInfo?.contract_address) details.push({ label: 'New contract', value: txInfo.contract_address, mono: true, link: true });
+        break;
+      }
+
+      default: {
+        summaryTitleHtml = esc(typeMeta.label);
+        summaryDesc  = `This transaction executed a ${cType} operation on the TRON network. ${typeMeta.label !== cType ? `The contract type is "${cType}".` : ''} Refer to the on-chain details below for more information about this transaction.`;
+      }
+    }
+
+    // -- Risk warning block -------------------------------------------
+    const riskAlerts = [];
+    const sel = cType === 'TriggerSmartContract' ? selector : '';
+
+    if (isTronScanRiskyTx(scanInfo)) {
+      riskAlerts.push({ lvl: 'red', msg: t('TronScan flagged this transaction as risky.') });
+      summaryRisk = 'high';
+    }
+
+    // -- Selector-based risk heuristics --
+    if (cType === 'TriggerSmartContract') {
+      const scamPattern = isClaimScamPattern(sel, trigger, cVal.data, contractMethods, contractAddr);
+      if (scamPattern) {
+        riskAlerts.push({ lvl: 'red', msg: t('Claim + multicall/owner pattern — classic asset-split drain. Do not sign or approve.') });
+        summaryRisk = 'high';
+      }
+      if (isClaimSplitCall(trigger, sel)) {
+        riskAlerts.push({ lvl: 'red', msg: t('claim(recipient, percentage) — splits your approved tokens to a recipient wallet by percentage.') });
+        summaryRisk = 'high';
+      }
+      if ((sel === '4e71d92d' || sel === 'aad3ec96') && !OFFICIAL_TOKEN_ADDRS.has(contractAddr) && isDrainContractProfile(contractMethods, contractAddr)) {
+        riskAlerts.push({ lvl: 'red', msg: t('Drainer contract profile (claim + multicall/owner, no TRC-20 surface).') });
+        summaryRisk = 'high';
+      }
+      if (sel === 'ac9650d8' && isDrainContractProfile(contractMethods, contractAddr)) {
+        riskAlerts.push({ lvl: 'red', msg: t('multicall() on drainer contract — batches asset-split operations.') });
+        summaryRisk = 'high';
+      } else if (sel === 'ac9650d8') {
+        riskAlerts.push({ lvl: 'amber', msg: t('multicall() batches multiple actions — review all inner calls before signing.') });
+      }
+      // approve() / increaseAllowance / increaseApproval (USDT)
+      if (isApprovalIncreaseCall(decodedCall, sel)) {
+        const isUnlim = isUnlimitedApproval(decodedCall?.amount, tokenDecimals);
+        const isExcessive = isHighRiskApproval(decodedCall?.amount, tokenDecimals);
+        if (suspiciousApprovalSpender) {
+          riskAlerts.push({ lvl: 'red', msg: t('Known drainer spender — this contract can pull approved tokens from your wallet. Do not sign.') });
+          summaryRisk = 'high';
+        } else if (isUnlim) {
+          riskAlerts.push({ lvl: 'red', msg: t('Unlimited approval — spender can drain <strong>all</strong> tokens of this type from your wallet at any time.') });
+          summaryRisk = 'high';
+        } else if (isExcessive) {
