@@ -310,3 +310,107 @@ function phishBlock(titleHtml, bodyHtml, meta = '') {
   const metaHtml = scanBlockMeta(meta);
   const title = /<[^>]+>/.test(titleHtml) ? titleHtml : esc(t(titleHtml));
   return `<div class="aml-block">
+    <div class="aml-block-head">
+      <span class="aml-block-title">${title}</span>
+      ${metaHtml}
+    </div>
+    <div class="aml-block-body">${bodyHtml}</div>
+  </div>`;
+}
+
+function phishKvRow(label, valueHtml, last) {
+  return `<div class="kv-row${last ? ' kv-row--last' : ''}">
+    <span class="kv-label">${kvLabel(label)}</span>
+    <span class="kv-val">${valueHtml}</span>
+  </div>`;
+}
+
+function phishPanel(titleHtml, rowsHtml, meta = '') {
+  return phishBlock(titleHtml, `<div class="aml-kv-list">${rowsHtml}</div>`, meta);
+}
+
+function phishVerdictClass(cls) {
+  if (cls === 'red') return 'is-red';
+  if (cls === 'amber') return 'is-amber';
+  return 'is-green';
+}
+
+function phishHeadCard(url, hostname, tagsHtml, fromCache = false) {
+  const cacheTag = fromCache ? walletTag(t('session cache'), 'name') : '';
+  return scanHeadCard({
+    leadHtml: `<div class="wallet-head-addr phish-head-url">${esc(url)}</div>`,
+    actionsHtml: `
+      ${scanActionBtn({ id: 'phish-refresh-btn', label: 'Refresh scan', icon: IC.refresh })}
+      ${scanActionBtn({ id: 'phish-copy-url-btn', label: 'Copy', icon: IC.copy })}
+      ${scanActionBtn({ id: 'phish-open-url-btn', label: 'Open', icon: IC.external, href: url, variant: 'ext' })}
+    `,
+    tagsHtml: `${tagsHtml || ''}${cacheTag}`,
+  });
+}
+
+function bindPhishActions(url) {
+  document.getElementById('phish-refresh-btn')?.addEventListener('click', () => phishCheck({ force: true }));
+  document.getElementById('phish-copy-url-btn')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(url).then(() => {
+      const btn = document.getElementById('phish-copy-url-btn');
+      if (!btn) return;
+      btn.classList.add('is-copied');
+      btn.innerHTML = `${icSVG(IC.check, 14)}<span>${t('Copied')}</span>`;
+      setTimeout(() => {
+        btn.classList.remove('is-copied');
+        btn.innerHTML = `${icSVG(IC.copy, 14)}<span>${t('Copy')}</span>`;
+      }, 2000);
+    });
+  });
+}
+
+function phishHeroStat(label, valueHtml, sub, cls) {
+  const subHtml = sub ? `<div class="an-stat-sub">${typeof sub === 'string' && !sub.includes('<') ? esc(sub) : sub}</div>` : '';
+  return `<div class="an-stat">
+    <div class="an-stat-label">${t(label)}</div>
+    <div class="an-stat-value ${cls || 'is-neutral'}">${valueHtml}</div>
+    ${subHtml}
+  </div>`;
+}
+
+function phishFlagRows(flags) {
+  if (!flags.length) {
+    return `<div class="aml-empty">${t('No suspicious patterns detected')}</div>`;
+  }
+  return `<div class="phish-flags">${flags.map(f => {
+    const tier = f.risk === 'high' ? 'is-high' : f.risk === 'med' ? 'is-med' : 'is-low';
+    const flagBadge = f.risk === 'high' ? badge('b-red', t('High')) : f.risk === 'med' ? badge('b-amber', t('Medium')) : badge('b-ghost', t('Low'));
+    return `<div class="phish-flag risk-row ${tier}">
+      <div class="phish-flag-body">
+        <div class="phish-flag-reason">${esc(t(f.reason, f.reasonVars))}</div>
+      </div>
+      <div class="phish-flag-badge">${flagBadge}</div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function mmStatusBadge(mmStatus) {
+  switch (mmStatus) {
+    case 'flagged':     return badge('b-red', t('Flagged'));
+    case 'whitelisted': return badge('b-green', t('Whitelisted'));
+    case 'clean':       return badge('b-green', t('Clean'));
+    default:            return badge('b-ghost', t('Unavailable'));
+  }
+}
+
+function overallVerdict(vtResult, hFlags) {
+  const vtHit = vtResult.status === 'phishing';
+  const vtSus = vtResult.status === 'suspicious';
+  const vtErr = vtResult.status === 'error';
+  const hRisk = maxRisk(hFlags);
+
+  const big = (d) => icSVG(d, 22);
+  if (vtErr && hRisk === 'high') return { cls: 'red',   icon: big('M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01'), label: 'High-risk indicators' };
+  if (vtErr)             return { cls: 'amber', icon: big('M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01'), label: 'Scan incomplete — engine error' };
+  if (vtHit)             return { cls: 'red',   icon: big('M22 12c0 5.523-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2s10 4.477 10 10zM15 9l-6 6m0-6l6 6'), label: 'Confirmed phishing' };
+  if (vtSus && hRisk === 'high') return { cls: 'red',   icon: big('M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zM12 9v4M12 17h.01'), label: 'High-risk — multiple sources flagged' };
+  if (vtSus || hRisk === 'high') return { cls: 'red',   icon: big('M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01'), label: 'High-risk indicators' };
+  if (hRisk === 'med')   return { cls: 'amber', icon: big('M13 2L3 14h9l-1 8 10-12h-9l1-8z'), label: 'Suspicious patterns' };
+  if (hRisk === 'low')   return { cls: 'amber', icon: big('M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM12 16v-4m0-4h.01'), label: 'Minor flags — verify manually' };
+  return                        { cls: 'green', icon: big('M20 6L9 17l-5-5'), label: 'No threats detected' };
+}
