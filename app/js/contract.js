@@ -470,3 +470,121 @@ async function contractScan(opts = {}) {
     const hasAbi = abi.length > 0;
     const standard = hasAbi ? detectContractStandard(abi) : null;
     const flags = analyzeContractAbi(abi);
+    const intel = await fetchContractIntel(addr, standard);
+    intel.compiler = infoRes?.info?.compiler_version || scanMeta.compiler || null;
+    const official = resolveOfficialContract(addr, scanMeta, intel.tokenRow, intel.secToken);
+    const verified = isContractVerified(contractData, infoRes, scanMeta, official);
+
+    const ctx = {
+      official,
+      verified,
+      hasAbi,
+      standard,
+      secToken: intel.secToken,
+      fraudTags: intel.fraudTags,
+      intel,
+    };
+    const risks = buildContractRisks(flags, ctx);
+    const score = computeContractScore(risks, ctx);
+    const dangerCount = risks.filter(r => r.lvl === 'danger').length;
+    const warnCount = risks.filter(r => r.lvl === 'warn').length;
+    const infoCount = risks.filter(r => r.lvl === 'info').length;
+
+    const creator = scanMeta.creator_address || scanMeta.ownerAddress || infoRes?.info?.origin_address || contractData.origin_address || '—';
+    const created = scanMeta.date_created
+      ? new Date(scanMeta.date_created).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '—';
+    const createdTs = scanMeta.date_created ? new Date(scanMeta.date_created).getTime() : null;
+    const ageDays = createdTs ? Math.round((Date.now() - createdTs) / 86400000) : null;
+    const txCount = scanMeta.call_count ?? scanMeta.callCount ?? scanMeta.transaction_count ?? '—';
+
+    let contractBalance = null;
+    try {
+      const balRes = await gridGet(`/v1/accounts/${addr}`);
+      if (balRes.data?.[0]) contractBalance = (balRes.data[0].balance || 0) / 1_000_000;
+    } catch (_) {}
+
+    contractExtra = {
+      standard,
+      readFns: flags.readFns.length,
+      writeFns: flags.writeFns.length,
+      payableFns: flags.payableFns.length,
+      ageDays,
+      intel,
+    };
+
+    contractResult = {
+      name: official?.name || contractData.name || scanMeta.name || intel.tokenName || addr.slice(0, 8) + '?',
+      verified,
+      hasAbi,
+      funcCount: abi.length,
+      risks,
+      score,
+      abi,
+      creator,
+      created,
+      txCount,
+      contractBalance,
+      dangerCount,
+      warnCount,
+      infoCount,
+      addr,
+      standard,
+      official,
+    };
+    renderContract();
+    writeContractSessionCache({
+      addr,
+      result: contractResult,
+      extra: contractExtra,
+      abiLimit: contractAbiLimit,
+    });
+  } catch (e) {
+    contractResult = null;
+    contractExtra = null;
+    failScanUI({
+      resultEl: contractRes,
+      errEl: contractErr,
+      msg: userFriendlyFetchError(e),
+      btn: contractBtn,
+      input: contractInput,
+    });
+    return;
+  }
+  endScanUI({ btn: contractBtn, input: contractInput });
+}
+
+function renderContract() {
+  const r = contractResult;
+  if (!r) return;
+
+  const vCls = ctrRiskClass(r.score);
+  const standardLabel = r.standard ? badge('b-cyan', r.standard) : badge('b-ghost', t('Custom'));
+  const ageWarn = contractExtra?.ageDays !== null && contractExtra?.ageDays < 7;
+
+  const headTags = [
+    r.official ? badge('b-green', t('Official {symbol}', { symbol: r.official.symbol })) : '',
+    standardLabel,
+    r.verified ? badge('b-green', t('Verified')) : badge('b-amber', t('Unverified')),
+    r.dangerCount > 0 ? badge('b-red', t('{count} critical', { count: r.dangerCount })) :
+    r.warnCount > 0 ? badge('b-amber', t('{count} warnings', { count: r.warnCount })) : badge('b-green', t('Clean')),
+  ].filter(Boolean).join('');
+
+  const heroHtml = `
+    <div class="an-stat risk-stat risk-stat--contract contract-risk-stat">
+      <div class="an-stat-label">${t('Risk score')}</div>
+      <div class="risk-stat__body contract-risk-body">
+        ${ctrShieldIcon(r.score, 40)}
+        <div class="risk-stat__text contract-risk-text">
+          <div class="an-stat-value ${vCls}"><span class="score-value" data-score-value="${r.score}">0</span><span class="aml-score-unit">/100</span></div>
+          <div class="an-stat-sub">${ctrScoreLabel(r.score)}</div>
+          <div class="aml-risk-meter"><div class="aml-risk-meter-fill ${vCls}" data-score-pct="${r.score}" style="width:4%"></div></div>
+        </div>
+      </div>
+    </div>
+    ${ctrHeroStat(t('Critical'), String(r.dangerCount), r.dangerCount ? t('dangerous patterns') : t('none found'), r.dangerCount ? 'is-red' : 'is-green')}
+    ${ctrHeroStat(t('Warnings'), String(r.warnCount), r.warnCount ? t('review recommended') : t('none found'), r.warnCount ? 'is-amber' : 'is-green')}
+    ${ctrHeroStat(t('ABI entries'), String(r.funcCount), contractExtra ? `${contractExtra.readFns} ${t('read')} / ${contractExtra.writeFns} ${t('write')}` : '', 'is-info')}`;
+
+  let assessmentHtml;
+  const claimScam = r.risks.some(x => x.lvl === 'danger' && (x.cat === 'Known scam' || x.cat === 'Claim drain' || x.cat === 'Claim trap'));
