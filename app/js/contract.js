@@ -588,3 +588,125 @@ function renderContract() {
 
   let assessmentHtml;
   const claimScam = r.risks.some(x => x.lvl === 'danger' && (x.cat === 'Known scam' || x.cat === 'Claim drain' || x.cat === 'Claim trap'));
+  if (claimScam) {
+    assessmentHtml = amlAlertInline('red', `<strong>${t('Scam contract detected')}</strong> — ${t('claim/multicall drain pattern. Do not approve tokens or call any function.')}`);
+  } else if (r.official && r.dangerCount === 0) {
+    assessmentHtml = amlAlertInline('green', `<strong>${t('Recognized official contract')}</strong> — ${t('Compliance controls on issuer tokens are expected and do not indicate a scam.')}`);
+  } else if (r.official && r.dangerCount > 0 && !claimScam) {
+    assessmentHtml = amlAlertInline('amber', `<strong>${t('Official contract')}</strong> — ${t('Some ABI flags look sensitive but match known issuer/proxy patterns. Review details below.')}`);
+  } else if (r.dangerCount > 0) {
+    assessmentHtml = amlAlertInline('red', `<strong>${t('Critical findings')}</strong> — ${r.dangerCount} ${t('dangerous pattern')}${r.dangerCount > 1 ? 's' : ''} ${t('detected. Do not interact without review.')}`);
+  } else if (r.warnCount > 0) {
+    assessmentHtml = amlAlertInline('amber', `<strong>${t('Warnings present')}</strong> — ${r.warnCount} ${t('pattern')}${r.warnCount > 1 ? 's' : ''} ${t('require manual review.')}`);
+  } else {
+    assessmentHtml = amlAlertInline('green', `<strong>${t('No critical patterns')}</strong> — ${t('ABI scan found no major red flags.')}`);
+  }
+
+  const scoreRows = r.score > 0 ? `
+    ${ctrKvRow(`${tt('danger')} ${t('flags')}`, `<span class="mono">${r.dangerCount > 0 ? '+' + r.dangerCount * 25 : '0'}</span>`)}
+    ${ctrKvRow(`${tt('warnings')} ${t('flags')}`, `<span class="mono">${r.warnCount > 0 ? '+' + r.warnCount * 10 : '0'}</span>`)}
+    ${!r.verified && r.hasAbi && !r.official ? ctrKvRow(tt('unverified'), '<span class="mono">+10</span>') : ''}
+    ${ctrKvRow(tt('riskScore'), `<span class="an-stat-value ${vCls}">${r.score}<span class="aml-score-unit">/100</span></span>`, true)}
+  ` : ctrKvRow(tt('riskScore'), `<span class="mono is-green">0<span class="aml-score-unit">/100</span></span>`, true);
+
+  const intel = contractExtra?.intel || {};
+  const isToken = r.standard === 'TRC20' || intel.isToken;
+  const intelHtml = ctrPanel(t('On-chain intelligence'), `
+    ${ctrKvRow(t('Token'), intel.tokenSymbol ? esc(intel.tokenSymbol) : '—')}
+    ${intel.holders != null ? ctrKvRow(tt('holders'), fmtNum(intel.holders)) : ''}
+    ${intel.transfers != null ? ctrKvRow(t('Transfers'), fmtNum(intel.transfers)) : ''}
+    ${isToken && intel.liquidityUsd != null ? ctrKvRow(tt('liquidity'), `<span class="is-info">${fmtUsd(intel.liquidityUsd)}</span>`) : ''}
+    ${isToken && intel.volumeUsd != null ? ctrKvRow(t('24h volume (USD)'), fmtUsd(intel.volumeUsd)) : ''}
+    ${isToken && intel.volumeTrx != null ? ctrKvRow(t('24h volume (TRX)'), `${fmtNum(intel.volumeTrx)} TRX`) : ''}
+    ${intel.marketCapUsd ? ctrKvRow(t('Market cap'), fmtUsd(intel.marketCapUsd)) : ''}
+    ${intel.supply != null ? ctrKvRow(t('Total supply'), esc(String(intel.supply))) : ''}
+    ${intel.compiler ? ctrKvRow(t('Compiler'), esc(intel.compiler)) : ''}
+    ${intel.secToken?.token_level != null ? ctrKvRow(t('TronScan token level'), badge(intel.secToken.token_level === '3' ? 'b-red' : intel.secToken.token_level === '2' ? 'b-amber' : 'b-green', String(intel.secToken.token_level))) : ''}
+    ${intel.fraudTags?.length ? ctrKvRow(t('Security tags'), esc(intel.fraudTags.join(' · ')), true) : ctrKvRow(t('Security tags'), `<span class="kv-muted">${t('None')}</span>`, true)}
+  `, t('TronScan + token metadata'));
+
+  const infoHtml = ctrPanel(t('Contract info'), `
+    ${ctrKvRow(t('Creator'), r.creator !== '—'
+      ? `<a class="a-link a-link-inline" href="https://tronscan.org/#/address/${esc(r.creator)}" target="_blank" rel="noopener"><span>${esc(addrLabel(r.creator))}</span>${icSVG(IC.link, 9)}</a>`
+      : `<span class="kv-muted">${t('Unknown')}</span>`)}
+    ${ctrKvRow(t('Deployed'), `${esc(r.created)}${ageWarn ? ' <span class="badge b-amber">&lt;7d</span>' : ''}`)}
+    ${ctrKvRow(t('Interactions'), r.txCount !== '—' ? fmtNum(r.txCount) : '—')}
+    ${ctrKvRow(ttLabel('functions'), `${contractExtra ? contractExtra.readFns : '—'} ${t('read')} · ${contractExtra ? contractExtra.writeFns : '—'} ${t('write')} · ${contractExtra ? contractExtra.payableFns : '—'} ${ttLabel('payable')}`)}
+    ${r.contractBalance != null ? ctrKvRow(t('Balance'), `<span class="is-info">${r.contractBalance.toFixed(2)} TRX</span>`, true) : ctrKvRow(t('Balance'), '<span class="kv-muted">—</span>', true)}
+  `);
+
+  function fnRisk(name) {
+    const n = _n(name);
+    if (isClaimDrainFn(name) && !r.standard) return 'danger';
+    if (isMulticallBatchFn(name) && !r.standard) return 'danger';
+    if (r.official && isComplianceBlacklistFn(name)) return 'ok';
+    if (isSelfDestructFn(name)) return 'danger';
+    if (n.includes('mint') || (/burn/.test(n) && !/black/.test(n)) || n.includes('pause') || n.includes('kill')) return 'danger';
+    if (isPrivilegedWithdrawFn(name) && !r.official) return 'danger';
+    if (n.includes('owner') || n.includes('admin') || n.includes('set') || n.includes('fee') || n.includes('tax') || n.includes('cooldown') || n.includes('limit')) {
+      return r.official ? 'ok' : 'warn';
+    }
+    if (n.includes('upgrade') && r.official?.tier === 'issuer') return 'ok';
+    if (n.includes('upgrade')) return r.official ? 'ok' : 'warn';
+    return 'ok';
+  }
+
+  const abiFns = r.abi.slice(0, contractAbiLimit).map(fn => {
+    const rf = fnRisk(fn.name);
+    return `<tr>
+      <td class="mono ctr-fn-name ctr-fn-${rf}">${esc(fn.name || '(unnamed)')}</td>
+      <td>${badge('b-cyan', fn.type || 'function')}</td>
+      <td class="mono kv-muted">${esc(fn.stateMutability || '—')}</td>
+      <td>${rf === 'danger' ? badge('b-red', t('High')) : rf === 'warn' ? badge('b-amber', t('Med')) : badge('b-green', t('Low'))}</td>
+    </tr>`;
+  }).join('');
+
+  const abiHtml = r.abi.length > 0 ? ctrBlock(
+    `${t('Functions')} <span>· ${r.funcCount}</span>`,
+    `<div class="contract-table-wrap">
+      <table class="data-table contract-table">
+        <thead><tr><th>${t('Name')}</th><th>${t('Type')}</th><th>${tt('mutability')}</th><th>${t('Risk')}</th></tr></thead>
+        <tbody>${abiFns}</tbody>
+      </table>
+      ${r.abi.length > contractAbiLimit ? `
+      <div class="contract-table-foot">
+        <span class="contract-table-foot-meta kv-muted">${t('Showing {shown} of {total}', { shown: contractAbiLimit, total: r.abi.length })}</span>
+        <button type="button" class="wallet-load-more-btn" id="show-more-abi">${icSVG(IC.arrowDown, 14)}<span>${t('Show more')}</span></button>
+      </div>` : ''}
+    </div>`,
+    `${contractExtra ? `${contractExtra.readFns} ${t('read')}` : ''}`
+  ) : '';
+
+  contractRes.innerHTML = `
+    <div class="contract-scan">
+      ${ctrHeadCard(r.name, r.addr, headTags, contractFromCache)}
+      <div class="an-stat-grid an-stat-grid--4 scan-hero-grid">${heroHtml}</div>
+      <div class="contract-assessment">${assessmentHtml}</div>
+      <div class="aml-grid-2">
+        ${ctrPanel(t('Score breakdown'), scoreRows)}
+        ${infoHtml}
+      </div>
+      ${intelHtml}
+      ${ctrBlock(`${t('Risk findings')} <span>· ${r.risks.length}</span>`, ctrRiskRows(r.risks))}
+      ${abiHtml}
+      <p class="aml-disclaimer">${t('ABI pattern scan — does not replace manual audit. Verify source code and permissions before interacting.')}</p>
+    </div>`;
+
+  bindContractActions(r.addr);
+  mountScanMotion(contractRes, { fromCache: contractFromCache });
+
+  document.getElementById('show-more-abi')?.addEventListener('click', () => {
+    contractAbiLimit += 20;
+    renderContract();
+  });
+}
+
+function resetContractScanCache() {
+  const addr = contractInput?.value?.trim() || contractLastAddr;
+  if (addr) clearContractSessionCache(addr);
+  contractLastAddr = '';
+  contractFromCache = false;
+  contractResult = null;
+  contractExtra = null;
+  contractAbiLimit = 10;
+}
