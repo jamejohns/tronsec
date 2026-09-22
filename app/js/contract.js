@@ -352,3 +352,121 @@ function computeContractScore(risks, ctx) {
 }
 
 function isContractVerified(contractData, infoRes, scanMeta, official) {
+  const vs = scanMeta?.verify_status ?? infoRes?.info?.verify_status ?? contractData?.verify_status;
+  if (vs === 2 || vs === 1 || vs === 'Verified' || vs === 'VERIFIED') return true;
+  if (String(vs).toLowerCase() === 'verified') return true;
+  if (official) return true;
+  if (scanMeta?.vip && (scanMeta?.blueTag || scanMeta?.tokenInfo?.vip)) return true;
+  return !!(
+    scanMeta?.verifyStatus === 1 ||
+    scanMeta?.contract_verify === 1 ||
+    infoRes?.contract_state?.verify_status === 'VERIFIED' ||
+    (infoRes?.info?.compiler_version && scanMeta?.license)
+  );
+}
+
+async function fetchContractIntel(addr, standard) {
+  const [secToken, tokenMeta, tagAcc] = await Promise.all([
+    scanGet('/security/token/data', { address: addr }).catch(() => null),
+    standard === 'TRC20'
+      ? scanGet('/token_trc20', { contract: addr, showAll: 1 }).catch(() => scanGet('/token_trc20', { address: addr }).catch(() => null))
+      : Promise.resolve(null),
+    scanGet('/account/tag', { address: addr }).catch(() => null),
+  ]);
+
+  const tokenRow = tokenMeta?.trc20_tokens?.[0] || tokenMeta?.data?.[0] || tokenMeta?.token || tokenMeta || {};
+  const tags = [];
+  const rawTags = Array.isArray(tagAcc) ? tagAcc : (tagAcc?.data || (tagAcc?.tagName || tagAcc?.tag ? [tagAcc] : []));
+  rawTags.forEach(t => {
+    const tagName = t.tagName || t.tag || t.label || '';
+    if (tagName && /scam|phish|fraud|sanction|malicious|hack|exploit|rug/i.test(tagName) && !/blacklist capability/i.test(tagName)) {
+      tags.push(tagName);
+    }
+  });
+
+  const market = tokenRow.market_info || {};
+  const liquidityUsd = market.liquidity ?? tokenRow.liquidity24h ?? secToken?.sun_liquidity ?? null;
+  const volumeUsd = tokenRow.volume24h ?? market.volume24hInUsd ?? null;
+  const volumeTrx = market.volume24hInTrx ?? null;
+
+  return {
+    secToken,
+    fraudTags: tags,
+    tokenRow,
+    holders: tokenRow.holders_count ?? tokenRow.holder_count ?? tokenRow.nrOfTokenHolders ?? tokenRow.holders ?? null,
+    transfers: tokenRow.transfer_num ?? tokenRow.transfer_count ?? tokenRow.transferCount ?? null,
+    supply: tokenRow.total_supply_with_decimals ?? tokenRow.total_supply ?? tokenRow.totalSupply ?? tokenRow.supply ?? null,
+    tokenSymbol: tokenRow.tokenAbbr || tokenRow.symbol || tokenRow.token_abbr || null,
+    tokenName: tokenRow.tokenName || tokenRow.name || null,
+    liquidityUsd,
+    volumeUsd,
+    volumeTrx,
+    marketCapUsd: tokenRow.market_cap_usd ?? market.market_cap_usd ?? null,
+    priceUsd: market.priceInUsd ?? tokenRow.price ?? null,
+    isToken: standard === 'TRC20' || !!(tokenRow.contract_address || tokenRow.symbol),
+    compiler: null,
+  };
+}
+
+async function contractScan(opts = {}) {
+  const force = opts.force === true;
+  const addr = contractInput.value.trim();
+  setError(contractErr, '');
+  if (!addr) { flashInput(contractInput); showToast(t('Enter a contract address')); return; }
+  if (!isValidTron(addr)) { flashInput(contractInput); showToast(t('Invalid TRON address — must start with T, 34 chars.')); return; }
+
+  contractLastAddr = addr;
+
+  if (!force) {
+    const cached = readContractSessionCache(addr);
+    if (cached?.result) {
+      contractResult = cached.result;
+      contractExtra = cached.extra || null;
+      contractAbiLimit = cached.abiLimit || 10;
+      contractFromCache = true;
+      hideScanEmpty(contractEmpty, { instant: true });
+      renderContract();
+      showToast(t('Loaded from session cache'));
+      return;
+    }
+  } else {
+    clearContractSessionCache(addr);
+  }
+
+  contractAbiLimit = 10;
+  contractResult = null;
+  contractExtra = null;
+  contractFromCache = false;
+  beginScanUI({
+    emptyEl: contractEmpty,
+    resultEl: contractRes,
+    errEl: contractErr,
+    btn: contractBtn,
+    input: contractInput,
+    skeletonHtml: SK.contract(),
+  });
+
+  try {
+    const body = { value: addr, visible: true };
+    const [contractData, infoRes, scanWrap] = await Promise.all([
+      gridPost('/wallet/getcontract', body),
+      gridPost('/wallet/getcontractinfo', body).catch(() => ({})),
+      scanGet('/contract', { contract: addr }).catch(() => ({})),
+    ]);
+
+    if (!contractData || contractData.Error || (!contractData.bytecode && !contractData.abi)) {
+      failScanUI({
+        resultEl: contractRes,
+        errEl: contractErr,
+        msg: t('Not a contract address, or contract not deployed on TRON mainnet.'),
+        btn: contractBtn,
+        input: contractInput,
+      });
+      return;
+    }
+
+    const scanMeta = scanWrap?.data?.[0] || {};
+    const abi = contractData.abi?.entrys || [];
+    const hasAbi = abi.length > 0;
+    const standard = hasAbi ? detectContractStandard(abi) : null;
+    const flags = analyzeContractAbi(abi);
