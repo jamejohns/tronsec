@@ -206,3 +206,107 @@ const PHISH_KEYWORDS = [
   { pattern: /trx.*(airdrop|claim|bonus|free|gift)/i,                   risk: 'high', reason: 'Fake TRX airdrop' },
   { pattern: /(airdrop|claim).*trx/i,                                   risk: 'high', reason: 'Fake TRX airdrop' },
   { pattern: /usdt.*(claim|airdrop|bonus|free)/i,                       risk: 'high', reason: 'Fake USDT claim' },
+  { pattern: /tronlink.*(official|secure|verify|support|download)/i,    risk: 'high', reason: 'Fake TronLink site' },
+  { pattern: /tronscan.*(official|secure|verify|login)/i,               risk: 'high', reason: 'Fake TronScan site' },
+  { pattern: /connect.?wallet/i,                                        risk: 'high', reason: 'Wallet drainer — "connect wallet" lure' },
+  { pattern: /wallet.?connect.*\.(top|xyz|click|live|vip|ink|cc|pw)/i, risk: 'high', reason: 'WalletConnect phishing on suspicious TLD' },
+  { pattern: /crypto.*(recovery|recover|support|helpdesk)/i,            risk: 'high', reason: 'Crypto recovery scam' },
+  { pattern: /(metamask|trustwallet|tronlink).*(support|help|official)/i, risk: 'high', reason: 'Fake wallet support site' },
+  { pattern: /secure.*account.*verify/i,                                risk: 'med',  reason: 'Fake account verification' },
+  { pattern: /verify.*account/i,                                        risk: 'med',  reason: 'Suspicious account verification flow' },
+  { pattern: /tr[o0][mn]sc[a4]n/i,  risk: 'high', reason: 'Typosquatting TronScan (character substitution)' },
+  { pattern: /tr[o0]nl[i1]nk/i,     risk: 'high', reason: 'Typosquatting TronLink (character substitution)' },
+  { pattern: /tr[o0]ngr[i1]d/i,     risk: 'high', reason: 'Typosquatting TronGrid (character substitution)' },
+  { pattern: /[^a-z]tron[^a-z.]/i,  risk: 'low',  reason: 'Contains "tron" — verify this is a legitimate domain' },
+];
+
+const SUSPICIOUS_TLDS = new Set([
+  'xyz', 'top', 'click', 'live', 'vip', 'ink', 'cc', 'pw',
+  'tk', 'ml', 'ga', 'cf', 'gq', 'work', 'date', 'racing', 'download',
+  'win', 'loan', 'party', 'review', 'science', 'stream', 'trade',
+  'accountant', 'cricket', 'faith', 'men', 'bid', 'webcam',
+]);
+
+const PATH_PATTERNS = [
+  { pattern: /\/connect\//i,          risk: 'med',  reason: 'Path suggests wallet-connect flow' },
+  { pattern: /\/(claim|airdrop)\//i,  risk: 'high', reason: 'Path suggests fake airdrop claim' },
+  { pattern: /\/seed(-?phrase)?/i,    risk: 'high', reason: 'Path requests seed phrase — never enter yours anywhere' },
+  { pattern: /\/mnemonic/i,           risk: 'high', reason: 'Path requests mnemonic — this is always a scam' },
+  { pattern: /\/private(-?key)?/i,    risk: 'high', reason: 'Path requests private key — never share this' },
+];
+
+function getTld(hostname) {
+  const parts = hostname.split('.');
+  return parts[parts.length - 1];
+}
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+  return dp[m][n];
+}
+
+const BRAND_TARGETS = ['tronscan', 'tronlink', 'trongrid', 'justlend', 'sunswap', 'binance', 'coinbase', 'metamask', 'trustwallet'];
+
+function checkTyposquatting(hostname) {
+  const nameOnly = hostname.split('.').slice(0, -1).join('.');
+  return BRAND_TARGETS
+    .map(brand => ({ brand, dist: levenshtein(nameOnly, brand) }))
+    .filter(({ brand, dist }) => dist > 0 && dist <= 2 && nameOnly !== brand)
+    .map(({ brand, dist }) => ({
+      risk: 'high',
+      reason: 'Typosquatting detected — very similar to "{brand}" (edit distance {dist})',
+      reasonVars: { brand, dist },
+      source: 'typosquat',
+    }));
+}
+
+function runHeuristics(parsed) {
+  const { hostname, full, path } = parsed;
+  for (const legit of LEGIT_DOMAINS)
+    if (hostname === legit || hostname.endsWith('.' + legit)) return [];
+
+  const flags = [];
+  for (const { pattern, risk, reason } of PHISH_KEYWORDS)
+    if (pattern.test(hostname)) flags.push({ risk, reason, source: 'heuristic' });
+
+  for (const { pattern, risk, reason } of PATH_PATTERNS)
+    if (pattern.test(path)) flags.push({ risk, reason, source: 'heuristic' });
+
+  const tld = getTld(hostname);
+  if (SUSPICIOUS_TLDS.has(tld))
+    flags.push({ risk: 'med', reason: 'Suspicious TLD ".{tld}" — commonly used for phishing sites', reasonVars: { tld }, source: 'heuristic' });
+
+  flags.push(...checkTyposquatting(hostname));
+
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname))
+    flags.push({ risk: 'high', reason: 'URL uses a raw IP address — unusual for legit crypto sites', source: 'heuristic' });
+
+  const subCount = full.split('.').length - 2;
+  if (subCount >= 3)
+    flags.push({ risk: 'med', reason: 'Deep subdomain structure ({subCount} levels) — often used to hide real domain', reasonVars: { subCount }, source: 'heuristic' });
+
+  if (hostname.length > 40)
+    flags.push({ risk: 'med', reason: 'Unusually long domain name — phishing sites often use long random strings', source: 'heuristic' });
+
+  return flags;
+}
+
+// -- Verdict helpers ---------------------------------------------------
+function maxRisk(flags) {
+  if (flags.some(f => f.risk === 'high')) return 'high';
+  if (flags.some(f => f.risk === 'med'))  return 'med';
+  if (flags.some(f => f.risk === 'low'))  return 'low';
+  return 'none';
+}
+
+function phIcon(d, size) { return icSVG(d, size || 13); }
+
+function phishBlock(titleHtml, bodyHtml, meta = '') {
+  const metaHtml = scanBlockMeta(meta);
+  const title = /<[^>]+>/.test(titleHtml) ? titleHtml : esc(t(titleHtml));
+  return `<div class="aml-block">
