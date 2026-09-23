@@ -586,3 +586,150 @@ function vanityUpdateFormState() {
         : `${trimmed.length}/${VANITY_MAX_PATTERN}`;
       vanityStatusText.textContent = `${diff.label} · ${diff.eta} ${t('avg')} · ${lenText}`;
     }
+  }
+
+  if (vanityDifficulty) {
+    const showBadge = !!trimmed && !invalid.length;
+    const showOk = ready;
+    vanityDifficulty.classList.toggle('hidden', !showBadge);
+    if (infeasible || tooLong) {
+      vanityDifficulty.className = 'badge b-red vanity-diff-badge';
+      vanityDifficulty.textContent = t('Impossible');
+      vanityDifficulty.title = tooLong
+        ? t('Each part max {n} characters in prefix+suffix mode.', { n: VANITY_MAX_BOTH_PART })
+        : vanityInfeasibleReason(input);
+    } else if (showOk) {
+      vanityDifficulty.className = `badge ${diff.cls} vanity-diff-badge`;
+      vanityDifficulty.textContent = diff.label;
+      vanityDifficulty.title = diff.eta ? `${t('Avg. wait')} ${diff.eta}` : '';
+    } else {
+      vanityDifficulty.className = 'badge b-ghost vanity-diff-badge hidden';
+      vanityDifficulty.textContent = '—';
+      vanityDifficulty.title = '';
+    }
+  }
+
+  if (!vanityIsBothMode(mode)) {
+    vanityPresets?.querySelectorAll('.vanity-preset:not(.vanity-preset-both)').forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.pattern === trimmed);
+    });
+  } else {
+    vanityPresetsBoth?.querySelectorAll('.vanity-preset-both').forEach((btn) => {
+      const on = btn.dataset.prefix === prefix && btn.dataset.suffix === suffix;
+      btn.classList.toggle('is-active', on);
+    });
+  }
+
+  if (vanityCharCount) {
+    if (vanityIsBothMode(mode)) {
+      vanityCharCount.textContent = '';
+      vanityCharCount.classList.add('hidden');
+    } else {
+      const len = trimmed.length;
+      vanityCharCount.textContent = len ? `${len}/${VANITY_MAX_PATTERN}` : '';
+      vanityCharCount.classList.toggle('hidden', !len);
+    }
+  }
+
+  const canStart = ready && !vanityRunning;
+  vanitySetGenerateEnabled(canStart);
+  if (!vanityRunning) vanitySavePrefs();
+}
+
+function vanitySetFlowState(state) {
+  if (vanityCompose) vanityCompose.classList.toggle('is-searching', state === 'searching');
+  document.body.classList.toggle('vanity-is-searching', state === 'searching');
+}
+
+function vanitySetRunning(busy) {
+  vanityRunning = busy;
+  if (vanityPatternInput) vanityPatternInput.disabled = busy;
+  if (vanityPrefixPatternInput) vanityPrefixPatternInput.disabled = busy;
+  if (vanitySuffixPatternInput) vanitySuffixPatternInput.disabled = busy;
+  vanityModeGroup?.querySelectorAll('.vanity-mode-btn').forEach((b) => { b.disabled = busy; });
+  if (vanityCaseSensitive) vanityCaseSensitive.disabled = busy;
+  if (vanityCaseToggle) vanityCaseToggle.disabled = busy;
+  vanityPresets?.querySelectorAll('.vanity-preset').forEach((b) => { b.disabled = busy; });
+  spinBtn(vanityStartBtn, busy);
+  vanitySetFlowState(busy ? 'searching' : 'idle');
+  vanityUpdateFormState();
+}
+
+function vanityEnsureProgressDOM() {
+  if (!vanityProgress || vanityProgressReady) return;
+  vanityProgress.innerHTML = `
+    <div class="vanity-searching-card">
+      <div class="vanity-searching-head">
+        <div class="vanity-searching-title">
+          <span class="sidebar-nav-state is-cached vanity-searching-pulse" aria-hidden="true"></span>
+          <span>${t('Searching for match')}</span>
+        </div>
+        <button type="button" id="vanity-stop-btn" class="vanity-stop-inline">${t('Stop')}</button>
+      </div>
+      <div class="vanity-progress-bar-wrap" id="vanity-progress-bar-wrap" aria-hidden="true">
+        <div class="vanity-progress-bar" id="vanity-progress-bar">
+          <span class="vanity-progress-bar-shine" aria-hidden="true"></span>
+        </div>
+        <span class="vanity-progress-avg-mark" id="vanity-progress-avg-mark" aria-hidden="true"></span>
+      </div>
+      <div class="vanity-searching-stats">
+        <div class="vanity-searching-stat">
+          <span class="vanity-searching-stat-val mono" id="vanity-stat-speed">—</span>
+          <span class="vanity-searching-stat-label">${t('Speed')}</span>
+        </div>
+        <div class="vanity-searching-stat">
+          <span class="vanity-searching-stat-val mono" id="vanity-stat-attempts">0</span>
+          <span class="vanity-searching-stat-label">${t('Attempts')}</span>
+        </div>
+        <div class="vanity-searching-stat">
+          <span class="vanity-searching-stat-val mono" id="vanity-stat-eta">—</span>
+          <span class="vanity-searching-stat-label">${t('Est. remaining')}</span>
+        </div>
+      </div>
+      <p class="vanity-progress-hint" id="vanity-progress-hint"></p>
+    </div>`;
+  document.getElementById('vanity-stop-btn')?.addEventListener('click', vanityStop);
+  vanityProgressReady = true;
+}
+
+function vanityClearProgressDOM() {
+  if (!vanityProgress) return;
+  vanityProgress.innerHTML = '';
+  vanityProgressReady = false;
+}
+
+function vanityUpdateProgressUI() {
+  if (!vanityProgress || !vanityRunning) return;
+  vanityEnsureProgressDOM();
+
+  const elapsed = Math.max(0.001, (Date.now() - vanityStartedAt) / 1000);
+  const input = vanityCollectInput();
+  const estTotal = vanityIsBothMode(input.mode)
+    ? vanityEstimateAttempts('', input.mode, { prefix: input.prefix, suffix: input.suffix })
+    : vanityEstimateAttempts(input.trimmed, input.mode);
+  const rate = vanitySearchRate(elapsed);
+  const eta = vanityEtaRemaining(estTotal, rate);
+  const pct = vanityProgressPercent(vanityTotalAttempts, estTotal);
+  const avgRatio = estTotal > 0 ? vanityTotalAttempts / estTotal : 0;
+  const pastAvg = avgRatio >= 1;
+  const pattern = input.trimmed;
+  const mode = input.mode;
+
+  const set = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+
+  const displayRate = vanityTotalAttempts > 0 ? vanityTotalAttempts / elapsed : rate;
+  set('vanity-stat-speed', vanityFormatRate(displayRate));
+  set('vanity-stat-attempts', fmtNum(vanityTotalAttempts));
+  set('vanity-stat-eta', vanityFormatEta(eta));
+
+  const card = vanityProgress?.querySelector('.vanity-searching-card');
+  card?.classList.toggle('is-past-avg', pastAvg);
+
+  const wrap = document.getElementById('vanity-progress-bar-wrap');
+  wrap?.classList.toggle('is-past-avg', pastAvg);
+
+  const bar = document.getElementById('vanity-progress-bar');
+  if (bar) bar.style.width = `${pct}%`;
