@@ -733,3 +733,150 @@ function vanityUpdateProgressUI() {
 
   const bar = document.getElementById('vanity-progress-bar');
   if (bar) bar.style.width = `${pct}%`;
+
+  const avgMark = document.getElementById('vanity-progress-avg-mark');
+  if (avgMark) avgMark.style.left = `${vanityProgressPercent(estTotal, estTotal)}%`;
+
+  const hint = document.getElementById('vanity-progress-hint');
+  if (hint) {
+    if (pastAvg) {
+      hint.textContent = t('Past average — still searching ({ratio}× avg, {attempts} attempts)', {
+        ratio: avgRatio.toFixed(1),
+        attempts: fmtNum(vanityTotalAttempts),
+      });
+    } else {
+      hint.textContent = t('{pattern} · {mode} · {rate} · {elapsed}s', {
+        pattern,
+        mode,
+        rate: vanityFormatRate(displayRate),
+        elapsed: Math.floor(elapsed),
+      });
+    }
+  }
+}
+
+function vanityStopWorkers() {
+  vanityWorkers.forEach((w) => {
+    try { w.postMessage({ type: 'stop' }); } catch (_) { /* ignore */ }
+    w.terminate();
+  });
+  vanityWorkers = [];
+  if (vanityProgressTimer) {
+    clearInterval(vanityProgressTimer);
+    vanityProgressTimer = null;
+  }
+}
+
+function resetVanityGen() {
+  vanityStopWorkers();
+  vanityFound = false;
+  vanityTotalAttempts = 0;
+  vanitySetRunning(false);
+  vanitySetFlowState('idle');
+  vanityClearProgressDOM();
+  if (vanityResult) vanityResult.innerHTML = '';
+  setError(vanityErr, '');
+  vanityUpdateFormState();
+  if (typeof syncModuleNavState === 'function') syncModuleNavState('vanity');
+}
+
+function vanityScrollTo(el) {
+  if (!el) return;
+  requestAnimationFrame(() => {
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+}
+
+function vanityImportGuideHtml() {
+  const steps = [
+    t('Copy the private key with the button above.'),
+    t('Open TronLink (extension or app) → Import wallet → Private key.'),
+    t('Paste the private key as copied — 64 hex characters, no spaces.'),
+    t('Name the wallet and set a password.'),
+    t('Confirm the imported address matches the one above, then send TRX to activate the account.'),
+  ];
+  return `<div class="vanity-import-guide">
+    <p class="vanity-import-guide-title">${t('How to import this wallet')}</p>
+    <ol class="vanity-import-steps">${steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
+  </div>`;
+}
+
+function vanityRenderFound(address, privateKey, attempts) {
+  vanityFound = true;
+  const elapsed = ((Date.now() - vanityStartedAt) / 1000).toFixed(1);
+  vanityClearProgressDOM();
+  vanityLastMode = vanityGetMode();
+  vanityLastPattern = vanityPatternInput?.value.trim() || '';
+  vanityLastPrefix = vanityPrefixPatternInput?.value.trim() || '';
+  vanityLastSuffix = vanitySuffixPatternInput?.value.trim() || '';
+
+  const highlighted = vanityLastMode === 'both'
+    ? vanityHighlightAddress(address, '', 'both', { prefix: vanityLastPrefix, suffix: vanityLastSuffix })
+    : vanityHighlightAddress(address, vanityLastPattern, vanityLastMode);
+
+  vanityResult.innerHTML = `
+    <div class="vanity-success-card is-entering">
+      <div class="vanity-success-head">
+        <div class="vanity-success-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        </div>
+        <div>
+          <p class="vanity-success-title">${t('Address generated')}</p>
+          <p class="vanity-success-meta mono">${fmtNum(attempts)} ${t('attempts')} · ${elapsed}s</p>
+        </div>
+      </div>
+      <div class="vanity-address-card">
+        <div class="vanity-address-card-head">
+          <span class="vanity-address-label">${t('Address')}</span>
+          <button type="button" class="wallet-action-btn vanity-copy-addr">${icSVG(IC.copy, 14)}<span>${t('Copy')}</span></button>
+        </div>
+        <code class="mono vanity-address-value">${highlighted}</code>
+      </div>
+      <div class="vanity-secret-card">
+        <div class="vanity-secret-head">
+          <span class="vanity-secret-label">${t('Private key')}</span>
+          <span class="vanity-secret-actions">
+            <button type="button" class="wallet-action-btn" id="vanity-reveal-btn"><span>${t('Reveal')}</span></button>
+            <button type="button" class="wallet-action-btn vanity-copy-key">${icSVG(IC.copy, 14)}<span>${t('Copy')}</span></button>
+          </span>
+        </div>
+        <code class="mono vanity-key is-blurred" id="vanity-priv-display">${esc(privateKey)}</code>
+      </div>
+      <div class="vanity-result-actions">
+        <button type="button" class="wallet-action-btn" id="vanity-generate-another-btn">${icSVG(IC.activity, 14)}<span>${t('Generate another')}</span></button>
+      </div>
+      ${vanityImportGuideHtml()}
+      <p class="aml-disclaimer vanity-result-disclaimer">${t('Save the private key offline now. Anyone with this key controls the wallet. TRONSEC does not store it.')}</p>
+    </div>`;
+
+  vanityResult.querySelector('.vanity-copy-addr')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(address).then(() => showToast(t('Address copied')));
+  });
+  vanityResult.querySelector('.vanity-copy-key')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(privateKey).then(() => showToast(t('Private key copied')));
+  });
+
+  const revealBtn = document.getElementById('vanity-reveal-btn');
+  const privEl = document.getElementById('vanity-priv-display');
+  revealBtn?.addEventListener('click', () => {
+    if (!privEl || !revealBtn) return;
+    const hidden = privEl.classList.toggle('is-blurred');
+    revealBtn.querySelector('span').textContent = hidden ? t('Reveal') : t('Hide');
+  });
+
+  document.getElementById('vanity-generate-another-btn')?.addEventListener('click', () => {
+    if (vanityResult) vanityResult.innerHTML = '';
+    vanityFound = false;
+    vanityTotalAttempts = 0;
+    vanitySetFlowState('idle');
+    setError(vanityErr, '');
+    if (vanityIsBothMode(vanityGetMode())) vanityPrefixPatternInput?.focus();
+    else vanityPatternInput?.focus();
+    vanityStart();
+  });
+
+  vanityScrollTo(vanityResult);
+  vanityRecordMeasuredRate();
+  if (typeof syncModuleNavState === 'function') syncModuleNavState('vanity');
+  if (window.lucide) lucide.createIcons();
+}
