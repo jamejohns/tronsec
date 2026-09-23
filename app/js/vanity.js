@@ -1027,3 +1027,150 @@ async function vanityStart() {
       suffix: vanityIsBothMode(mode) ? suffix : '',
       mode,
       caseSensitive: !!vanityCaseSensitive?.checked,
+    });
+    workersReady++;
+  }
+
+  if (!workersReady) {
+    vanitySetRunning(false);
+    setError(vanityErr, t('Could not start search workers'));
+  }
+}
+
+function vanityOnWorkerMessage(e) {
+  const msg = e.data || {};
+  if (msg.type === 'progress') {
+    vanityTotalAttempts += msg.attempts || 0;
+    return;
+  }
+  if (msg.type === 'error') {
+    if (vanityRunning) {
+      vanityStopWorkers();
+      vanitySetRunning(false);
+      setError(vanityErr, t('Worker error: {message}', { message: msg.message || 'Unknown' }));
+    }
+    return;
+  }
+  if (msg.type === 'found' && !vanityFound) {
+    vanityTotalAttempts += msg.attempts || 0;
+    vanityStopWorkers();
+    vanityRenderFound(msg.address, msg.privateKey, vanityTotalAttempts);
+    vanitySetRunning(false);
+    if (msg.address) {
+      const elapsed = vanityStartedAt ? ((Date.now() - vanityStartedAt) / 1000).toFixed(1) : '';
+      
+    }
+    showToast(t('Vanity address found'));
+  }
+}
+
+function vanityStop() {
+  if (!vanityRunning) return;
+  vanityRecordMeasuredRate();
+  vanityStopWorkers();
+  vanitySetRunning(false);
+  if (!vanityFound && vanityProgress) {
+    vanityClearProgressDOM();
+    vanityProgress.innerHTML = `<p class="vanity-stopped-msg">${t('Search stopped')} · ${fmtNum(vanityTotalAttempts)} ${t('attempts')}</p>`;
+  }
+  showToast(t('Search stopped'));
+}
+
+vanityModeGroup?.querySelectorAll('.vanity-mode-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (vanityRunning) return;
+    vanitySetMode(btn.dataset.mode);
+  });
+});
+
+vanityModeGroup?.addEventListener('keydown', (e) => {
+  if (vanityRunning) return;
+  const tabs = [...(vanityModeGroup?.querySelectorAll('.vanity-mode-btn') || [])];
+  const idx = tabs.indexOf(document.activeElement);
+  if (idx < 0) return;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    const next = tabs[(idx + 1) % tabs.length];
+    vanitySetMode(next.dataset.mode);
+    next.focus();
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const prev = tabs[(idx - 1 + tabs.length) % tabs.length];
+    vanitySetMode(prev.dataset.mode);
+    prev.focus();
+  } else if (e.key === 'Home') {
+    e.preventDefault();
+    vanitySetMode(tabs[0].dataset.mode);
+    tabs[0].focus();
+  } else if (e.key === 'End') {
+    e.preventDefault();
+    vanitySetMode(tabs[tabs.length - 1].dataset.mode);
+    tabs[tabs.length - 1].focus();
+  }
+});
+
+vanityPresets?.querySelectorAll('.vanity-preset:not(.vanity-preset-both)').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (vanityRunning || !vanityPatternInput || vanityIsBothMode()) return;
+    vanityPatternInput.value = btn.dataset.pattern || '';
+    vanityUpdateFormState();
+    vanityPatternInput.focus();
+  });
+});
+
+vanityPresetsBoth?.querySelectorAll('.vanity-preset-both').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (vanityRunning || !vanityPrefixPatternInput || !vanitySuffixPatternInput) return;
+    if (!vanityIsBothMode()) vanitySetMode('both');
+    vanityPrefixPatternInput.value = btn.dataset.prefix || '';
+    vanitySuffixPatternInput.value = btn.dataset.suffix || '';
+    vanityUpdateFormState();
+    vanitySuffixPatternInput.focus();
+  });
+});
+
+vanityStartBtn?.addEventListener('click', vanityStart);
+
+vanityPatternInput?.addEventListener('input', vanityUpdateFormState);
+vanityPrefixPatternInput?.addEventListener('input', vanityUpdateFormState);
+vanitySuffixPatternInput?.addEventListener('input', vanityUpdateFormState);
+vanityPatternInput?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (!vanityRunning && !vanityStartBtn?.disabled) vanityStart();
+  }
+  if (e.key === 'Escape' && vanityRunning) vanityStop();
+});
+[vanityPrefixPatternInput, vanitySuffixPatternInput].forEach((el) => {
+  el?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!vanityRunning && !vanityStartBtn?.disabled) vanityStart();
+    }
+    if (e.key === 'Escape' && vanityRunning) vanityStop();
+  });
+});
+
+vanityCaseToggle?.addEventListener('click', () => {
+  if (vanityRunning || !vanityCaseSensitive) return;
+  vanityCaseSensitive.checked = !vanityCaseSensitive.checked;
+  vanitySyncCaseToggle();
+  vanityUpdateFormState();
+});
+
+vanityCaseSensitive?.addEventListener('change', () => {
+  vanitySyncCaseToggle();
+  vanityUpdateFormState();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !vanityRunning) return;
+  const tab = document.getElementById('tab-vanity');
+  if (tab?.classList.contains('active')) vanityStop();
+});
+
+vanityLoadPrefs();
+vanitySyncInputLayout(vanityGetMode());
+vanitySyncCaseToggle();
+vanitySetRunning(false);
+vanityUpdateFormState();
