@@ -373,3 +373,82 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
   const statsEl = document.createElement('div');
   statsEl.className = 'aml-graph-stats an-stat-grid an-stat-grid--4';
   statsEl.innerHTML = `
+    <div class="an-stat an-stat--mini">
+      <div class="an-stat-label">${t('Counterparties')}</div>
+      <div class="an-stat-value is-info">${peers.length}</div>
+    </div>
+    <div class="an-stat an-stat--mini">
+      <div class="an-stat-label">${t('Risk links')}</div>
+      <div class="an-stat-value ${highRisk > 0 ? 'is-red' : 'is-green'}">${highRisk}</div>
+    </div>
+    <div class="an-stat an-stat--mini">
+      <div class="an-stat-label">${t('Total volume')}</div>
+      <div class="an-stat-value is-amber">${volumeLabel}</div>
+    </div>
+    <div class="an-stat an-stat--mini">
+      <div class="an-stat-label">${t('Peer transactions')}</div>
+      <div class="an-stat-value is-neutral">${totalPeerTx}</div>
+    </div>`;
+  root.insertBefore(statsEl, container);
+
+  const legendChips = [
+    `<span class="aml-graph-legend-chip aml-graph-legend-chip--static" aria-hidden="true">
+      <i class="aml-graph-dot aml-graph-dot--center"></i>${esc(t('Target'))}
+    </span>`,
+    ...legendEntries.map((entry) =>
+      `<button type="button" class="aml-graph-legend-chip" data-legend-id="${esc(entry.id)}" aria-pressed="true" title="${esc(t('Click to toggle'))}">
+        <i class="aml-graph-dot" style="background:${esc(entry.color)}"></i>
+        <span class="aml-graph-legend-label">${esc(entry.label)}</span>
+        <span class="aml-graph-legend-count">${entry.count}</span>
+      </button>`),
+  ].join('');
+
+  const foot = document.createElement('div');
+  foot.className = 'aml-graph-foot';
+  foot.innerHTML = `
+    <div class="aml-graph-toolbar">
+      <div class="aml-graph-toolbar-row aml-graph-toolbar-row--controls">
+        <div class="aml-graph-presets" role="group" aria-label="${esc(t('Graph filter'))}">
+          <button type="button" class="aml-graph-preset-btn is-active" data-preset="all">${esc(t('All'))}</button>
+          <button type="button" class="aml-graph-preset-btn" data-preset="risk">${esc(t('Risk only'))}</button>
+        </div>
+        <span class="aml-graph-visible-count">${esc(t('Showing {visible} of {total}', { visible: nodes.length - 1, total: nodes.length - 1 }))}</span>
+      </div>
+      <div class="aml-graph-toolbar-row aml-graph-toolbar-row--legend">
+        <div class="aml-graph-legend">${legendChips}</div>
+        <span class="aml-graph-legend-hint">${esc(t('Toggle categories · drag nodes · scroll to zoom'))}</span>
+      </div>
+    </div>`;
+  root.appendChild(foot);
+
+  foot.querySelectorAll('.aml-graph-preset-btn').forEach((btn) => {
+    btn.addEventListener('click', () => setPreset(btn.dataset.preset || 'all', foot));
+  });
+  foot.querySelectorAll('.aml-graph-legend-chip:not(.aml-graph-legend-chip--static)').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const id = chip.dataset.legendId;
+      if (!id) return;
+      if (disabledLegendIds.has(id)) disabledLegendIds.delete(id);
+      else disabledLegendIds.add(id);
+      activePreset = 'custom';
+      applyFilter();
+      syncLegendUi(foot);
+    });
+  });
+  syncLegendUi(foot);
+
+  container._simCleanup = () => {
+    sim.stop();
+    ro.disconnect();
+    tooltip.remove();
+  };
+}
+
+function fmtVolume(sun) {
+  const n = Number(sun);
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  const trx = n / 1e6;
+  if (trx >= 1e6) return (trx / 1e6).toFixed(1) + 'M';
+  if (trx >= 1e3) return (trx / 1e3).toFixed(1) + 'K';
+  return trx.toFixed(0);
+}
