@@ -148,3 +148,78 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
   const rect = container.getBoundingClientRect();
   let width = rect.width || 600;
   const height = Math.max(280, Math.min(400, width * 0.55));
+
+  const legendEntries = buildAmlGraphLegendEntries(nodes, fallback);
+  const disabledLegendIds = new Set();
+  let activePreset = 'all';
+
+  function resolveLinkNode(link, end) {
+    const ref = link[end];
+    return ref && typeof ref === 'object' ? ref : nodes.find((n) => n.id === ref);
+  }
+
+  function isHiddenNode(d) {
+    if (!d || d.type === 'center') return false;
+    return disabledLegendIds.has(amlGraphLegendId(d));
+  }
+
+  function visiblePeerCount() {
+    return nodes.filter((n) => n.type !== 'center' && !isHiddenNode(n)).length;
+  }
+
+  function applyFilter() {
+    nodeG.attr('opacity', (d) => (isHiddenNode(d) ? 0.1 : 1));
+    nodeG.selectAll('circle, text').attr('pointer-events', (d) => (isHiddenNode(d) ? 'none' : 'auto'));
+    link.attr('opacity', (d) => (isHiddenNode(resolveLinkNode(d, 'target')) ? 0.05 : 0.45));
+    linkLabel.attr('opacity', (d) => (isHiddenNode(resolveLinkNode(d, 'target')) ? 0 : 0.85));
+  }
+
+  function syncLegendUi(footEl) {
+    const total = nodes.length - 1;
+    const visible = visiblePeerCount();
+    const countEl = footEl.querySelector('.aml-graph-visible-count');
+    if (countEl) {
+      countEl.textContent = t('Showing {visible} of {total}', { visible, total });
+    }
+    footEl.querySelectorAll('.aml-graph-preset-btn').forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.preset === activePreset);
+    });
+    footEl.querySelectorAll('.aml-graph-legend-chip').forEach((chip) => {
+      const off = disabledLegendIds.has(chip.dataset.legendId);
+      chip.classList.toggle('is-off', off);
+      chip.setAttribute('aria-pressed', off ? 'false' : 'true');
+    });
+  }
+
+  function setPreset(preset, footEl) {
+    activePreset = preset;
+    disabledLegendIds.clear();
+    if (preset === 'risk') {
+      for (const entry of legendEntries) {
+        if (entry.isBenign) disabledLegendIds.add(entry.id);
+      }
+    }
+    applyFilter();
+    syncLegendUi(footEl);
+  }
+
+  const svg = d3.select(container)
+    .append('svg')
+    .attr('width', width)
+    .attr('height', height)
+    .attr('viewBox', [0, 0, width, height])
+    .attr('class', 'aml-graph-svg');
+
+  const g = svg.append('g');
+
+  const tooltip = d3.select(container)
+    .append('div')
+    .attr('class', 'aml-graph-tooltip');
+
+  svg.call(d3.zoom()
+    .scaleExtent([0.4, 5])
+    .on('zoom', event => { g.attr('transform', event.transform); })
+  );
+
+  const link = g.selectAll('line.link')
+    .data(links)
