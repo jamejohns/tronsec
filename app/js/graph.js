@@ -223,3 +223,78 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
 
   const link = g.selectAll('line.link')
     .data(links)
+    .enter().append('line')
+    .attr('class', 'link')
+    .attr('stroke', d => d.color || fallback.safe)
+    .attr('stroke-width', d => Math.max(1.5, (d.value / maxTx) * 4))
+    .attr('stroke-opacity', 0.45)
+    .attr('stroke-dasharray', d => d.dash ? '4,4' : null);
+
+  const linkLabel = g.selectAll('text.link-label')
+    .data(links)
+    .enter().append('text')
+    .attr('class', 'link-label')
+    .attr('text-anchor', 'middle')
+    .attr('dominant-baseline', 'central')
+    .attr('font-size', '9px')
+    .attr('font-family', 'var(--mono)')
+    .attr('fill', '#71717a')
+    .text(d => {
+      const volUsd = d.volumeUsd > 0 && typeof amlFormatExposureUsd === 'function'
+        ? amlFormatExposureUsd(d.volumeUsd)
+        : '';
+      const volTrx = d.volume > 0 ? fmtVolume(d.volume) + ' TRX' : '';
+      const volPart = volUsd || volTrx;
+      return d.value + ' tx' + (volPart ? ' · ' + volPart : '');
+    });
+
+  const nodeG = g.selectAll('g.node')
+    .data(nodes)
+    .enter().append('g')
+    .attr('class', d => `node node--${d.type}`)
+    .attr('cursor', d => d.type === 'center' ? 'default' : 'pointer')
+    .call(d3.drag()
+      .on('start', (event, d) => {
+        if (!event.active) sim.alphaTarget(0.3).restart();
+        d.fx = d.x; d.fy = d.y;
+      })
+      .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+      .on('end', (event, d) => {
+        if (!event.active) sim.alphaTarget(0);
+        d.fx = null; d.fy = null;
+      })
+    );
+
+  const rScale = d => d.type === 'center' ? 26 : Math.max(16, Math.min(24, 12 + (d.txCount / maxTx) * 12));
+
+  nodeG.append('circle')
+    .attr('class', 'node-circle')
+    .attr('r', rScale)
+    .attr('fill', d => d.type === 'center' ? 'rgba(255,255,255,.95)' : d.color)
+    .attr('fill-opacity', d => d.type === 'center' ? 1 : 0.12)
+    .attr('stroke', d => d.type === 'center' ? (d.selfFlagged ? fallback.danger : 'rgba(255,255,255,.2)') : d.color)
+    .attr('stroke-width', d => d.type === 'center' ? (d.selfFlagged ? 2.5 : 1.5) : 1.25);
+
+  nodeG.append('text')
+    .attr('class', 'node-inner')
+    .attr('text-anchor', 'middle')
+    .attr('dominant-baseline', 'central')
+    .attr('font-size', d => d.type === 'center' ? '11px' : '10px')
+    .attr('font-weight', '600')
+    .attr('font-family', 'var(--mono)')
+    .attr('fill', d => d.type === 'center' ? '#111113' : d.color)
+    .text(d => d.type === 'center' ? t('You') : d.txCount);
+
+  nodeG.append('text')
+    .attr('class', 'node-addr')
+    .attr('text-anchor', 'middle')
+    .attr('dominant-baseline', 'hanging')
+    .attr('font-size', '9px')
+    .attr('font-family', 'var(--mono)')
+    .attr('fill', '#71717a')
+    .attr('dy', d => rScale(d) + 5)
+    .text(d => d.type === 'center' ? shortAddr(targetAddr) : d.label);
+
+  nodeG.append('text')
+    .attr('class', 'node-tag')
+    .attr('text-anchor', 'middle')
