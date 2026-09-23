@@ -73,3 +73,78 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
   container.style.position = 'relative';
 
   const volMap = {};
+  const volUsdMap = {};
+  for (const d of directTransfers) {
+    const peer = d.peer;
+    if (!peer) continue;
+    const usd = typeof amlTransferVolumeUsd === 'function'
+      ? amlTransferVolumeUsd(d, trxPriceUsd)
+      : null;
+    if (usd != null && usd > 0) {
+      volUsdMap[peer] = (volUsdMap[peer] || 0) + usd;
+      continue;
+    }
+    if (d.isTrc20) continue;
+    const amt = Number(d.amount) || 0;
+    if (!amt) continue;
+    volMap[peer] = (volMap[peer] || 0) + amt;
+  }
+
+  const shortAddr = a => a.slice(0, 6) + '...' + a.slice(-4);
+  const flaggedSet = new Set(peerFlags);
+  const maxTx = Math.max(1, ...peers.map(p => p[1]));
+
+  function nodeStyle(addr, count) {
+    if (resolveStyle) return resolveStyle(addr, count, flaggedSet, categoryMap, targetAddr);
+    if (addr === targetAddr) return { type: 'center', color: fallback.center, category: null, tag: null, benign: false };
+    if (flaggedSet.has(addr)) return { type: 'danger', color: fallback.danger, category: null, tag: t('Flagged'), benign: false };
+    if (count > 20) return { type: 'warn', color: fallback.warn, category: null, tag: t('Watch'), benign: false };
+    return { type: 'safe', color: fallback.safe, category: null, tag: t('OK'), benign: true };
+  }
+
+  const centerStyle = nodeStyle(targetAddr, 0);
+  let nodes = [{
+    id: targetAddr,
+    label: t('You'),
+    type: centerStyle.type,
+    category: centerStyle.category,
+    tag: centerStyle.tag,
+    benign: centerStyle.benign,
+    color: centerStyle.color,
+    txCount: 0,
+    volume: 0,
+    volumeUsd: 0,
+    selfFlagged,
+  }];
+  for (const [addr, count] of peers) {
+    const style = nodeStyle(addr, count);
+    nodes.push({
+      id: addr,
+      label: shortAddr(addr),
+      type: style.type,
+      category: style.category,
+      tag: style.tag,
+      benign: style.benign,
+      color: style.color,
+      txCount: count,
+      volume: volMap[addr] || 0,
+      volumeUsd: volUsdMap[addr] || 0,
+    });
+  }
+
+  let links = peers.map(([addr, count]) => {
+    const targetNode = nodes.find(n => n.id === addr);
+    return {
+      source: targetAddr,
+      target: addr,
+      value: count,
+      volume: volMap[addr] || 0,
+      volumeUsd: volUsdMap[addr] || 0,
+      color: targetNode?.color || fallback.safe,
+      dash: targetNode?.type === 'warn',
+    };
+  });
+
+  const rect = container.getBoundingClientRect();
+  let width = rect.width || 600;
+  const height = Math.max(280, Math.min(400, width * 0.55));
