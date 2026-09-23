@@ -880,3 +880,150 @@ function vanityRenderFound(address, privateKey, attempts) {
   if (typeof syncModuleNavState === 'function') syncModuleNavState('vanity');
   if (window.lucide) lucide.createIcons();
 }
+
+function vanityWorkerScriptUrl() {
+  return new URL('js/vanity-worker.js', window.location.href).href;
+}
+
+/** One network fetch per page — all workers share the same blob: URL. */
+async function ensureVanityWorkerUrl() {
+  if (vanityWorkerBlobUrl) return vanityWorkerBlobUrl;
+  if (!vanityWorkerBlobPromise) {
+    vanityWorkerBlobPromise = (async () => {
+      const res = await fetch(vanityWorkerScriptUrl(), { cache: 'force-cache' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const code = await res.text();
+      const blob = new Blob([code], { type: 'text/javascript' });
+      vanityWorkerBlobUrl = URL.createObjectURL(blob);
+      return vanityWorkerBlobUrl;
+    })().catch((err) => {
+      vanityWorkerBlobPromise = null;
+      throw err;
+    });
+  }
+  return vanityWorkerBlobPromise;
+}
+
+async function vanityStart() {
+  if (vanityRunning || vanityStartBtn?.disabled) return;
+  setError(vanityErr, '');
+
+  const input = vanityCollectInput();
+  const { mode, trimmed, invalid, infeasible, tooLong, ready, prefix, suffix } = input;
+
+  if (!trimmed) {
+    if (vanityIsBothMode(mode)) {
+      flashInput(vanityPrefixPatternInput);
+      flashInput(vanitySuffixPatternInput);
+    } else {
+      flashInput(vanityPatternInput);
+    }
+    showToast(vanityIsBothMode(mode) ? t('Enter prefix and suffix') : t('Enter a pattern'));
+    return;
+  }
+
+  if (vanityIsBothMode(mode)) {
+    if (!prefix || !suffix) {
+      if (!prefix) flashInput(vanityPrefixPatternInput);
+      if (!suffix) flashInput(vanitySuffixPatternInput);
+      showToast(t('Enter prefix and suffix'));
+      return;
+    }
+    if (tooLong) {
+      setError(vanityErr, t('Each part max {n} characters in prefix+suffix mode.', { n: VANITY_MAX_BOTH_PART }));
+      return;
+    }
+  } else if (trimmed.length > VANITY_MAX_PATTERN) {
+    setError(vanityErr, t('Pattern too long — max {n} characters for browser search.', { n: VANITY_MAX_PATTERN }));
+    return;
+  }
+
+  if (invalid.length) {
+    if (vanityIsBothMode(mode)) {
+      flashInput(vanityPrefixPatternInput);
+      flashInput(vanitySuffixPatternInput);
+    } else {
+      flashInput(vanityPatternInput);
+    }
+    showToast(t('Invalid Base58 characters: {chars}', { chars: invalid.join(' ') }));
+    vanityUpdateFormState();
+    return;
+  }
+
+  if (!ready || infeasible) {
+    if (vanityIsBothMode(mode)) {
+      flashInput(vanityPrefixPatternInput);
+      flashInput(vanitySuffixPatternInput);
+    } else {
+      flashInput(vanityPatternInput);
+    }
+    showToast(vanityInfeasibleReason(input));
+    vanityUpdateFormState();
+    return;
+  }
+
+  const diff = vanityDifficultyInfo(input);
+  const estAttempts = vanityIsBothMode(mode)
+    ? vanityEstimateAttempts('', mode, { prefix, suffix })
+    : vanityEstimateAttempts(trimmed, mode);
+  if (diff.key === 'extreme' && !window.confirm(t('This pattern may take a very long time (~{n} attempts on average). Continue?', { n: fmtNum(Math.round(estAttempts)) }))) {
+    return;
+  }
+
+  vanityStopWorkers();
+  vanityTotalAttempts = 0;
+  vanityFound = false;
+  vanitySmoothedRate = 0;
+  vanityStartedAt = Date.now();
+  const vanityPatternDesc = vanityIsBothMode(mode)
+    ? `prefix:${prefix} suffix:${suffix}`
+    : trimmed;
+  vanityLastPatternDesc = vanityPatternDesc;
+  if (vanityResult) vanityResult.innerHTML = '';
+  vanityClearProgressDOM();
+  if (vanityProgress) vanityProgress.innerHTML = SK.vanity();
+  vanitySetRunning(true);
+  vanityUpdateProgressUI();
+  vanityProgressTimer = setInterval(vanityUpdateProgressUI, 250);
+  vanityScrollTo(vanityProgress);
+
+  const workerCount = vanityWorkerCount();
+  vanityActiveWorkers = workerCount;
+  let workersReady = 0;
+  let workerFailed = false;
+  let workerUrl;
+  try {
+    workerUrl = await ensureVanityWorkerUrl();
+  } catch (err) {
+    vanitySetRunning(false);
+    setError(vanityErr, t('Worker error: {message}', { message: err.message || String(err) }));
+    return;
+  }
+
+  for (let i = 0; i < workerCount; i++) {
+    let worker;
+    try {
+      worker = new Worker(workerUrl, { type: 'module' });
+    } catch (err) {
+      vanitySetRunning(false);
+      setError(vanityErr, t('Worker error: {message}', { message: err.message || String(err) }));
+      return;
+    }
+
+    worker.onmessage = (e) => vanityOnWorkerMessage(e);
+    worker.onerror = (err) => {
+      if (workerFailed) return;
+      workerFailed = true;
+      vanitySetRunning(false);
+      vanityStopWorkers();
+      setError(vanityErr, t('Worker error: {message}', { message: err.message || 'Failed to load generator' }));
+    };
+    vanityWorkers.push(worker);
+    worker.postMessage({
+      type: 'start',
+      workerId: i,
+      pattern: vanityIsBothMode(mode) ? '' : trimmed,
+      prefix: vanityIsBothMode(mode) ? prefix : '',
+      suffix: vanityIsBothMode(mode) ? suffix : '',
+      mode,
+      caseSensitive: !!vanityCaseSensitive?.checked,
