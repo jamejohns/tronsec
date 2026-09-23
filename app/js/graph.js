@@ -298,3 +298,78 @@ function renderAMLGraph(containerId, targetAddr, peers, peerFlags, directTransfe
   nodeG.append('text')
     .attr('class', 'node-tag')
     .attr('text-anchor', 'middle')
+    .attr('dominant-baseline', 'hanging')
+    .attr('font-size', '8px')
+    .attr('font-family', 'var(--font-ui)')
+    .attr('fill', d => d.type === 'center' ? '#52525b' : d.color)
+    .attr('dy', d => rScale(d) + 17)
+    .text(d => d.type === 'center'
+      ? (d.selfFlagged ? t('Flagged') : t('Target'))
+      : (d.tag || t('OK')));
+
+  nodeG.on('mouseenter', (event, d) => {
+    if (isHiddenNode(d)) return;
+    const volUsd = d.volumeUsd > 0 && typeof amlFormatExposureUsd === 'function'
+      ? amlFormatExposureUsd(d.volumeUsd)
+      : null;
+    const volTrx = d.volume > 0 ? fmtVolume(d.volume) + ' TRX' : null;
+    const vol = volUsd || volTrx;
+    tooltip
+      .style('opacity', '1')
+      .html(`<strong>${esc(d.id)}</strong>` +
+        (d.tag ? `<span>${esc(d.tag)}</span>` : '') +
+        (vol ? `<span>${esc(vol)}</span>` : '') +
+        `<span class="aml-graph-tooltip-sub">${t('{count} transactions', { count: d.txCount })}</span>`);
+  })
+  .on('mousemove', event => {
+    const cr = container.getBoundingClientRect();
+    const tx = event.clientX - cr.left;
+    const ty = event.clientY - cr.top;
+    tooltip
+      .style('left', Math.min(tx + 12, width - 210) + 'px')
+      .style('top', Math.max(ty - 40, 8) + 'px');
+  })
+  .on('mouseleave', () => { tooltip.style('opacity', '0'); });
+
+  nodeG.on('click', (event, d) => {
+    if (d.type === 'center') return;
+    if (isHiddenNode(d)) return;
+    window.open(`https://tronscan.org/#/address/${d.id}`, '_blank');
+  });
+
+  const ro = new ResizeObserver(() => {
+    const r2 = container.getBoundingClientRect();
+    if (r2.width && Math.abs(r2.width - width) > 20) {
+      width = r2.width;
+      svg.attr('width', width).attr('viewBox', [0, 0, width, height]);
+    }
+  });
+  ro.observe(container);
+
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(130).strength(0.65))
+    .force('charge', d3.forceManyBody().strength(-480))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide().radius(d => rScale(d) + 12))
+    .alphaDecay(0.028)
+    .on('tick', () => {
+      link
+        .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+      linkLabel
+        .attr('x', d => (d.source.x + d.target.x) / 2)
+        .attr('y', d => (d.source.y + d.target.y) / 2);
+      nodeG.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
+
+  const highRisk = nodes.filter(n => n.type !== 'center' && !n.benign).length;
+  const totalVolUsd = Object.values(volUsdMap).reduce((s, v) => s + (Number(v) || 0), 0);
+  const totalVolTrx = Object.values(volMap).reduce((s, v) => s + (Number(v) || 0), 0);
+  const totalPeerTx = peers.reduce((s, p) => s + p[1], 0);
+  const volumeLabel = totalVolUsd > 0 && typeof amlFormatExposureUsd === 'function'
+    ? amlFormatExposureUsd(totalVolUsd)
+    : (totalVolTrx > 0 ? fmtVolume(totalVolTrx) + ' TRX' : '—');
+
+  const statsEl = document.createElement('div');
+  statsEl.className = 'aml-graph-stats an-stat-grid an-stat-grid--4';
+  statsEl.innerHTML = `
