@@ -197,20 +197,6 @@ Module logic lives in English under `app/js/`; UI strings are centralized for tr
 
 <br>
 
-## This repo vs tronsec.io production
-
-| | **This repository (OSS)** | **tronsec.io (production)** |
-|:--|:--|:--|
-| JavaScript | Readable source | Obfuscated build |
-| Wallet connect / sign-in | **Not included** | Prod-only flows |
-| Scope | Security **modules** + classic terminal UI | Full product shell + ops features |
-| API keys | Worker proxy (recommended) | Same worker architecture |
-| License | MIT | Proprietary deployed site |
-
-The OSS export is maintained so researchers and integrators can **audit and extend TRON security tooling** without exposing production-only operational code.
-
-<br>
-
 ## Product timeline
 
 | When | Highlights |
@@ -220,6 +206,7 @@ The OSS export is maintained so researchers and integrators can **audit and exte
 | **Jun 2026** | PWA, vanity workers, approvals monitor, **MIT OSS** [v1.0](https://github.com/jamejohns/tronsec/releases/tag/v1.0) → [v1.1](https://github.com/jamejohns/tronsec/releases/tag/v1.1.0) |
 | **Jul 2026** | Permission auditor, network charts, wallet risk score & PDF — [v1.2.0](https://github.com/jamejohns/tronsec/releases/tag/v1.2.0) |
 | **Aug–Sep 2026** | AML category taxonomy, exposure labels, wallet/AML graph polish, approvals merge logic, extended i18n, CI export guards — **[v1.3.0](https://github.com/jamejohns/tronsec/releases/tag/v1.3.0)** |
+| **Sep 2026** | TRONSEC Academy — editorial-quality **8-locale translations**, **26 new security guides** (80 articles) |
 
 Full notes: **[CHANGELOG.md](CHANGELOG.md)**
 
